@@ -1108,19 +1108,31 @@ fn configuredProviderSelection(
     default_model: []const u8,
     settings: *const config_runtime.Settings,
 ) !model_provider.ProviderSelection {
-    const provider = settings.provider orelse .gateway;
+    const provider = try initialProviderId(settings.provider orelse .gateway);
     const model = settings.models.get(provider) orelse switch (provider) {
         .gateway => default_model,
-        .codex => return error.CodexModelNotSelected,
-        .grok => return error.GrokModelNotSelected,
+        .codex => processModelOverride() orelse return error.CodexModelNotSelected,
+        .grok => processModelOverride() orelse return error.GrokModelNotSelected,
+        .pieverse => processModelOverride() orelse return error.PieverseModelNotSelected,
     };
     return .{ .provider = provider, .model = model };
 }
 
+fn initialProviderId(fallback: model_provider.ProviderId) !model_provider.ProviderId {
+    const raw = io_mod.getenv("FX_PROVIDER") orelse return fallback;
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return fallback;
+    return model_provider.parse(trimmed) orelse error.InvalidProviderOverride;
+}
+
+fn processModelOverride() ?[]const u8 {
+    const raw = io_mod.getenv("FX_MODEL") orelse return null;
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    return if (trimmed.len > 0) trimmed else null;
+}
+
 fn initialModelId(default_model: []const u8, configured: ?[]const u8) []const u8 {
-    const model = io_mod.getenv("FX_MODEL") orelse return configured orelse default_model;
-    const trimmed = std.mem.trim(u8, model, " \t\r\n");
-    return if (trimmed.len > 0) trimmed else configured orelse default_model;
+    return processModelOverride() orelse configured orelse default_model;
 }
 
 test "startup provider chooses only its provider-scoped model" {
@@ -1151,13 +1163,24 @@ test "startup provider chooses only its provider-scoped model" {
     try std.testing.expectEqualStrings("grok-model", grok.model);
 }
 
+test "process provider and model select Pieverse without persisted provider state" {
+    var env = try TestEnv.install(std.testing.allocator, &.{
+        .{ .key = "FX_PROVIDER", .value = " pieverse " },
+        .{ .key = "FX_MODEL", .value = " pieverse/auto/paid " },
+    });
+    defer env.deinit();
+
+    const selected = try configuredProviderSelection("default/model", &.{});
+    try std.testing.expectEqual(model_provider.ProviderId.pieverse, selected.provider);
+    try std.testing.expectEqualStrings("pieverse/auto/paid", selected.model);
+}
+
 fn loadInitialModel(alloc: Allocator, default_model: []const u8, configured: ?[]const u8) ![]u8 {
     return alloc.dupe(u8, initialModelId(default_model, configured));
 }
 
 fn hasProcessModelOverride() bool {
-    const model = io_mod.getenv("FX_MODEL") orelse return false;
-    return std.mem.trim(u8, model, " \t\r\n").len > 0;
+    return processModelOverride() != null;
 }
 
 fn loadStartupStatusModel(alloc: Allocator, default_model: []const u8, configured: ?[]const u8) !StartupStatusModel {

@@ -443,12 +443,7 @@ pub fn handlePrompt(
     if (!try server.selectCredentialForProvider(state, session.provider)) {
         return .{ .rpc_error = .{
             .code = ErrorCode.invalid_request,
-            .message = if (session.provider == .codex)
-                credentials.missing_chatgpt_credential_message
-            else if (session.provider == .grok)
-                credentials.missing_grok_credential_message
-            else
-                credentials.missing_credential_message,
+            .message = credentials.missingMessageForProvider(session.provider, false),
         } };
     }
 
