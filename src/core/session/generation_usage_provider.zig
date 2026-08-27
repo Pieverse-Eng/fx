@@ -85,6 +85,7 @@ pub const Set = struct {
     gateway: ?Provider = null,
     codex: ?Provider = null,
     grok: ?Provider = null,
+    pieverse: ?Provider = null,
 
     pub fn gatewayOnly(provider: Provider) Set {
         return .{ .gateway = provider };
@@ -95,6 +96,7 @@ pub const Set = struct {
             .gateway => self.gateway,
             .codex => self.codex,
             .grok => self.grok,
+            .pieverse => self.pieverse,
         };
     }
 };
@@ -155,4 +157,5 @@ test "generation usage providers are selected by provider identity" {
     try std.testing.expect(routes.select(.gateway) != null);
     try std.testing.expect(routes.select(.codex) == null);
     try std.testing.expect(routes.select(.grok) == null);
+    try std.testing.expect(routes.select(.pieverse) == null);
 }

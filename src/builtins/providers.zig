@@ -6,6 +6,7 @@ const openai_codex_permission_reviewer = @import("../gateway/openai_codex_permis
 const xai_grok = @import("../gateway/xai_grok.zig");
 const xai_grok_models = @import("../gateway/xai_grok_models.zig");
 const xai_grok_permission_reviewer = @import("../gateway/xai_grok_permission_reviewer.zig");
+const pieverse = @import("../gateway/pieverse.zig");
 const provider_catalog = @import("../core/auth/provider_catalog.zig");
 
 pub const native = provider_set.Set{
@@ -25,5 +26,10 @@ pub const native = provider_set.Set{
         .cli_model_catalog = xai_grok_models.cli_model_catalog_provider,
         .model_catalog = xai_grok_models.model_catalog_provider,
         .permission_reviewer = xai_grok_permission_reviewer.provider,
+    },
+    .pieverse = .{
+        .presentation = provider_catalog.find(.pieverse),
+        .fallback_model_capabilities_fn = pieverse.fallbackModelCapabilities,
+        .agent_stream = pieverse.agent_stream_provider,
     },
 };

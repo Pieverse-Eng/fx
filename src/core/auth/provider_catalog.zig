@@ -37,6 +37,14 @@ pub const entries = [_]Entry{
         .description = "SuperGrok or X Premium subscription",
         .subscription = true,
     },
+    .{
+        .id = .pieverse,
+        .slug = "pieverse",
+        .name = "Pieverse AI Gateway",
+        .route_name = "Pieverse AI Gateway",
+        .description = "Pieverse tenant model routing and billing",
+        .subscription = false,
+    },
 };
 
 pub fn parse(value: []const u8) ?model_provider.ProviderId {
@@ -61,6 +69,7 @@ test "auth provider catalog uses the model provider identity and explicit aliase
     try std.testing.expectEqual(model_provider.ProviderId.gateway, parse("gateway").?);
     try std.testing.expectEqual(model_provider.ProviderId.codex, parse("codex").?);
     try std.testing.expectEqual(model_provider.ProviderId.grok, parse("grok").?);
+    try std.testing.expectEqual(model_provider.ProviderId.pieverse, parse("pieverse").?);
     try std.testing.expect(parse("openai-codex") == null);
     try std.testing.expect(parse("chatgpt") == null);
     try std.testing.expect(parse("unknown") == null);

@@ -5,6 +5,7 @@ pub const ProviderId = enum {
     gateway,
     codex,
     grok,
+    pieverse,
 };
 
 pub const ProviderSelection = struct {
@@ -16,15 +17,17 @@ pub fn parse(value: []const u8) ?ProviderId {
     if (std.ascii.eqlIgnoreCase(value, "gateway")) return .gateway;
     if (std.ascii.eqlIgnoreCase(value, "codex")) return .codex;
     if (std.ascii.eqlIgnoreCase(value, "grok")) return .grok;
+    if (std.ascii.eqlIgnoreCase(value, "pieverse")) return .pieverse;
     return null;
 }
 
 pub fn authorizesCredential(provider: ProviderId, source: ?types.CredentialSource) bool {
     const selected = source orelse return false;
     return switch (provider) {
-        .gateway => selected != .chatgpt_subscription and selected != .grok_subscription,
+        .gateway => selected != .chatgpt_subscription and selected != .grok_subscription and selected != .pieverse_api_key,
         .codex => selected == .chatgpt_subscription,
         .grok => selected == .grok_subscription,
+        .pieverse => selected == .pieverse_api_key,
     };
 }
 
@@ -38,12 +41,16 @@ test "explicit providers authorize only their own credential origins" {
     try std.testing.expect(authorizesCredential(.grok, .grok_subscription));
     try std.testing.expect(!authorizesCredential(.grok, .chatgpt_subscription));
     try std.testing.expect(!authorizesCredential(.gateway, .grok_subscription));
+    try std.testing.expect(!authorizesCredential(.gateway, .pieverse_api_key));
+    try std.testing.expect(authorizesCredential(.pieverse, .pieverse_api_key));
+    try std.testing.expect(!authorizesCredential(.pieverse, .ai_gateway_api_key));
 }
 
 test "provider parsing exposes gateway codex and grok" {
     try std.testing.expectEqual(ProviderId.gateway, parse("gateway").?);
     try std.testing.expectEqual(ProviderId.codex, parse("CODEX").?);
     try std.testing.expectEqual(ProviderId.grok, parse("GROK").?);
+    try std.testing.expectEqual(ProviderId.pieverse, parse("Pieverse").?);
     try std.testing.expect(parse("openai-codex") == null);
     try std.testing.expect(parse("") == null);
 }
