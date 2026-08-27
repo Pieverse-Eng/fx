@@ -330,6 +330,7 @@ fn failureKind(status: std.http.Status) stream_provider.FailureKind {
 const SseReader = struct {
     pending_line: std.ArrayList(u8) = .empty,
     aggregate_bytes: usize = 0,
+    terminal_seen: bool = false,
 
     fn deinit(self: *SseReader, alloc: Allocator) void {
         self.pending_line.deinit(alloc);
@@ -352,7 +353,10 @@ const SseReader = struct {
                 continue;
             }
             const data = std.mem.trim(u8, trimmed["data:".len..], " \t");
-            if (std.mem.eql(u8, data, "[DONE]")) return null;
+            if (std.mem.eql(u8, data, "[DONE]")) {
+                self.terminal_seen = true;
+                return null;
+            }
             return data;
         }
     }
@@ -416,6 +420,7 @@ const Reducer = struct {
         defer parsed.deinit();
         if (parsed.value != .object) return error.InvalidPieverseEvent;
         const root = parsed.value.object;
+        if (root.get("error") != null) return error.PieverseResponseFailed;
         if (self.generation_id == null) if (stringField(root, "id")) |id| {
             if (id.len > max_tool_identity_bytes) return error.PieverseResourceLimitExceeded;
             self.generation_id = try alloc.dupe(u8, id);
@@ -527,6 +532,7 @@ fn consumeSse(alloc: Allocator, reader: anytype, events: *stream_provider.EventS
         sse.release();
     }
     if (cancel_flag.load(.seq_cst)) return error.Cancelled;
+    if (!sse.terminal_seen or reducer.finish_reason == null) return error.PieverseStreamIncomplete;
     return reducer.finish(alloc);
 }
 
@@ -638,4 +644,33 @@ test "Pieverse reducer assembles content tool deltas finish reason and usage" {
     try std.testing.expectEqual(@as(?u64, 12), completion.usage.input_tokens);
     try std.testing.expectEqual(@as(usize, 1), capture.tool_starts);
     try std.testing.expectEqual(@as(usize, 2), capture.tool_deltas);
+}
+
+fn consumeTestSse(bytes: []const u8) !types.ModelCompletion {
+    const Capture = struct {
+        fn emit(_: *anyopaque, _: stream_provider.Event) void {}
+    };
+    var reader: std.Io.Reader = .fixed(bytes);
+    var context: u8 = 0;
+    var sink = stream_provider.EventSink{ .context = &context, .emit_fn = Capture.emit };
+    var cancel = std.atomic.Value(bool).init(false);
+    return consumeSse(std.testing.allocator, &reader, &sink, &cancel, null);
+}
+
+test "Pieverse SSE rejects a truncated stream" {
+    const truncated =
+        \\data: {"choices":[{"delta":{"content":"TRUNCATED"},"finish_reason":null}]}
+        \\
+    ;
+    try std.testing.expectError(error.PieverseStreamIncomplete, consumeTestSse(truncated));
+}
+
+test "Pieverse SSE rejects provider error frames" {
+    const failed =
+        \\data: {"error":{"message":"upstream failed"}}
+        \\
+        \\data: [DONE]
+        \\
+    ;
+    try std.testing.expectError(error.PieverseResponseFailed, consumeTestSse(failed));
 }
