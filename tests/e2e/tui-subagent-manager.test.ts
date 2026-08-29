@@ -1092,7 +1092,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
   );
 
   test(
-    "one Ctrl-C cancels a streaming persistent child without exiting Fx",
+    "one Ctrl-C cancels a streaming persistent child without exiting fx",
     async () => {
       const fixture = createFixture();
       const childName = "ctrl-c-child";
@@ -1440,7 +1440,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
   );
 
   test(
-    "persistent auto child keeps an injected delete held after review caution",
+    "persistent auto child keeps a terminal removal held after review caution",
     async () => {
       const fixture = createFixture();
       writeFileSync(
@@ -1451,21 +1451,23 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
       const marker = join(fixture.workspace, "auto-child-keep.txt");
       writeFileSync(marker, "keep\n");
       const gateway = startDynamicFakeGateway((body) => {
-        if (body.includes('"toolCallId":"auto_delete_create"')) {
+        if (body.includes('"toolCallId":"auto_terminal_create"')) {
           return fakeGatewayFinalText("AUTO_DELETE_PARENT_READY");
         }
-        if (body.includes('"toolCallId":"auto_delete_file"')) {
+        if (body.includes('"toolCallId":"auto_terminal_remove"')) {
           return fakeGatewayFinalText("AUTO_DELETE_CHILD_COMPLETE");
         }
         if (body.includes(childPrompt)) {
-          return fakeGatewayToolCall("auto_delete_file", "delete_file", {
-            path: marker,
+          return fakeGatewayToolCall("auto_terminal_remove", "terminal", {
+            action: "exec",
+            command: `rm ${JSON.stringify(marker)}`,
+            timeout_ms: 600_000,
           });
         }
-        return fakeGatewayToolCall("auto_delete_create", "subagent", {
+        return fakeGatewayToolCall("auto_terminal_create", "subagent", {
           command: {
             create: {
-              name: "auto-delete-child",
+              name: "auto-terminal-child",
               mode: "persistent",
               prompt: childPrompt,
               permission_mode: "auto",
@@ -1499,7 +1501,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
         });
         const active = session;
         await active.waitForComposer(TIMEOUT);
-        await active.sendText("Create the auto-delete child.");
+        await active.sendText("Create the auto terminal child.");
         await active.waitForText("AUTO_DELETE_PARENT_READY", TIMEOUT);
         const denialDeadline = Date.now() + TIMEOUT;
         while (
@@ -1657,12 +1659,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
         });
         expect(authorityGrants.map((grant) => grant.tool_name)).toEqual([
           "edit",
-          "create_folder",
-          "open_file",
-          "rename_file",
-          "copy_file",
           "read",
-          "list",
           "glob",
           "grep",
         ]);
@@ -3596,7 +3593,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
         const idleActions = await parent.waitForPane(
           (pane) =>
             pane.includes(`Actions — ${childName}`) &&
-            pane.includes("another Fx process owns this child"),
+            pane.includes("another fx process owns this child"),
           TIMEOUT,
         );
         expect(idleActions).not.toContain("C cancel");
@@ -3631,7 +3628,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
         await parent.sendKeys("Tab");
         await parent.sendLiteralText("x");
         const queuedActions = await parent.waitForText(
-          "another Fx process owns this child",
+          "another fx process owns this child",
           TIMEOUT,
         );
         expect(queuedActions).not.toContain("C cancel");
@@ -3663,7 +3660,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
         const locallyOwnedChild = await parent.waitForPane(
           (pane) =>
             pane.includes(childName) &&
-            !pane.includes("another Fx process owns this child") &&
+            !pane.includes("another fx process owns this child") &&
             ((pane.includes(`Actions — ${childName}`) &&
               (pane.includes("Current state: idle") ||
                 pane.includes("Current state: interrupted"))) ||
@@ -3671,7 +3668,7 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
           TIMEOUT,
         );
         expect(locallyOwnedChild).not.toContain(
-          "another Fx process owns this child",
+          "another fx process owns this child",
         );
         expect(gateway.requests.filter((request) =>
           latestPrompt(request.body).includes(directMessage)
@@ -4616,10 +4613,11 @@ describe.skipIf(!tmuxAvailable())("tui: Agents & processes", () => {
 
         const requestCountBeforeSkills = gateway.requestCount();
         await active.sendText("/skills");
-        await active.waitForPane(
+        const openedSkills = await active.waitForPane(
           (pane) => pane.includes("Skills 1") && pane.includes(skillName),
           TIMEOUT,
         );
+        expect(openedSkills).toContain("CHILD_LOCAL_SKILLS_READY");
         expect(gateway.requestCount()).toBe(requestCountBeforeSkills);
         expect(
           gateway.requests.some((request) =>

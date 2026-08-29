@@ -582,6 +582,7 @@ fn pushQueuedPromptBannerRows(
         var summary = try input_presentation.composeQueuedSummaryRow(
             alloc,
             ctx.queued_count,
+            ctx.steering_count,
             ctx.queued_paused,
             width,
         );
@@ -593,6 +594,7 @@ fn pushQueuedPromptBannerRows(
                 width,
                 false,
                 ctx.queued_cancel_all_available,
+                ctx.steering_count > 0,
             );
             try pushFooterBandRow(alloc, frame, plan, plan.footer.banner +| painted, &hint);
             painted +|= 1;
@@ -716,6 +718,7 @@ fn pushQueuedPromptBannerRows(
             width,
             empty_draft,
             ctx.queued_cancel_all_available,
+            ctx.steering_count > 0,
         );
         try pushFooterBandRow(alloc, frame, plan, hint_row, &hint);
     }
@@ -1011,16 +1014,7 @@ pub fn composeFooterFrame(
             shell.layout.cols,
         )
     else if (compact_command_menu) |menu|
-        switch (menu) {
-            .statusline => try input_presentation.composeHintRow(
-                alloc,
-                false,
-                input.active_label,
-                ctx,
-                shell.layout.cols,
-            ),
-            else => try input_presentation.composeCompactCommandMenuHintRow(alloc, shell.layout.cols, menu),
-        }
+        try input_presentation.composeCompactCommandMenuHintRow(alloc, shell.layout.cols, menu)
     else if (input.show_picker and input.picker_kind == .skills)
         try input_presentation.composeSkillsMenuHintRow(alloc, shell.layout.cols, ctx.ctrl_c_pending)
     else if (input.show_picker and input.picker_kind == .settings)
