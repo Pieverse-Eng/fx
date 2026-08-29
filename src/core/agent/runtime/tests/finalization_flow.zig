@@ -689,7 +689,7 @@ test "common Stop continues once with exact synthetic context and joined history
     try expectBodyContains(
         &gateway,
         1,
-        "Continue the turn. Fx hook context:\\nverify the answer",
+        "Continue the turn. fx hook context:\\nverify the answer",
     );
     try std.testing.expectEqualStrings(
         "candidate\nfinal",
@@ -716,7 +716,7 @@ test "common Stop continues once with exact synthetic context and joined history
     try expectBodyNotContains(
         &follow_gateway,
         0,
-        "Continue the turn. Fx hook context",
+        "Continue the turn. fx hook context",
     );
 }
 
@@ -1345,7 +1345,7 @@ test "common Stop parallel cancellation preserves ordinary cancelled peer as com
     const calls = [_]ToolCall{
         toolCall("call_ordinary_cancel", "read_file", "{\"path\":\"README.md\"}"),
         toolCall("call_owner_signal", "grep_files", "{\"pattern\":\"Hooks\"}"),
-        toolCall("call_completed_peer", "file_info", "{\"path\":\"src/main.zig\"}"),
+        toolCall("call_completed_peer", "glob_files", "{\"pattern\":\"src/main.zig\"}"),
     };
     var gateway = FakeGateway.init(alloc, &.{
         .{ .content = "candidate" },
@@ -1719,7 +1719,7 @@ test "TurnFinalizationGuard runs PostTurnEnd once for every terminal outcome and
     }
 }
 
-test "TurnFinalizationGuard attempts every tracked lease and returns the first cleanup error" {
+test "TurnFinalizationGuard attempts every tracked lease without replacing accepted completion" {
     const alloc = std.testing.allocator;
     const cleanup_errors = [_]?anyerror{
         error.TestFirstCleanupFailed,
@@ -1739,16 +1739,23 @@ test "TurnFinalizationGuard attempts every tracked lease and returns the first c
     try finalization.track_agent_terminal_lease("terminal-one");
     try finalization.track_agent_terminal_lease("terminal-two");
     finalization.remove_agent_terminal_lease("terminal-missing");
+    const finished = try types.dupeFinishedPrompt(std.heap.c_allocator, .{
+        .turn = .{ .assistant = .{
+            .user = .{ .text = @constCast("prompt") },
+            .assistant = @constCast("accepted answer"),
+        } },
+    });
 
-    try std.testing.expectError(
-        error.TestFirstCleanupFailed,
-        finalization.finish(.failed, null, null),
-    );
-    try std.testing.expectEqual(TurnFinalizationGuard.State.fatal, finalization.state);
+    try finalization.finish(.completed, .completed, finished);
+    try finalization.finish(.failed, null, null);
+    try std.testing.expectEqual(TurnFinalizationGuard.State.emitted, finalization.state);
     try std.testing.expectEqual(@as(usize, 2), deps.terminal_lease_cleanup_ids.items.len);
     try std.testing.expectEqualStrings("terminal-one", deps.terminal_lease_cleanup_ids.items[0]);
     try std.testing.expectEqualStrings("terminal-two", deps.terminal_lease_cleanup_ids.items[1]);
-    try std.testing.expectEqual(@as(usize, 0), deps.finalization_count);
+    try std.testing.expectEqual(@as(usize, 1), deps.finalization_count);
+    try std.testing.expectEqual(@as(usize, 1), deps.finish_event_count);
+    try std.testing.expectEqual(@as(usize, 1), deps.finish_event_attempt_count);
+    try std.testing.expectEqualStrings("accepted answer", deps.finish_assistant_text.?);
 }
 
 test "TurnFinalizationGuard removes explicit release without cleanup" {

@@ -501,8 +501,15 @@ fn streamAgentCompletion(
     alloc: Allocator,
     request: agent_stream_provider_contract.ModelRequest,
 ) anyerror!agent_stream_provider_contract.Result {
-    if (request.credential.source == .chatgpt_subscription or request.credential.source == .grok_subscription or request.credential.source == .pieverse_api_key) {
-        return error.CredentialCannotAuthorizeGateway;
+    if (request.credential.source == .pieverse_api_key) {
+        return agent_stream_provider_contract.failResult(
+            error.CredentialCannotAuthorizeGateway,
+        );
+    }
+    if (request.credential.source == .chatgpt_subscription or request.credential.source == .grok_subscription) {
+        return agent_stream_provider_contract.failResult(
+            error.SubscriptionCredentialCannotAuthorizeGateway,
+        );
     }
     const payload = try buildAgentRequest(alloc, request.data());
     defer alloc.free(payload);
