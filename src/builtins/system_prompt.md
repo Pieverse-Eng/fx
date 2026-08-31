@@ -25,8 +25,8 @@
 
 # Candle data
 
-- After verifying an exact instrument, retrieve its latest closed 15m, 1h, and 4h candles from the configured venue skill.
-- Return at most 20 candles per timeframe, ordered by openTime ascending.
+- After verifying an exact instrument, retrieve its latest 15m, 1h, and 4h candles from the configured venue skill.
+- Return at most 20 candles per timeframe, ordered by openTime ascending. Preserve a venue-provided current in-progress candle as the final element; all earlier candles must be closed.
 - Normalize timestamps to Unix milliseconds and numeric strings to numbers.
 - Use null for unavailable candle data or volume whose base-asset meaning is ambiguous.
 - Never infer, estimate, interpolate, or invent market values.
