@@ -3489,6 +3489,7 @@ fn expectDefaultPromptDoesNotContain(needle: []const u8) !void {
 test "gateway_system_prompt: compact ordered sections" {
     const sections = [_][]const u8{
         "# Identity",
+        "# Asset identity resolution",
         "# Venue selection",
         "# Read-only boundary",
         "# Candle data",
@@ -3503,6 +3504,17 @@ test "gateway_system_prompt: compact ordered sections" {
     }
 
     try std.testing.expect(gateway_system_prompt.len < 8 * 1024);
+}
+
+test "gateway_system_prompt: resolves natural-language assets before venue lookup" {
+    try expectDefaultPromptContains("without supplying a ticker");
+    try expectDefaultPromptContains("never require the caller to retry with or pre-resolve a ticker");
+    try expectDefaultPromptContains("plausible canonical ticker candidates");
+    try expectDefaultPromptContains("never as a verified identity or listing");
+    try expectDefaultPromptContains("official symbol, base or full name, annotation, description");
+    try expectDefaultPromptContains("Keep the canonical ticker distinct from a venue-specific symbol.");
+    try expectDefaultPromptContains("use any available read-only research capability");
+    try expectDefaultPromptContains("return unresolved rather than guessing");
 }
 
 test "gateway_system_prompt: venue discovery is caller constrained" {
