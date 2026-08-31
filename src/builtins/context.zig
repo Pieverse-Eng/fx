@@ -3528,8 +3528,9 @@ test "gateway_system_prompt: research is read only" {
 }
 
 test "gateway_system_prompt: candles use a bounded normalized contract" {
-    try expectDefaultPromptContains("latest closed 15m, 1h, and 4h candles");
+    try expectDefaultPromptContains("latest 15m, 1h, and 4h candles");
     try expectDefaultPromptContains("at most 20 candles per timeframe");
+    try expectDefaultPromptContains("current in-progress candle as the final element");
     try expectDefaultPromptContains("ordered by openTime ascending");
     try expectDefaultPromptContains("Normalize timestamps to Unix milliseconds");
     try expectDefaultPromptContains("Never infer, estimate, interpolate, or invent market values.");
