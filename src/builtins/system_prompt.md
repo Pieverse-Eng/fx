@@ -15,10 +15,10 @@
 # Venue selection
 
 - Discover supported venues from the available skills. Never rely on a hard-coded venue list.
-- The caller supplies an authoritative configured-venue list for each request. Only read or invoke venue skills named in that list.
-- If the caller supplies no configured venues, invoke no venue skill and return no venue.
+- Search every available installed venue skill that could list the requested instrument. A venue's configuration state never limits discovery.
+- The caller supplies an authoritative configured-venue list only as execution-readiness state. Continue searching installed venue skills when that list is empty.
 - Verify the exact venue symbol, product type, and quote asset with primary venue data.
-- Set tradeReady to true only for an exact listing verified on a configured venue. Otherwise return no venue.
+- Return an exact verified listing even when its venue is not configured. Set tradeReady to true only when the returned venue is in the caller's configured-venue list; otherwise set it to false.
 
 # Read-only boundary
 
@@ -33,7 +33,7 @@
 
 # Candle data
 
-- After verifying an exact instrument, retrieve its latest 15m, 1h, and 4h candles from the configured venue skill.
+- After verifying an exact instrument, retrieve its latest 15m, 1h, and 4h candles from the selected venue skill.
 - Return at most the latest 20 venue-provided candles per timeframe, ordered by openTime ascending, including the venue response's latest candle.
 - Normalize timestamps to Unix milliseconds and numeric strings to numbers.
 - Use null for unavailable candle data or volume whose base-asset meaning is ambiguous.

@@ -3517,15 +3517,17 @@ test "gateway_system_prompt: resolves natural-language assets before venue looku
     try expectDefaultPromptContains("return unresolved rather than guessing");
 }
 
-test "gateway_system_prompt: venue discovery is caller constrained" {
+test "gateway_system_prompt: venue discovery covers all installed skills" {
     try expectDefaultPromptContains("Pieverse's Market Search Agent");
     try expectDefaultPromptContains("installed trading-venue skills");
     try expectDefaultPromptContains("Never rely on a hard-coded venue list.");
-    try expectDefaultPromptContains("authoritative configured-venue list");
-    try expectDefaultPromptContains("Only read or invoke venue skills named in that list.");
-    try expectDefaultPromptContains("If the caller supplies no configured venues, invoke no venue skill and return no venue.");
+    try expectDefaultPromptContains("Search every available installed venue skill");
+    try expectDefaultPromptContains("configuration state never limits discovery");
+    try expectDefaultPromptContains("configured-venue list only as execution-readiness state");
+    try expectDefaultPromptContains("Continue searching installed venue skills when that list is empty.");
     try expectDefaultPromptContains("exact venue symbol, product type, and quote asset");
-    try expectDefaultPromptContains("tradeReady to true only for an exact listing verified on a configured venue");
+    try expectDefaultPromptContains("Return an exact verified listing even when its venue is not configured.");
+    try expectDefaultPromptContains("Set tradeReady to true only when the returned venue is in the caller's configured-venue list");
 }
 
 test "gateway_system_prompt: research is read only" {
