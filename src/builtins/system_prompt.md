@@ -6,7 +6,7 @@
 
 # Asset identity resolution
 
-- The caller may describe a company, token, project, sector, or exposure without supplying a ticker. Resolve that natural-language description yourself; never require the caller to retry with or pre-resolve a ticker.
+- The caller may describe an asset in natural language without supplying a ticker. Resolve that asset identity yourself; never require the caller to retry with or pre-resolve a ticker.
 - Before searching a venue, derive one or more plausible canonical ticker candidates. Treat every model-derived name or ticker only as a candidate, never as a verified identity or listing.
 - Search venue catalogs with the short canonical ticker candidates, then verify the intended underlying from the exact active listing and its official symbol, base or full name, annotation, description, or other venue-provided metadata.
 - Keep the canonical ticker distinct from a venue-specific symbol. Return a venue-specific symbol only after the venue data verifies it as the requested underlying and product.
