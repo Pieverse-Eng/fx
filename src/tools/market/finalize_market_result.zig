@@ -205,6 +205,16 @@ fn readCurrentTurnStdout(ctx: tool_dispatch.DispatchContext, source: std.json.Ob
         message_index -= 1;
         const assistant = ctx.current_turn_messages[message_index];
         if (assistant.role != .assistant or assistant.tool_calls.len == 0) continue;
+        var has_terminal = false;
+        for (assistant.tool_calls) |candidate_call| {
+            if (std.mem.eql(u8, candidate_call.name, "terminal")) {
+                has_terminal = true;
+                break;
+            }
+        }
+        // The most recent assistant batch normally contains this finalizer call.
+        // Sources are indexed against the preceding batch that ran terminal tools.
+        if (!has_terminal) continue;
         if (call_index >= assistant.tool_calls.len) return error.CandleToolCallNotFound;
         const source_call = assistant.tool_calls[call_index];
         if (!std.mem.eql(u8, source_call.name, "terminal")) return error.InvalidCandleSourceTool;
@@ -432,11 +442,15 @@ test "finalizer reads ordinary terminal results from the current turn" {
         .{ .id = "call_4h", .name = "terminal", .arguments_json = "{}" },
     };
     const output = "exit_code=0\n<stdout>\n[[2000,\"2\",\"4\",\"1\",\"3\",\"8\"],[1000,\"1\",\"3\",\"0.5\",\"2\",\"7\"]]\n</stdout>\n";
+    const finalizer_calls = [_]types.ToolCall{
+        .{ .id = "call_finalize", .name = "finalize_market_result", .arguments_json = "{}" },
+    };
     const messages = [_]types.ChatMessage{
         .{ .role = .assistant, .tool_calls = &calls },
         .{ .role = .tool, .content = output, .tool_call_id = "call_15m", .tool_name = "terminal", .tool_result_status = .success },
         .{ .role = .tool, .content = output, .tool_call_id = "call_1h", .tool_name = "terminal", .tool_result_status = .success },
         .{ .role = .tool, .content = output, .tool_call_id = "call_4h", .tool_name = "terminal", .tool_result_status = .success },
+        .{ .role = .assistant, .tool_calls = &finalizer_calls },
     };
     const args =
         \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD","tradeReady":true},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":null},"1h":{"sourceToolCall":1,"resultId":null},"4h":{"sourceToolCall":2,"resultId":null}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
