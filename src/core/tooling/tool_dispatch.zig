@@ -208,6 +208,7 @@ pub const DispatchContext = struct {
     max_read_file_lines: usize = default_max_read_file_lines,
     max_read_file_line_len: usize = default_max_read_file_line_len,
     max_tool_result_bytes: usize = tool_result_limits.default_max_tool_result_bytes,
+    current_turn_messages: []const core_types.ChatMessage = &.{},
     skills_dir: []const u8 = "",
     context_limits: context_limits.Values = .{},
     permission_ctx: ?*const PermissionContext = null,
@@ -371,6 +372,7 @@ pub const ExecutorKind = enum {
     grep_files,
     read_file,
     read_tool_result,
+    finalize_market_result,
     write_file,
     edit_file,
     memory,
@@ -399,6 +401,11 @@ pub const RuntimeProviderKind = enum {
     run_command,
     subagent,
     vision,
+};
+
+pub const ResultDisposition = enum {
+    continue_model,
+    finish_turn,
 };
 
 pub const CapturedCommandFn = *const fn (ToolInput) bool;
@@ -440,6 +447,8 @@ pub const Tool = struct {
     validate: ?ValidateFn = null,
     call: CallFn,
     runtime_provider: RuntimeProviderKind = .none,
+    /// A successful result becomes the assistant's final output without another model turn.
+    result_disposition: ResultDisposition = .continue_model,
     captured_command_host: command_environment.Host = .native,
     captured_command_action: ?[]const u8 = null,
     captured_command_fn: ?CapturedCommandFn = null,

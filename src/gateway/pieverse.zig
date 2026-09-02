@@ -172,6 +172,7 @@ fn writeStaticTool(writer: *std.Io.Writer, alloc: Allocator, tool: model_tool_sc
     try model_tool_schema.writeCappedDescriptionJsonString(alloc, writer, tool.description);
     try writer.writeAll(",\"parameters\":");
     try model_tool_schema.writeObjectSchema(alloc, writer, tool.input_schema);
+    if (tool.strict_arguments) try writer.writeAll(",\"strict\":true");
     try writer.writeAll("}}");
 }
 
@@ -577,7 +578,8 @@ test "Pieverse request uses OpenAI chat completions tools and tenant model id" {
     const schema = model_tool_schema.FunctionSchema{
         .name = "market_search",
         .description = "Search configured trading venues",
-        .input_schema = .{},
+        .input_schema = .{ .additional_properties = false },
+        .strict_arguments = true,
     };
     const body = try buildRequest(std.testing.allocator, .{
         .model = "pieverse/auto/paid",
@@ -596,6 +598,7 @@ test "Pieverse request uses OpenAI chat completions tools and tenant model id" {
     try std.testing.expect(std.mem.find(u8, body, "\"model\":\"pieverse/auto/paid\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "\"stream_options\":{\"include_usage\":true}") != null);
     try std.testing.expect(std.mem.find(u8, body, "\"function\":{\"name\":\"market_search\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"additionalProperties\":false},\"strict\":true") != null);
 }
 
 test "Pieverse reducer assembles content tool deltas finish reason and usage" {

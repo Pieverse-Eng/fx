@@ -584,6 +584,12 @@ fn executeWorkspaceToolCallInner(
     var execution = command_backend.completion orelse
         toolExecutionResultFromDispatch(dispatched);
     execution.model_output = dispatched.body;
+    if (dispatched.status == .success) {
+        if (spec.result_disposition == .finish_turn) {
+            execution.finish_turn = true;
+            execution.finish_turn_output = dispatched.body;
+        }
+    }
     if (dispatched.status_detail) |detail| execution.status_detail = detail;
     return execution;
 }
@@ -740,6 +746,14 @@ fn executeRegisteredTool(
     else
         toolExecutionResultFromDispatch(dispatched);
     execution.model_output = dispatched.body;
+    if (dispatched.status == .success) {
+        if (registry.lookup(call.name)) |tool| {
+            if (tool.result_disposition == .finish_turn) {
+                execution.finish_turn = true;
+                execution.finish_turn_output = dispatched.body;
+            }
+        }
+    }
     if (dispatched.status_detail) |detail| execution.status_detail = detail;
     if (mcp_call_status == .input_required or
         (execution.status == .failure and
@@ -881,6 +895,7 @@ fn typedDispatchContext(ctx: Context, arena: Allocator) tool_dispatch.DispatchCo
         .max_read_file_lines = ctx.max_read_file_lines,
         .max_read_file_line_len = ctx.max_read_file_line_len,
         .max_tool_result_bytes = ctx.max_tool_result_bytes,
+        .current_turn_messages = ctx.current_turn_messages,
         .tool_result_dir = ctx.tool_result_dir,
         .session_child_capability = ctx.session_child_capability,
         .ephemeral_command_replay = ctx.ephemeral_command_replay,

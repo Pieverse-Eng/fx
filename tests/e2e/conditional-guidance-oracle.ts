@@ -15,6 +15,7 @@ export const CANONICAL_BUILTIN_NAMES = [
   "ask_user_question",
   "web_fetch",
   "web_search",
+  "finalize_market_result",
   "read_tool_result",
   "vision",
 ] as const;
