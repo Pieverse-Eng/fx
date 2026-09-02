@@ -3549,6 +3549,9 @@ test "gateway_system_prompt: candles use a bounded normalized contract" {
     try expectDefaultPromptContains("ordered by openTime ascending");
     try expectDefaultPromptContains("Normalize timestamps to Unix milliseconds");
     try expectDefaultPromptContains("Never infer, estimate, interpolate, or invent market values.");
+    try expectDefaultPromptContains("call `finalize_market_result` exactly once");
+    try expectDefaultPromptContains("exact command-output replay handles");
+    try expectDefaultPromptContains("never reproduce or rewrite its JSON yourself");
 }
 
 test "gateway_system_prompt: output is strict JSON" {

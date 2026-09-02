@@ -7416,7 +7416,9 @@ fn processQueuedPromptLoop(
                         try deps.push_system_notice(deps.ctx, notice);
                     }
                 }
-                const assistant_text = if (stop_state.retained_candidate != null)
+                const assistant_text = if (execution.finish_turn_output) |output|
+                    output
+                else if (stop_state.retained_candidate != null)
                     try hooks.prompt.joinVisibleSegments(
                         arena,
                         stop_state.retained_candidate,

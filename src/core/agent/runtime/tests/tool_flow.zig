@@ -5750,6 +5750,32 @@ test "processQueuedPrompt finish_turn notice preserves execution without final a
     try std.testing.expectEqual(@as(usize, 0), countText(&deps, "\n"));
 }
 
+test "processQueuedPrompt finish_turn output becomes final assistant text" {
+    const alloc = std.testing.allocator;
+    const calls = [_]ToolCall{toolCall("call_1", "read_file", "{\"path\":\"a\"}")};
+    const completions = [_]FakeCompletion{.{ .tool_calls = &calls }};
+    var gateway = FakeGateway.init(alloc, &completions);
+    defer gateway.deinit();
+    var deps = FakeAgentRuntimeDeps.init(alloc);
+    deps.exec_plans = &.{.{ .result = .{
+        .model_output = "tool memory",
+        .finish_turn = true,
+        .finish_turn_output = "{\"final\":true}",
+    } }};
+    defer deps.deinit();
+    var fixture = PromptFixture{};
+
+    try runFakePrompt(&gateway, &deps, fixture.config(), fixture.job());
+
+    try std.testing.expectEqual(@as(usize, 1), deps.history_turns.items.len);
+    const turn = deps.history_turns.items[0].assistant;
+    try std.testing.expectEqualStrings("{\"final\":true}", turn.assistant);
+    try std.testing.expectEqualStrings(
+        "tool memory",
+        turn.execution.tool_steps[0].tool_results[0].output,
+    );
+}
+
 test "processQueuedPrompt delivers semantic notice when the host supports it" {
     const alloc = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(alloc);

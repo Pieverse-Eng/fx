@@ -24,6 +24,7 @@ const read_file_impl = @import("../tools/filesystem/read_file.zig");
 const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const memory_impl = @import("../tools/memory/memory.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
+const finalize_market_result_impl = @import("../tools/market/finalize_market_result.zig");
 const terminal_impl = @import("../tools/terminal/terminal.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -1246,6 +1247,97 @@ pub const read_tool_result = ToolSpec{
     .irreversible_fn = read_tool_result_impl.isIrreversible,
 };
 
+const market_result_market_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "venue", .json_type = .string },
+        .{ .name = "symbol", .json_type = .string },
+        .{ .name = "product", .json_type = .string },
+        .{ .name = "quote", .json_type = .string },
+        .{ .name = "tradeReady", .json_type = .boolean },
+    },
+    .required = &.{ "venue", "symbol", "product", "quote", "tradeReady" },
+    .additional_properties = false,
+};
+
+const market_result_evidence_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "source", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 } },
+        .{ .name = "detail", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 500 } },
+    },
+    .required = &.{ "source", "detail" },
+    .additional_properties = false,
+};
+
+const market_result_sources_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "15m", .json_type = .string, .nullable = &.{ .description = "Null when this timeframe is unavailable." } },
+        .{ .name = "1h", .json_type = .string, .nullable = &.{ .description = "Null when this timeframe is unavailable." } },
+        .{ .name = "4h", .json_type = .string, .nullable = &.{ .description = "Null when this timeframe is unavailable." } },
+    },
+    .required = &.{ "15m", "1h", "4h" },
+    .additional_properties = false,
+};
+
+const market_result_fields_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "time", .json_type = .string },
+        .{ .name = "open", .json_type = .string },
+        .{ .name = "high", .json_type = .string },
+        .{ .name = "low", .json_type = .string },
+        .{ .name = "close", .json_type = .string },
+        .{ .name = "volume", .json_type = .string, .nullable = &.{ .description = "Null when the venue field is not base-asset volume." } },
+    },
+    .required = &.{ "time", "open", "high", "low", "close", "volume" },
+    .additional_properties = false,
+};
+
+const market_result_candles_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "sources", .json_type = .object, .shape = &.{ .object = &market_result_sources_schema } },
+        .{ .name = "rows", .json_type = .string, .description = "JSON Pointer to the candle row array; use an empty string when the response root is the array." },
+        .{ .name = "fields", .json_type = .object, .shape = &.{ .object = &market_result_fields_schema } },
+        .{ .name = "timeUnit", .json_type = .string, .shape = &.{ .enum_values = &.{ "ms", "s" } } },
+    },
+    .required = &.{ "sources", "rows", "fields", "timeUnit" },
+    .additional_properties = false,
+};
+
+const finalize_market_result_description =
+    "Finalize one verified market-search result from captured candle command outputs. Supply one shared JSON Pointer mapping for the selected venue and exact replay handles for 15m, 1h, and 4h commands. The tool normalizes, sorts, deduplicates, and limits candles, then returns the complete market-search JSON as the final answer. Call it once after selecting a market; do not copy candle rows into arguments.";
+
+pub const finalize_market_result = ToolSpec{
+    .name = "finalize_market_result",
+    .description = finalize_market_result_description,
+    .model_schema = .{
+        .name = "finalize_market_result",
+        .description = finalize_market_result_description,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "market", .json_type = .object, .shape = &.{ .object = &market_result_market_schema } },
+                .{ .name = "summary", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 600 } },
+                .{ .name = "evidence", .json_type = .array, .bounds = &.{ .max_items = 8 }, .shape = &.{ .array_objects = &market_result_evidence_schema } },
+                .{ .name = "candles", .json_type = .object, .shape = &.{ .object = &market_result_candles_schema } },
+            },
+            .required = &.{ "market", "summary", "evidence", "candles" },
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .finalize_market_result,
+    .activity_kind = .read,
+    .requires_approval = false,
+    .action_label = "Finalizing",
+    .completed_action_label = "Finalized",
+    .label_arg_kind = .none,
+    .label_arg_default = "market result",
+    .permission_target_kind = .none,
+    .decode = finalize_market_result_impl.decode,
+    .validate = finalize_market_result_impl.validate,
+    .call = finalize_market_result_impl.call,
+    .result_disposition = .finish_turn,
+    .reads_only_fn = finalize_market_result_impl.readsOnly,
+    .irreversible_fn = finalize_market_result_impl.isIrreversible,
+};
+
 pub const all = [_]tool_dispatch.Tool{
     glob_files,
     grep_files,
@@ -1267,6 +1359,7 @@ pub const all = [_]tool_dispatch.Tool{
     ask_user_question,
     vision,
     read_tool_result,
+    finalize_market_result,
 };
 
 pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
@@ -1299,7 +1392,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "2bd29939ef7288131a7a2c6f1cb97da0e76a351bf6a8f7e39c3010a444d31df9",
+        "41a068005cc7ac82cafbf4b777f592a4bcc386fa225c5c75f8adf0b5801845f9",
         &actual_hex,
     );
 }
@@ -1938,12 +2031,14 @@ pub const advertisement_order = [_][]const u8{
     "ask_user_question",
     "web_fetch",
     "web_search",
+    "finalize_market_result",
 };
 
 pub const read_only_tool_names = [_][]const u8{
     "read_file",
     "glob_files",
     "grep_files",
+    "finalize_market_result",
 };
 
 pub fn isReadOnlyToolName(name: []const u8) bool {

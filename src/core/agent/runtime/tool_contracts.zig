@@ -79,6 +79,7 @@ pub const ToolExecutionResult = struct {
     display_output: ?[]const u8 = null,
     diff_entry: ?DiffEntryPayload = null,
     finish_turn: bool = false,
+    finish_turn_output: ?[]const u8 = null,
     system_notice: ?[]const u8 = null,
     interactive_notice: ?types.SemanticNotice = null,
     context_notices: []const []const u8 = &.{},

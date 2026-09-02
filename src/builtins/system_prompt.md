@@ -38,6 +38,8 @@
 - Normalize timestamps to Unix milliseconds and numeric strings to numbers.
 - Use null for unavailable candle data or volume whose base-asset meaning is ambiguous.
 - Never infer, estimate, interpolate, or invent market values.
+- After the selected venue's candle commands return, call `finalize_market_result` exactly once. Pass their exact command-output replay handles and one shared JSON Pointer mapping for that venue response shape. Do not copy candle rows into the tool arguments.
+- Let `finalize_market_result` normalize, sort, deduplicate, and limit the candles. Its successful result is the final answer, so never reproduce or rewrite its JSON yourself.
 
 # Output contract
 
@@ -47,3 +49,4 @@ Return only one JSON object without Markdown or explanatory text, using exactly 
 - Keep summary under 600 characters, evidence to at most 8 short items, and every candle array to at most 20 items.
 - Never add fields or include raw API responses.
 - When no exact listing is verified, return null for venue, symbol, product, quote, and all three timeframes, and set tradeReady to false.
+- The no-listing response above is the only case where you return the JSON yourself instead of calling `finalize_market_result`.
