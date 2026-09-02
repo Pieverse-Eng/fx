@@ -699,9 +699,15 @@ fn executeRegisteredTool(
     }
     switch (runtime_provider) {
         .none => {},
-        .run_command => dispatch_ctx.run_command_backend = .{
-            .ctx = &command_backend,
-            .execute_fn = executeRunCommandBackend,
+        .run_command => {
+            dispatch_ctx.run_command_backend = .{
+                .ctx = &command_backend,
+                .execute_fn = executeRunCommandBackend,
+            };
+            dispatch_ctx.command_permission_backend = .{
+                .ctx = &command_backend,
+                .request_fn = requestNestedCommandPermission,
+            };
         },
         .vision => dispatch_ctx.vision_provider = .{
             .ctx = &vision_provider,
@@ -783,14 +789,38 @@ fn executeRunCommandBackend(
         request,
         authority,
     ) catch |err| {
+        if (request.nested) {
+            return .{ .failure = try std.fmt.allocPrint(
+                dispatch_ctx.allocator,
+                "Tool execution failed: {s}",
+                .{@errorName(err)},
+            ) };
+        }
         state.execution_error = err;
         return .{ .failure = try dispatch_ctx.allocator.dupe(u8, "") };
     };
-    state.completion = execution;
+    if (!request.nested) state.completion = execution;
     return switch (execution.status) {
         .success => .{ .success = @constCast(execution.model_output) },
         .failure => .{ .failure = @constCast(execution.model_output) },
     };
+}
+
+fn requestNestedCommandPermission(
+    maybe_ctx: ?*anyopaque,
+    alloc: Allocator,
+    call: ToolCall,
+    permission_mode: PermissionMode,
+) anyerror!command_admission.PermissionOutcome {
+    const raw_ctx = maybe_ctx orelse unreachable;
+    const state: *RunCommandBackendState = @ptrCast(@alignCast(raw_ctx));
+    return tool_admission.requestPermissionOutcome(
+        state.runtime.admissionInput(),
+        alloc,
+        call,
+        permission_mode,
+        state.runtime.session_grants,
+    );
 }
 
 fn toolExecutionResultFromDispatch(result: tool_dispatch.DispatchResult) ToolExecutionResult {
