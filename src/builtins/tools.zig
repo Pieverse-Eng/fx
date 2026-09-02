@@ -2038,7 +2038,6 @@ pub const read_only_tool_names = [_][]const u8{
     "read_file",
     "glob_files",
     "grep_files",
-    "finalize_market_result",
 };
 
 pub fn isReadOnlyToolName(name: []const u8) bool {
