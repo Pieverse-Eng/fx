@@ -1,5 +1,6 @@
 const std = @import("std");
 const command_replay_store = @import("../../core/session/command_replay_store.zig");
+const types = @import("../../core/shared/types.zig");
 const tool_dispatch = @import("../../core/tooling/tool_dispatch.zig");
 
 const Allocator = std.mem.Allocator;
@@ -141,8 +142,11 @@ fn extractTimeframe(
 ) !?[]const Candle {
     const source_value = try requireField(sources, timeframe);
     if (source_value == .null) return null;
-    const handle = try requireString(source_value);
-    const stdout = try readCapturedStdout(ctx, handle);
+    const stdout = switch (source_value) {
+        .string => |handle| try readCapturedStdout(ctx, handle),
+        .object => |source| try readCurrentTurnStdout(ctx, source),
+        else => return error.InvalidCandleSource,
+    };
     defer ctx.allocator.free(stdout);
     const trimmed = std.mem.trim(u8, stdout, " \t\r\n");
     var parsed = try std.json.parseFromSlice(std.json.Value, ctx.allocator, trimmed, .{});
@@ -187,6 +191,74 @@ fn extractTimeframe(
     }
     const start = if (unique.items.len > max_candles) unique.items.len - max_candles else 0;
     return try ctx.allocator.dupe(Candle, unique.items[start..]);
+}
+
+fn readCurrentTurnStdout(ctx: tool_dispatch.DispatchContext, source: std.json.ObjectMap) ![]u8 {
+    const call_index = try nonNegativeIndex(try requireField(source, "sourceToolCall"));
+    const result_id = if (source.get("resultId")) |value|
+        if (value == .null) null else try requireString(value)
+    else
+        null;
+
+    var message_index = ctx.current_turn_messages.len;
+    while (message_index > 0) {
+        message_index -= 1;
+        const assistant = ctx.current_turn_messages[message_index];
+        if (assistant.role != .assistant or assistant.tool_calls.len == 0) continue;
+        if (call_index >= assistant.tool_calls.len) return error.CandleToolCallNotFound;
+        const source_call = assistant.tool_calls[call_index];
+        if (!std.mem.eql(u8, source_call.name, "terminal")) return error.InvalidCandleSourceTool;
+        const result = findToolResult(ctx.current_turn_messages, message_index + 1, source_call.id) orelse
+            return error.CandleToolResultNotFound;
+        if (result.tool_name) |name| {
+            if (!std.mem.eql(u8, name, "terminal")) return error.InvalidCandleSourceTool;
+        }
+        if (result.tool_result_status) |status| {
+            if (status != .success) return error.CandleToolFailed;
+        }
+        if (result_id) |id| return batchChildStdout(ctx.allocator, result.content orelse return error.CandleToolResultMissing, id);
+        if (result.tool_result_memory) |memory| {
+            if (memory.command_output_replay) |replay| switch (replay) {
+                .available => |descriptor| return readCapturedStdout(ctx, descriptor.handle),
+                .unavailable => {},
+            };
+        }
+        return envelopeStdout(ctx.allocator, result.content orelse return error.CandleToolResultMissing);
+    }
+    return error.CandleToolCallNotFound;
+}
+
+fn findToolResult(messages: []const types.ChatMessage, start: usize, call_id: []const u8) ?types.ChatMessage {
+    for (messages[start..]) |message| {
+        if (message.role == .assistant) break;
+        if (message.role != .tool) continue;
+        if (message.tool_call_id) |candidate| {
+            if (std.mem.eql(u8, candidate, call_id)) return message;
+        }
+    }
+    return null;
+}
+
+fn batchChildStdout(alloc: Allocator, content: []const u8, result_id: []const u8) ![]u8 {
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, content, .{});
+    defer parsed.deinit();
+    const results = try requireArray(parsed.value);
+    for (results.items) |value| {
+        const item = try requireObject(value);
+        if (!std.mem.eql(u8, try requireString(try requireField(item, "id")), result_id)) continue;
+        if (!std.mem.eql(u8, try requireString(try requireField(item, "status")), "success")) return error.CandleToolFailed;
+        return envelopeStdout(alloc, try requireString(try requireField(item, "output")));
+    }
+    return error.CandleBatchResultNotFound;
+}
+
+fn envelopeStdout(alloc: Allocator, content: []const u8) ![]u8 {
+    const open = "<stdout>\n";
+    const close = "\n</stdout>";
+    const start = if (std.mem.indexOf(u8, content, open)) |index| index + open.len else 0;
+    const end = if (std.mem.indexOfPos(u8, content, start, close)) |index| index else content.len;
+    if (end < start) return error.InvalidCommandEnvelope;
+    return alloc.dupe(u8, content[start..end]);
 }
 
 fn candleLessThan(_: void, left: Candle, right: Candle) bool {
@@ -293,6 +365,11 @@ fn nullableNumeric(value: std.json.Value) !?f64 {
     return value_number;
 }
 
+fn nonNegativeIndex(value: std.json.Value) !usize {
+    if (value != .integer or value.integer < 0) return error.InvalidToolCallIndex;
+    return std.math.cast(usize, value.integer) orelse error.InvalidToolCallIndex;
+}
+
 pub fn readsOnly(_: tool_dispatch.ToolInput) bool {
     return true;
 }
@@ -345,4 +422,55 @@ test "finalizer reads replay handles and emits normalized market result" {
     try std.testing.expectEqual(@as(i64, 1000), candles[0].object.get("openTime").?.integer);
     try std.testing.expectEqual(@as(i64, 2000), candles[1].object.get("openTime").?.integer);
     try std.testing.expectEqual(true, parsed.value.object.get("tradeReady").?.bool);
+}
+
+test "finalizer reads ordinary terminal results from the current turn" {
+    const alloc = std.testing.allocator;
+    const calls = [_]types.ToolCall{
+        .{ .id = "call_15m", .name = "terminal", .arguments_json = "{}" },
+        .{ .id = "call_1h", .name = "terminal", .arguments_json = "{}" },
+        .{ .id = "call_4h", .name = "terminal", .arguments_json = "{}" },
+    };
+    const output = "exit_code=0\n<stdout>\n[[2000,\"2\",\"4\",\"1\",\"3\",\"8\"],[1000,\"1\",\"3\",\"0.5\",\"2\",\"7\"]]\n</stdout>\n";
+    const messages = [_]types.ChatMessage{
+        .{ .role = .assistant, .tool_calls = &calls },
+        .{ .role = .tool, .content = output, .tool_call_id = "call_15m", .tool_name = "terminal", .tool_result_status = .success },
+        .{ .role = .tool, .content = output, .tool_call_id = "call_1h", .tool_name = "terminal", .tool_result_status = .success },
+        .{ .role = .tool, .content = output, .tool_call_id = "call_4h", .tool_name = "terminal", .tool_result_status = .success },
+    };
+    const args =
+        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD","tradeReady":true},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":null},"1h":{"sourceToolCall":1,"resultId":null},"4h":{"sourceToolCall":2,"resultId":null}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
+    ;
+    const result = try finalize(.{ .allocator = alloc, .current_turn_messages = &messages }, args);
+    defer alloc.free(result);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, result, .{});
+    defer parsed.deinit();
+    const candles = parsed.value.object.get("timeframes").?.object.get("15m").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), candles.len);
+    try std.testing.expectEqual(@as(i64, 1000), candles[0].object.get("openTime").?.integer);
+}
+
+test "finalizer selects terminal batch children without copied candle rows" {
+    const alloc = std.testing.allocator;
+    const calls = [_]types.ToolCall{
+        .{ .id = "call_batch", .name = "terminal", .arguments_json = "{}" },
+    };
+    const batch_output =
+        \\[{"id":"15m","status":"success","output":"exit_code=0\n<stdout>\n[[1000,\"1\",\"3\",\"0.5\",\"2\",\"7\"]]\n</stdout>\n"},{"id":"1h","status":"success","output":"exit_code=0\n<stdout>\n[[2000,\"2\",\"4\",\"1\",\"3\",\"8\"]]\n</stdout>\n"},{"id":"4h","status":"success","output":"exit_code=0\n<stdout>\n[[3000,\"3\",\"5\",\"2\",\"4\",\"9\"]]\n</stdout>\n"}]
+    ;
+    const messages = [_]types.ChatMessage{
+        .{ .role = .assistant, .tool_calls = &calls },
+        .{ .role = .tool, .content = batch_output, .tool_call_id = "call_batch", .tool_name = "terminal", .tool_result_status = .success },
+    };
+    const args =
+        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD","tradeReady":true},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":"15m"},"1h":{"sourceToolCall":0,"resultId":"1h"},"4h":{"sourceToolCall":0,"resultId":"4h"}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
+    ;
+    const result = try finalize(.{ .allocator = alloc, .current_turn_messages = &messages }, args);
+    defer alloc.free(result);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, result, .{});
+    defer parsed.deinit();
+    const timeframes = parsed.value.object.get("timeframes").?.object;
+    try std.testing.expectEqual(@as(i64, 1000), timeframes.get("15m").?.array.items[0].object.get("openTime").?.integer);
+    try std.testing.expectEqual(@as(i64, 2000), timeframes.get("1h").?.array.items[0].object.get("openTime").?.integer);
+    try std.testing.expectEqual(@as(i64, 3000), timeframes.get("4h").?.array.items[0].object.get("openTime").?.integer);
 }

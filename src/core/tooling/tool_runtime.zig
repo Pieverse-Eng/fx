@@ -895,6 +895,7 @@ fn typedDispatchContext(ctx: Context, arena: Allocator) tool_dispatch.DispatchCo
         .max_read_file_lines = ctx.max_read_file_lines,
         .max_read_file_line_len = ctx.max_read_file_line_len,
         .max_tool_result_bytes = ctx.max_tool_result_bytes,
+        .current_turn_messages = ctx.current_turn_messages,
         .tool_result_dir = ctx.tool_result_dir,
         .session_child_capability = ctx.session_child_capability,
         .ephemeral_command_replay = ctx.ephemeral_command_replay,

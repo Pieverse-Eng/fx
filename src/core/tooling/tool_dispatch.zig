@@ -208,6 +208,7 @@ pub const DispatchContext = struct {
     max_read_file_lines: usize = default_max_read_file_lines,
     max_read_file_line_len: usize = default_max_read_file_line_len,
     max_tool_result_bytes: usize = tool_result_limits.default_max_tool_result_bytes,
+    current_turn_messages: []const core_types.ChatMessage = &.{},
     skills_dir: []const u8 = "",
     context_limits: context_limits.Values = .{},
     permission_ctx: ?*const PermissionContext = null,

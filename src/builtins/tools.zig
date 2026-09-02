@@ -1268,11 +1268,20 @@ const market_result_evidence_schema = model_tool_schema.ObjectSchema{
     .additional_properties = false,
 };
 
+const market_result_source_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "sourceToolCall", .json_type = .integer, .bounds = &.{ .minimum = 0 }, .description = "Zero-based index in the most recent assistant tool-call batch containing the candle command." },
+        .{ .name = "resultId", .json_type = .string, .nullable = &.{ .description = "Child result ID for a terminal batch result; null for an ordinary terminal exec." } },
+    },
+    .required = &.{ "sourceToolCall", "resultId" },
+    .additional_properties = false,
+};
+
 const market_result_sources_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
-        .{ .name = "15m", .json_type = .string, .nullable = &.{ .description = "Null when this timeframe is unavailable." } },
-        .{ .name = "1h", .json_type = .string, .nullable = &.{ .description = "Null when this timeframe is unavailable." } },
-        .{ .name = "4h", .json_type = .string, .nullable = &.{ .description = "Null when this timeframe is unavailable." } },
+        .{ .name = "15m", .json_type = .object, .nullable = &.{ .description = "Null when this timeframe is unavailable." }, .shape = &.{ .object = &market_result_source_schema } },
+        .{ .name = "1h", .json_type = .object, .nullable = &.{ .description = "Null when this timeframe is unavailable." }, .shape = &.{ .object = &market_result_source_schema } },
+        .{ .name = "4h", .json_type = .object, .nullable = &.{ .description = "Null when this timeframe is unavailable." }, .shape = &.{ .object = &market_result_source_schema } },
     },
     .required = &.{ "15m", "1h", "4h" },
     .additional_properties = false,
@@ -1303,7 +1312,7 @@ const market_result_candles_schema = model_tool_schema.ObjectSchema{
 };
 
 const finalize_market_result_description =
-    "Finalize one verified market-search result from captured candle command outputs. Supply one shared JSON Pointer mapping for the selected venue and exact replay handles for 15m, 1h, and 4h commands. The tool normalizes, sorts, deduplicates, and limits candles, then returns the complete market-search JSON as the final answer. Call it once after selecting a market; do not copy candle rows into arguments.";
+    "Finalize one verified market-search result from prior terminal candle outputs. Reference each ordinary terminal result by its zero-based sourceToolCall index in the most recent tool-call batch; for a terminal batch, reuse its index and provide each child resultId. Supply one shared JSON Pointer mapping for the selected venue response shape. The tool normalizes, sorts, deduplicates, and limits candles, then returns the complete market-search JSON as the final answer. Call it once after selecting a market; do not copy candle rows into arguments.";
 
 pub const finalize_market_result = ToolSpec{
     .name = "finalize_market_result",
@@ -1392,7 +1401,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "41a068005cc7ac82cafbf4b777f592a4bcc386fa225c5c75f8adf0b5801845f9",
+        "19a87c191a709c83a7c1b2b7ae95f677663c6aa0f62ff1cb590e27c54d8ddf9a",
         &actual_hex,
     );
 }
@@ -2096,6 +2105,7 @@ test "built-in tools register exact active local order" {
         "ask_user_question",
         "vision",
         "read_tool_result",
+        "finalize_market_result",
     };
 
     try std.testing.expectEqual(expected_names.len, all.len);

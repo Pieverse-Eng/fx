@@ -38,7 +38,7 @@
 - Normalize timestamps to Unix milliseconds and numeric strings to numbers.
 - Use null for unavailable candle data or volume whose base-asset meaning is ambiguous.
 - Never infer, estimate, interpolate, or invent market values.
-- When all selected-venue candle data came from terminal commands, call `finalize_market_result` exactly once. Pass their exact command-output replay handles and one shared JSON Pointer mapping for that venue response shape. Do not copy candle rows into the tool arguments.
+- When all selected-venue candle data came from terminal commands, call `finalize_market_result` exactly once. Reference each result by its zero-based tool-call index in the most recent assistant tool-call batch. For a terminal batch result, reuse that tool-call index and specify each child result ID. Pass one shared JSON Pointer mapping for that venue response shape. Do not copy candle rows into the tool arguments.
 - Let `finalize_market_result` normalize, sort, deduplicate, and limit the candles. Its successful result is the final answer, so never reproduce or rewrite its JSON yourself.
 
 # Output contract
