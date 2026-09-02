@@ -25,6 +25,7 @@ const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const memory_impl = @import("../tools/memory/memory.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
 const finalize_market_result_impl = @import("../tools/market/finalize_market_result.zig");
+const rank_venue_costs_impl = @import("../tools/market/rank_venue_costs.zig");
 const terminal_impl = @import("../tools/terminal/terminal.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -1277,6 +1278,66 @@ const market_result_source_schema = model_tool_schema.ObjectSchema{
     .additional_properties = false,
 };
 
+const venue_cost_book_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "source", .json_type = .object, .shape = &.{ .object = &market_result_source_schema } },
+        .{ .name = "bidsPointer", .json_type = .string, .description = "JSON Pointer to the ordered bid-level array." },
+        .{ .name = "asksPointer", .json_type = .string, .description = "JSON Pointer to the ordered ask-level array." },
+        .{ .name = "pricePointer", .json_type = .string, .description = "JSON Pointer from one level to its price." },
+        .{ .name = "sizePointer", .json_type = .string, .description = "JSON Pointer from one level to its positive available size." },
+        .{ .name = "identityPointer", .json_type = .string, .nullable = &.{ .description = "Optional JSON Pointer to the exact returned market symbol." } },
+    },
+    .required = &.{ "source", "bidsPointer", "asksPointer", "pricePointer", "sizePointer", "identityPointer" },
+    .additional_properties = false,
+};
+
+const venue_cost_candidate_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "venue", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 128 } },
+        .{ .name = "symbol", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 128 } },
+        .{ .name = "product", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
+        .{ .name = "quote", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 128 } },
+        .{ .name = "book", .json_type = .object, .shape = &.{ .object = &venue_cost_book_schema } },
+    },
+    .required = &.{ "venue", "symbol", "product", "quote", "book" },
+    .additional_properties = false,
+};
+
+const rank_venue_costs_description =
+    "Rank verified equivalent venue listings by public base taker fee plus the side-specific top-of-book spread cost. First query every candidate order book in one terminal batch, then reference those captured results here by sourceToolCall and resultId with bounded JSON Pointers. The tool reads fee evidence from the matching installed market-search skill, normalizes and validates the books, and returns selected, alternatives, and excluded candidates. It never discovers listings, runs commands, or places orders.";
+
+pub const rank_venue_costs = ToolSpec{
+    .name = "rank_venue_costs",
+    .description = rank_venue_costs_description,
+    .model_schema = .{
+        .name = "rank_venue_costs",
+        .description = rank_venue_costs_description,
+        .strict_arguments = true,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "side", .json_type = .string, .shape = &.{ .enum_values = &.{ "buy", "sell" } } },
+                .{ .name = "candidates", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 16 }, .shape = &.{ .array_objects = &venue_cost_candidate_schema } },
+            },
+            .required = &.{ "side", "candidates" },
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .rank_venue_costs,
+    .activity_kind = .read,
+    .requires_approval = false,
+    .action_label = "Ranking",
+    .completed_action_label = "Ranked",
+    .label_arg_kind = .none,
+    .label_arg_default = "venue costs",
+    .permission_target_kind = .none,
+    .decode = rank_venue_costs_impl.decode,
+    .validate = rank_venue_costs_impl.validate,
+    .call = rank_venue_costs_impl.call,
+    .result_disposition = .continue_model,
+    .reads_only_fn = rank_venue_costs_impl.readsOnly,
+    .irreversible_fn = rank_venue_costs_impl.isIrreversible,
+};
+
 const market_result_sources_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
         .{ .name = "15m", .json_type = .object, .nullable = &.{ .description = "Null when this timeframe is unavailable." }, .shape = &.{ .object = &market_result_source_schema } },
@@ -1312,7 +1373,7 @@ const market_result_candles_schema = model_tool_schema.ObjectSchema{
 };
 
 const finalize_market_result_description =
-    "Finalize one verified market-search result from prior terminal candle outputs. Reference each ordinary terminal result by its zero-based sourceToolCall index in the most recent tool-call batch; for a terminal batch, reuse its index and provide each child resultId. Supply one shared JSON Pointer mapping for the selected venue response shape. The tool normalizes, sorts, deduplicates, and limits candles, then returns the complete market-search JSON as the final answer. Call it once after selecting a market; do not copy candle rows into arguments.";
+    "Finalize the ranked market-search winner from a prior rank_venue_costs result and terminal candle outputs. The market identity must exactly match the deterministic ranking winner. Reference each prior result by its zero-based sourceToolCall index in that tool-call batch; for a terminal batch, reuse its index and provide each child resultId. Supply one shared JSON Pointer mapping for the selected venue candle shape. The tool binds the ranking, normalizes candles, and returns the complete market-search JSON as the final answer.";
 
 pub const finalize_market_result = ToolSpec{
     .name = "finalize_market_result",
@@ -1324,11 +1385,12 @@ pub const finalize_market_result = ToolSpec{
         .input_schema = .{
             .properties = &.{
                 .{ .name = "market", .json_type = .object, .shape = &.{ .object = &market_result_market_schema } },
+                .{ .name = "ranking", .json_type = .object, .shape = &.{ .object = &market_result_source_schema }, .description = "Reference to the successful rank_venue_costs result. resultId must be null." },
                 .{ .name = "summary", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 600 } },
                 .{ .name = "evidence", .json_type = .array, .bounds = &.{ .max_items = 8 }, .shape = &.{ .array_objects = &market_result_evidence_schema } },
                 .{ .name = "candles", .json_type = .object, .shape = &.{ .object = &market_result_candles_schema } },
             },
-            .required = &.{ "market", "summary", "evidence", "candles" },
+            .required = &.{ "market", "ranking", "summary", "evidence", "candles" },
             .additional_properties = false,
         },
     },
@@ -1369,6 +1431,7 @@ pub const all = [_]tool_dispatch.Tool{
     ask_user_question,
     vision,
     read_tool_result,
+    rank_venue_costs,
     finalize_market_result,
 };
 
@@ -1402,7 +1465,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "19a87c191a709c83a7c1b2b7ae95f677663c6aa0f62ff1cb590e27c54d8ddf9a",
+        "ab924bc686e4254af493707033ea7a4a55b39584962e6595b7a5affd165e84fa",
         &actual_hex,
     );
 }
@@ -2041,6 +2104,7 @@ pub const advertisement_order = [_][]const u8{
     "ask_user_question",
     "web_fetch",
     "web_search",
+    "rank_venue_costs",
     "finalize_market_result",
 };
 
