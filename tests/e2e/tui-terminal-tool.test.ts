@@ -1526,6 +1526,53 @@ test.skipIf(!tmuxAvailable())(
 );
 
 test.skipIf(!tmuxAvailable())(
+  "terminal batch_exec runs independently admitted commands concurrently",
+  async () => {
+    const fixture = createFixture("fx-tui-terminal-batch-exec-");
+    const firstStarted = join(fixture.workspace, "batch-first-started");
+    const secondStarted = join(fixture.workspace, "batch-second-started");
+    const firstCommand =
+      `touch ${JSON.stringify(firstStarted)}; ` +
+      `while [ ! -e ${JSON.stringify(secondStarted)} ]; do sleep 0.01; done; ` +
+      "printf BATCH_FIRST_OK";
+    const secondCommand =
+      `touch ${JSON.stringify(secondStarted)}; ` +
+      `while [ ! -e ${JSON.stringify(firstStarted)} ]; do sleep 0.01; done; ` +
+      "printf BATCH_SECOND_OK";
+    const gateway = startFakeGateway([
+      fakeGatewayToolCall("terminal_batch_exec", "terminal", {
+        action: "batch_exec",
+        commands: [
+          { id: "first", command: firstCommand },
+          { id: "second", command: secondCommand },
+        ],
+        timeout_ms: 5_000,
+        max_concurrency: 2,
+      }),
+      (body) => {
+        const result = toolResultText(body, "terminal_batch_exec");
+        expect(result).toContain("BATCH_FIRST_OK");
+        expect(result).toContain("BATCH_SECOND_OK");
+        expect(result.indexOf('"id":"first"')).toBeLessThan(
+          result.indexOf('"id":"second"'),
+        );
+        return fakeGatewayFinalText("Terminal batch execution verified");
+      },
+    ]);
+    gateways.push(gateway);
+    const active = await launch(fixture, gateway);
+
+    await active.sendText("Run both independent fixture commands as one terminal batch.");
+    await active.waitForText("Terminal batch execution verified", TIMEOUT);
+    expect(existsSync(firstStarted)).toBe(true);
+    expect(existsSync(secondStarted)).toBe(true);
+    expect(gateway.requests).toHaveLength(2);
+    expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
+  },
+  TIMEOUT,
+);
+
+test.skipIf(!tmuxAvailable())(
   "terminal exec treats textual null placeholders as absent fields",
   async () => {
     const fixture = createFixture("fx-tui-terminal-null-placeholder-");

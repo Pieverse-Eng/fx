@@ -8,6 +8,7 @@ const debug_trace = @import("../../core/shared/debug_trace.zig");
 const types = @import("../../core/shared/types.zig");
 const sort_utils = @import("../../core/shared/sort_utils.zig");
 const command_environment = @import("../../core/execution/command_environment.zig");
+const command_admission = @import("../../core/permissions/command_admission.zig");
 const io_mod = @import("../../core/shared/io.zig");
 const pathing = @import("../../core/workspace/pathing.zig");
 const tool_dispatch = @import("../../core/tooling/tool_dispatch.zig");
@@ -15,15 +16,19 @@ const tool_args = @import("../../core/tooling/tool_args.zig");
 const tool_result_errors = @import("../../core/tooling/tool_result_errors.zig");
 const workspace_access = @import("../../core/workspace/workspace_access.zig");
 const shell_resolver = @import("../../core/terminal/shell_resolver.zig");
+const host_target = @import("../../core/hosts/target.zig");
 
 const Allocator = std.mem.Allocator;
 
 pub const exec_timeout_min_ms: u64 = 1;
 pub const exec_timeout_max_ms: u64 = 600_000;
+pub const batch_exec_max_commands: usize = 16;
+pub const batch_exec_max_concurrency: usize = 8;
 
 const ShellKind = enum { user_login, executable };
 pub const Action = enum {
     exec,
+    batch_exec,
     start,
     read,
     screen,
@@ -35,6 +40,11 @@ pub const Action = enum {
     resize,
     signal,
     close,
+};
+
+pub const BatchCommandInput = struct {
+    id: []const u8,
+    command: []const u8,
 };
 const ReturnKind = enum { started, exit, quiet, match };
 const PayloadKind = enum { text, keys, controls, paste };
@@ -142,6 +152,8 @@ pub const Input = struct {
 
     cwd: ?[]const u8 = null,
     command: ?[]const u8 = null,
+    commands: []const BatchCommandInput = &.{},
+    max_concurrency: ?u8 = null,
     profile: ?command_environment.Profile = null,
     timeout_ms: ?u64 = null,
     shell: ?ShellInput = null,
@@ -187,6 +199,10 @@ pub fn actionFieldContract(action: Action) ActionFieldContract {
         .exec => .{
             .allowed = &.{ "action", "command", "cwd", "profile", "timeout_ms" },
             .required = &.{ "action", "command", "timeout_ms" },
+        },
+        .batch_exec => .{
+            .allowed = &.{ "action", "commands", "cwd", "profile", "timeout_ms", "max_concurrency" },
+            .required = &.{ "action", "commands", "timeout_ms" },
         },
         .start => .{
             .allowed = &.{ "action", "cwd", "command", "profile", "shell", "backend", "return_when", "wait_ceiling_ms", "dimensions", "initial_monitors" },
@@ -399,7 +415,7 @@ pub fn decode(
             "terminal arguments must match the advertised action schema",
         ) };
     };
-    if (action == .exec) {
+    if (action == .exec or action == .batch_exec) {
         if (raw.object.get("timeout_ms")) |timeout_value| {
             if (timeout_value != .integer) {
                 return .{ .failure = try ctx.allocator.dupe(
@@ -501,11 +517,32 @@ pub fn validate(
     var arena_state = std.heap.ArenaAllocator.init(ctx.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    if (input.action == .exec) {
-        if (input.command == null) {
-            return try ctx.allocator.dupe(u8, "terminal exec arguments are invalid: MissingCommand");
+    if (input.action == .exec or input.action == .batch_exec) {
+        if (input.action == .batch_exec) {
+            if (input.commands.len == 0 or input.commands.len > batch_exec_max_commands) {
+                return try ctx.allocator.dupe(u8, "terminal batch_exec arguments are invalid: InvalidCommandCount");
+            }
+            const concurrency = input.max_concurrency orelse @min(input.commands.len, batch_exec_max_concurrency);
+            if (concurrency == 0 or concurrency > batch_exec_max_concurrency) {
+                return try ctx.allocator.dupe(u8, "terminal batch_exec arguments are invalid: InvalidConcurrency");
+            }
+            for (input.commands, 0..) |command, index| {
+                if (command.id.len == 0 or command.command.len == 0 or command.command.len > contracts.max_command_bytes) {
+                    return try ctx.allocator.dupe(u8, "terminal batch_exec arguments are invalid: InvalidCommand");
+                }
+                for (input.commands[0..index]) |previous| {
+                    if (std.mem.eql(u8, previous.id, command.id)) {
+                        return try ctx.allocator.dupe(u8, "terminal batch_exec arguments are invalid: DuplicateCommandId");
+                    }
+                }
+            }
         }
-        if (input.command.?.len > contracts.max_command_bytes) {
+        if (input.command == null) {
+            if (input.action == .exec) {
+                return try ctx.allocator.dupe(u8, "terminal exec arguments are invalid: MissingCommand");
+            }
+        }
+        if (input.command != null and input.command.?.len > contracts.max_command_bytes) {
             return try ctx.allocator.dupe(u8, "terminal exec arguments are invalid: InvalidCommand");
         }
         const timeout_ms = input.timeout_ms orelse {
@@ -557,10 +594,243 @@ pub fn call(
     const owned = erased.as(OwnedInput);
     const input = &owned.value;
     if (input.action == .exec) return callExec(ctx, input);
+    if (input.action == .batch_exec) return .{
+        .failure = try ctx.allocator.dupe(u8, "terminal batch_exec requires the registered runtime adapter"),
+    };
     if (input.action == .write and input.write != null and !owned.lease_explicit) {
         return call_atomic_write(ctx, input);
     }
     return callDurable(ctx, input);
+}
+
+const BatchExecSlot = struct {
+    arena_state: std.heap.ArenaAllocator,
+    id: []const u8,
+    call_id: []const u8,
+    arguments_json: []const u8,
+    execution_ctx: ?tool_dispatch.DispatchContext = null,
+    result: ?tool_dispatch.DispatchResult = null,
+    execution_error: ?anyerror = null,
+
+    fn call(self: *const BatchExecSlot) types.ToolCall {
+        return .{
+            .id = self.call_id,
+            .name = "terminal",
+            .arguments_json = self.arguments_json,
+        };
+    }
+
+    fn deinit(self: *BatchExecSlot) void {
+        self.arena_state.deinit();
+        self.* = undefined;
+    }
+};
+
+const BatchExecWorkers = struct {
+    registry: tool_dispatch.Registry,
+    slots: []BatchExecSlot,
+    next_index: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+
+    fn run(self: *BatchExecWorkers) void {
+        while (true) {
+            const index = self.next_index.fetchAdd(1, .monotonic);
+            if (index >= self.slots.len) return;
+            const slot = &self.slots[index];
+            if (slot.result != null or slot.execution_error != null) continue;
+            const execution_ctx = slot.execution_ctx orelse continue;
+            if (execution_ctx.cancel_flag) |flag| {
+                if (flag.load(.seq_cst)) {
+                    slot.execution_error = error.Cancelled;
+                    continue;
+                }
+            }
+            slot.result = tool_dispatch.dispatchAuthorizedToolCall(
+                execution_ctx,
+                self.registry,
+                slot.call(),
+            ) catch |err| {
+                slot.execution_error = err;
+                continue;
+            };
+        }
+    }
+};
+
+fn isBatchExecArguments(alloc: Allocator, arguments_json: []const u8) Allocator.Error!bool {
+    var parsed = std.json.parseFromSlice(std.json.Value, alloc, arguments_json, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return false,
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) return false;
+    const action = parsed.value.object.get("action") orelse return false;
+    return action == .string and std.mem.eql(u8, action.string, "batch_exec");
+}
+
+fn batchChildArguments(
+    alloc: Allocator,
+    input: *const Input,
+    command: BatchCommandInput,
+) Allocator.Error![]u8 {
+    var output: std.Io.Writer.Allocating = .init(alloc);
+    defer output.deinit();
+    std.json.Stringify.value(.{
+        .action = "exec",
+        .command = command.command,
+        .cwd = input.cwd,
+        .profile = input.profile,
+        .timeout_ms = input.timeout_ms.?,
+    }, .{}, &output.writer) catch return error.OutOfMemory;
+    return output.toOwnedSlice();
+}
+
+fn batchExecResult(
+    alloc: Allocator,
+    slots: []const BatchExecSlot,
+) Allocator.Error!tool_dispatch.DispatchResult {
+    var output: std.Io.Writer.Allocating = .init(alloc);
+    defer output.deinit();
+    output.writer.writeAll("{\"results\":[") catch return error.OutOfMemory;
+    for (slots, 0..) |slot, index| {
+        if (index > 0) output.writer.writeByte(',') catch return error.OutOfMemory;
+        output.writer.writeAll("{\"id\":") catch return error.OutOfMemory;
+        std.json.Stringify.value(slot.id, .{}, &output.writer) catch return error.OutOfMemory;
+        if (slot.result) |result| {
+            output.writer.writeAll(",\"status\":") catch return error.OutOfMemory;
+            std.json.Stringify.value(@tagName(result.status), .{}, &output.writer) catch return error.OutOfMemory;
+            output.writer.writeAll(",\"output\":") catch return error.OutOfMemory;
+            std.json.Stringify.value(result.body, .{}, &output.writer) catch return error.OutOfMemory;
+        } else {
+            const err = slot.execution_error orelse error.InvalidToolArguments;
+            output.writer.writeAll(",\"status\":\"failure\",\"output\":") catch return error.OutOfMemory;
+            const message = try std.fmt.allocPrint(alloc, "Tool execution failed: {s}", .{@errorName(err)});
+            defer alloc.free(message);
+            std.json.Stringify.value(message, .{}, &output.writer) catch return error.OutOfMemory;
+        }
+        output.writer.writeByte('}') catch return error.OutOfMemory;
+    }
+    output.writer.writeAll("]}") catch return error.OutOfMemory;
+    return .{ .status = .success, .body = try output.toOwnedSlice() };
+}
+
+fn executeBatchExec(
+    ctx: tool_dispatch.DispatchContext,
+    registry: tool_dispatch.Registry,
+    outer_call: types.ToolCall,
+) tool_dispatch.DispatchError!tool_dispatch.DispatchResult {
+    if (registry.lookup("terminal") == null) return .{
+        .status = .failure,
+        .body = try ctx.allocator.dupe(u8, "terminal batch_exec is unavailable"),
+    };
+    const decoded = try decode(ctx, outer_call.arguments_json);
+    const erased = switch (decoded) {
+        .failure => |reason| return .{ .status = .failure, .body = reason },
+        .input => |input| input,
+    };
+    defer erased.deinit(ctx.allocator);
+    if (try validate(ctx, erased)) |reason| return .{ .status = .failure, .body = reason };
+    const input = &erased.as(OwnedInput).value;
+
+    const slots = try std.heap.c_allocator.alloc(BatchExecSlot, input.commands.len);
+    defer std.heap.c_allocator.free(slots);
+    var initialized: usize = 0;
+    defer for (slots[0..initialized]) |*slot| slot.deinit();
+
+    for (input.commands, 0..) |command, index| {
+        var slot_arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+        errdefer slot_arena.deinit();
+        const slot_alloc = slot_arena.allocator();
+        const call_id = try std.fmt.allocPrint(slot_alloc, "{s}:{s}", .{ outer_call.id, command.id });
+        const arguments_json = try batchChildArguments(slot_alloc, input, command);
+        slots[index] = .{
+            .arena_state = slot_arena,
+            .id = command.id,
+            .call_id = call_id,
+            .arguments_json = arguments_json,
+        };
+        initialized += 1;
+
+        var child_ctx = ctx;
+        child_ctx.allocator = slot_alloc;
+        child_ctx.execution_authority = null;
+        child_ctx.nested_run_command = true;
+        child_ctx.tool_call_id = call_id;
+        child_ctx.tool_call_name = "terminal";
+        child_ctx.inner_usage_sink = null;
+        child_ctx.web_search_completion_sink = null;
+        child_ctx.web_fetch_completion_sink = null;
+        child_ctx.tool_result_memory_sink = null;
+        if (child_ctx.output_chunk_lifecycle_id) |lifecycle| {
+            child_ctx.output_chunk_lifecycle_id = .{ .turn_id = lifecycle.turn_id, .call_id = call_id };
+        }
+
+        const permission_backend = ctx.command_permission_backend orelse {
+            slots[index].result = .{
+                .status = .failure,
+                .body = try slot_alloc.dupe(u8, "terminal batch child permission backend is unavailable"),
+            };
+            continue;
+        };
+        const outcome = permission_backend.request(
+            slot_alloc,
+            slots[index].call(),
+            ctx.permission_mode,
+        ) catch |err| {
+            slots[index].execution_error = err;
+            continue;
+        };
+        if (outcome.tool_failure) |failure| {
+            slots[index].result = .{
+                .status = .failure,
+                .body = try slot_alloc.dupe(u8, failure),
+            };
+            continue;
+        }
+        if (outcome.decision.isDenied()) {
+            const reason = outcome.denial_reason orelse outcome.decision.denialReason() orelse .permission_required;
+            slots[index].result = .{
+                .status = .failure,
+                .body = try tool_result_errors.toolPermissionDeniedJson(slot_alloc, "terminal", reason),
+            };
+            continue;
+        }
+        child_ctx.execution_authority = outcome.execution_authority orelse {
+            slots[index].result = .{
+                .status = .failure,
+                .body = try slot_alloc.dupe(u8, "terminal batch child permission allowed without execution authority"),
+            };
+            continue;
+        };
+        slots[index].execution_ctx = child_ctx;
+    }
+
+    var workers = BatchExecWorkers{ .registry = registry, .slots = slots };
+    const concurrency: usize = input.max_concurrency orelse @intCast(@min(input.commands.len, batch_exec_max_concurrency));
+    if (comptime host_target.is_wasm) {
+        workers.run();
+    } else {
+        const thread_count = @min(@as(usize, concurrency), input.commands.len);
+        const threads = try ctx.allocator.alloc(std.Thread, thread_count - 1);
+        defer ctx.allocator.free(threads);
+        var started: usize = 0;
+        defer for (threads[0..started]) |thread| thread.join();
+        while (started < threads.len) : (started += 1) {
+            threads[started] = std.Thread.spawn(.{}, BatchExecWorkers.run, .{&workers}) catch break;
+        }
+        workers.run();
+    }
+    return batchExecResult(ctx.allocator, slots);
+}
+
+pub fn authorizedCallAdapter(
+    ctx: tool_dispatch.DispatchContext,
+    registry: tool_dispatch.Registry,
+    tool_call: types.ToolCall,
+) tool_dispatch.DispatchError!tool_dispatch.DispatchResult {
+    if (!try isBatchExecArguments(ctx.allocator, tool_call.arguments_json)) {
+        return tool_dispatch.dispatchAuthorizedToolCallDefault(ctx, registry, tool_call);
+    }
+    return executeBatchExec(ctx, registry, tool_call);
 }
 
 fn call_atomic_write(
@@ -875,6 +1145,7 @@ fn callExec(
         .resolved_cwd = cwd,
         .environment = environment_value,
         .timeout_ms = timeout_ms,
+        .nested = ctx.nested_run_command,
     });
 }
 
@@ -894,7 +1165,7 @@ fn commandEnvironment(
 
 fn durableAction(action: Action) ?contracts.Action {
     return switch (action) {
-        .exec => null,
+        .exec, .batch_exec => null,
         .start => .start,
         .read => .read,
         .screen => .screen,
@@ -1029,7 +1300,7 @@ fn buildAuthorizedRequest(
     authority: ?contracts.AuthorityClaim,
 ) !contracts.ActionRequest {
     return switch (input.action) {
-        .exec => unreachable,
+        .exec, .batch_exec => unreachable,
         .start => unreachable,
         .read => .{ .read = .{
             .session_id = session_id,
@@ -1559,6 +1830,7 @@ fn mapErrorCode(err: anyerror) contracts.StructuredErrorCode {
 pub fn readsOnly(erased: tool_dispatch.ToolInput) bool {
     const input = erased.as(OwnedInput).value;
     return switch (input.action) {
+        .batch_exec => true,
         .read, .screen, .list => true,
         .inspect => input.acknowledge_event_id == null,
         else => false,
@@ -1569,6 +1841,7 @@ pub fn presentation(args: std.json.ObjectMap) ?tool_dispatch.CallPresentation {
     const action_text = tool_args.optionalStringArg(args, "action") orelse return null;
     const action = std.meta.stringToEnum(Action, action_text) orelse return null;
     return switch (action) {
+        .batch_exec => callPresentation("Checking", "Checked", .command, "commands"),
         .exec => callPresentation("Running", "Ran", .command, "command"),
         .start => blk: {
             const command = tool_args.optionalStringArg(args, "command");
@@ -1673,6 +1946,7 @@ test "terminal decoder accepts every public action and owns its input" {
     const alloc = std.testing.allocator;
     const cases = [_]struct { Action, []const u8 }{
         .{ .exec, "{\"action\":\"exec\",\"command\":\"true\",\"timeout_ms\":600000}" },
+        .{ .batch_exec, "{\"action\":\"batch_exec\",\"commands\":[{\"id\":\"one\",\"command\":\"true\"}],\"timeout_ms\":600000}" },
         .{ .start, "{\"action\":\"start\"}" },
         .{ .read, "{\"action\":\"read\",\"session_id\":\"terminal-a\",\"cursor_segment\":1}" },
         .{ .screen, "{\"action\":\"screen\",\"session_id\":\"terminal-a\"}" },
@@ -2421,6 +2695,7 @@ test "registered terminal validation enforces action-specific input before execu
     };
 
     inline for (&.{
+        "{\"action\":\"batch_exec\",\"commands\":[{\"id\":\"one\",\"command\":\"true\"}],\"timeout_ms\":600000}",
         "{\"action\":\"start\",\"command\":\"\"}",
         "{\"action\":\"read\",\"session_id\":\"terminal-a\",\"cursor_segment\":1}",
         "{\"action\":\"screen\",\"session_id\":\"terminal-a\"}",
@@ -3034,6 +3309,7 @@ test "terminal decoder and semantic validation reject malformed action input" {
 test "terminal read-only classification is action exact" {
     const alloc = std.testing.allocator;
     inline for (.{
+        .{ "{\"action\":\"batch_exec\",\"commands\":[{\"id\":\"one\",\"command\":\"true\"}],\"timeout_ms\":1000}", true },
         .{ "{\"action\":\"read\",\"session_id\":\"terminal-a\",\"cursor_segment\":1}", true },
         .{ "{\"action\":\"screen\",\"session_id\":\"terminal-a\"}", true },
         .{ "{\"action\":\"inspect\",\"session_id\":\"terminal-a\"}", true },
@@ -3052,5 +3328,116 @@ test "terminal read-only classification is action exact" {
                 try std.testing.expectEqual(case[1], readsOnly(input));
             },
         }
+    }
+}
+
+const BatchExecTestBackend = struct {
+    in_flight: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    max_in_flight: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    nested_calls: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+
+    fn execute(
+        raw: ?*anyopaque,
+        ctx: tool_dispatch.DispatchContext,
+        request: tool_dispatch.RunCommandRequest,
+    ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
+        const self: *BatchExecTestBackend = @ptrCast(@alignCast(raw.?));
+        const active = self.in_flight.fetchAdd(1, .seq_cst) + 1;
+        _ = self.max_in_flight.fetchMax(active, .seq_cst);
+        defer _ = self.in_flight.fetchSub(1, .seq_cst);
+        if (request.nested) _ = self.nested_calls.fetchAdd(1, .seq_cst);
+        io_mod.sleep(20 * std.time.ns_per_ms);
+        return .{ .success = try std.fmt.allocPrint(
+            ctx.allocator,
+            "completed:{s}",
+            .{request.command},
+        ) };
+    }
+};
+
+fn allowBatchExecTestCommand(
+    _: ?*anyopaque,
+    alloc: Allocator,
+    child_call: types.ToolCall,
+    _: types.PermissionMode,
+) anyerror!command_admission.PermissionOutcome {
+    const args = try tool_args.parseToolArgsObject(alloc, child_call.arguments_json);
+    const command = try tool_args.requiredStringArg(args, "command");
+    return .{
+        .decision = .once,
+        .execution_authority = .{ .run_command = .{ .direct_only = command_admission.AdmissionFingerprint.init(.{
+            .command = command,
+            .resolved_cwd = "/tmp",
+            .background = false,
+            .target_os = @import("builtin").os.tag,
+        }) } },
+    };
+}
+
+test "terminal batch_exec admits children independently and executes them concurrently in input order" {
+    const alloc = std.testing.allocator;
+    const terminal_tool = tool_dispatch.Tool{
+        .name = "terminal",
+        .description = "Terminal batch test adapter.",
+        .model_schema = .{ .name = "terminal", .description = "Terminal batch test adapter." },
+        .executor_kind = .terminal,
+        .activity_kind = .command,
+        .requires_approval = true,
+        .decode = decode,
+        .validate = validate,
+        .call = call,
+        .runtime_provider = .run_command,
+        .captured_command_action = "exec",
+        .captured_command_fn = isCapturedCommand,
+        .authorized_call_adapter = authorizedCallAdapter,
+        .reads_only_fn = readsOnly,
+        .irreversible_fn = isIrreversible,
+    };
+    const registry = tool_dispatch.Registry{ .tools = &.{terminal_tool} };
+    var backend = BatchExecTestBackend{};
+    const result = try authorizedCallAdapter(.{
+        .allocator = alloc,
+        .workspace_root = "/tmp",
+        .permission_mode = .auto,
+        .execution_authority = .ordinary,
+        .tool_capabilities = .{ .terminal = .supported },
+        .run_command_backend = .{ .ctx = &backend, .execute_fn = BatchExecTestBackend.execute },
+        .command_permission_backend = .{ .request_fn = allowBatchExecTestCommand },
+    }, registry, .{
+        .id = "batch",
+        .name = "terminal",
+        .arguments_json =
+        \\{"action":"batch_exec","commands":[{"id":"first","command":"one"},{"id":"second","command":"two"}],"timeout_ms":1000,"max_concurrency":2}
+        ,
+    });
+    defer result.deinit(alloc);
+
+    try std.testing.expectEqual(tool_dispatch.DispatchResult.Status.success, result.status);
+    try std.testing.expect(backend.max_in_flight.load(.seq_cst) >= 2);
+    try std.testing.expectEqual(@as(usize, 2), backend.nested_calls.load(.seq_cst));
+    const first_index = std.mem.find(u8, result.body, "completed:one") orelse return error.TestUnexpectedResult;
+    const second_index = std.mem.find(u8, result.body, "completed:two") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(first_index < second_index);
+}
+
+test "terminal batch_exec rejects duplicate command ids" {
+    const alloc = std.testing.allocator;
+    const decoded = try decode(.{ .allocator = alloc },
+        \\{"action":"batch_exec","commands":[{"id":"same","command":"one"},{"id":"same","command":"two"}],"timeout_ms":1000}
+    );
+    switch (decoded) {
+        .failure => |message| {
+            defer alloc.free(message);
+            return error.TestUnexpectedResult;
+        },
+        .input => |input| {
+            defer input.deinit(alloc);
+            const reason = (try validate(.{
+                .allocator = alloc,
+                .workspace_root = "/tmp",
+            }, input)) orelse return error.TestUnexpectedResult;
+            defer alloc.free(reason);
+            try std.testing.expect(std.mem.find(u8, reason, "DuplicateCommandId") != null);
+        },
     }
 }

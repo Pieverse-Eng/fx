@@ -173,6 +173,10 @@ pub const RunCommandRequest = struct {
     resolved_cwd: []const u8,
     environment: command_environment.Environment,
     timeout_ms: u64,
+    /// Nested batch commands already passed their own ordinary admission. The
+    /// runtime must return their result without replacing the parent call's
+    /// captured completion state.
+    nested: bool = false,
 };
 
 pub const RunCommandBackendFn = *const fn (
@@ -191,6 +195,27 @@ pub const RunCommandBackend = struct {
         request: RunCommandRequest,
     ) DispatchError!ToolResult {
         return self.execute_fn(self.ctx, ctx, request);
+    }
+};
+
+pub const CommandPermissionBackendFn = *const fn (
+    ?*anyopaque,
+    Allocator,
+    message.ToolCall,
+    permission_gate.PermissionMode,
+) anyerror!command_admission.PermissionOutcome;
+
+pub const CommandPermissionBackend = struct {
+    ctx: ?*anyopaque = null,
+    request_fn: CommandPermissionBackendFn,
+
+    pub fn request(
+        self: CommandPermissionBackend,
+        alloc: Allocator,
+        call: message.ToolCall,
+        mode: permission_gate.PermissionMode,
+    ) anyerror!command_admission.PermissionOutcome {
+        return self.request_fn(self.ctx, alloc, call, mode);
     }
 };
 
@@ -231,7 +256,9 @@ pub const DispatchContext = struct {
     background_lifecycle_allocator: Allocator = std.heap.c_allocator,
     command_timeout_ms: ?usize = null,
     captured_command_host: command_environment.Host = .native,
+    nested_run_command: bool = false,
     run_command_backend: ?RunCommandBackend = null,
+    command_permission_backend: ?CommandPermissionBackend = null,
     subagent_provider: ?subagent_tool_provider.Provider = null,
     vision_provider: ?VisionProvider = null,
     ask_question_ctx: ?*anyopaque = null,
