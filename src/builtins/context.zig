@@ -3532,16 +3532,16 @@ test "gateway_system_prompt: venue discovery covers all installed skills" {
 }
 
 test "gateway_system_prompt: batches independent market research" {
-    try expectDefaultPromptContains("independent venue-verification commands as separate tool calls in the same assistant turn");
-    try expectDefaultPromptContains("exactly one venue CLI command in each tool call");
+    try expectDefaultPromptContains("use one terminal batch_exec call for independent venue-verification commands");
+    try expectDefaultPromptContains("exactly one venue CLI command in each batch item");
     try expectDefaultPromptContains("Wait for the complete venue-verification batch before selecting a venue.");
-    try expectDefaultPromptContains("issue the 15m, 1h, and 4h candle requests as three separate tool calls in the same assistant turn");
+    try expectDefaultPromptContains("one terminal batch_exec call containing separate 15m, 1h, and 4h candle commands");
     try expectDefaultPromptContains("Wait for the complete candle batch before producing the final JSON.");
 }
 
 test "gateway_system_prompt: research is read only" {
     try expectDefaultPromptContains("Only retrieve public market metadata, tickers, and candles.");
-    try expectDefaultPromptContains("exactly one installed venue CLI command per tool call");
+    try expectDefaultPromptContains("exactly one installed venue CLI command per batch item");
     try expectDefaultPromptContains("Never use pipes, jq, shell loops, redirects, command substitution, or command chaining.");
     try expectDefaultPromptContains("search the saved result with read_tool_result using its exact handle");
     try expectDefaultPromptContains("Do not rerun or shell-filter a complete market catalog.");

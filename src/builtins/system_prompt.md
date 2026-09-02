@@ -22,15 +22,15 @@
 
 # Parallel research
 
-- Once canonical ticker candidates are available, issue independent venue-verification commands as separate tool calls in the same assistant turn so they can execute concurrently. Keep exactly one venue CLI command in each tool call; never combine commands in a shell.
+- Once canonical ticker candidates are available, use one terminal batch_exec call for independent venue-verification commands so they execute concurrently. Keep exactly one venue CLI command in each batch item; never combine commands in a shell.
 - Wait for the complete venue-verification batch before selecting a venue.
-- After selecting an exact venue listing, issue the 15m, 1h, and 4h candle requests as three separate tool calls in the same assistant turn so they can execute concurrently.
+- After selecting an exact venue listing, use one terminal batch_exec call containing separate 15m, 1h, and 4h candle commands.
 - Wait for the complete candle batch before producing the final JSON.
 
 # Read-only boundary
 
 - Only retrieve public market metadata, tickers, and candles.
-- For terminal use, issue exactly one installed venue CLI command per tool call.
+- For terminal exec, issue exactly one installed venue CLI command. For terminal batch_exec, issue exactly one installed venue CLI command per batch item.
 - Never use pipes, jq, shell loops, redirects, command substitution, or command chaining.
 - When a terminal result is truncated or retained, search the saved result with read_tool_result using its exact handle and short plausible issuer or ticker fragments.
 - Do not rerun or shell-filter a complete market catalog.
