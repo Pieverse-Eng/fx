@@ -380,6 +380,15 @@ fn rankedLessThan(_: void, left: RankedCandidate, right: RankedCandidate) bool {
     return std.mem.lessThan(u8, left.symbol, right.symbol);
 }
 
+fn writeTempFile(tmp: *std.testing.TmpDir, sub_path: []const u8, content: []const u8) !void {
+    if (std.fs.path.dirname(sub_path)) |parent| {
+        try tmp.dir.createDirPath(io_mod.getIo(), parent);
+    }
+    var file = try tmp.dir.createFile(std.testing.io, sub_path, .{ .truncate = true });
+    defer file.close(io_mod.getIo());
+    try file.writeStreamingAll(io_mod.getIo(), content);
+}
+
 pub fn readsOnly(_: tool_dispatch.ToolInput) bool {
     return true;
 }
@@ -421,4 +430,75 @@ test "book side validation accepts arrays and objects" {
     var objects = try std.json.parseFromSlice(std.json.Value, alloc, "[{\"px\":\"101\",\"sz\":\"2\"},{\"px\":\"102\",\"sz\":\"3\"}]", .{});
     defer objects.deinit();
     try std.testing.expectEqual(@as(f64, 101), try validateBookSide(alloc, objects.value.array, "/px", "/sz", .sell));
+}
+
+test "ranker reads terminal batch children and public skill fees" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const cheap_skill =
+        \\---
+        \\name: cheap
+        \\description: cheap venue
+        \\metadata:
+        \\  pieverse:
+        \\    marketSearch: true
+        \\    marketCost:
+        \\      perpetual:
+        \\        publicTakerFeeBps: 4
+        \\        sourceUrl: https://cheap.example/fees
+        \\        asOf: 2026-09-03
+        \\---
+    ;
+    const expensive_skill =
+        \\---
+        \\name: expensive
+        \\description: expensive venue
+        \\metadata:
+        \\  pieverse:
+        \\    marketSearch: true
+        \\    marketCost:
+        \\      perpetual:
+        \\        publicTakerFeeBps: 8
+        \\        sourceUrl: https://expensive.example/fees
+        \\        asOf: 2026-09-03
+        \\---
+    ;
+    try writeTempFile(&tmp, "workspace/.fx/skills/cheap/SKILL.md", cheap_skill);
+    try writeTempFile(&tmp, "workspace/.fx/skills/expensive/SKILL.md", expensive_skill);
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills");
+
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    defer alloc.free(skills_dir);
+
+    const calls = [_]types.ToolCall{
+        .{ .id = "call_books", .name = "terminal", .arguments_json = "{}" },
+    };
+    const batch_output =
+        \\[{"id":"cheap-book","status":"success","output":"exit_code=0\n<stdout>\n{\"bids\":[[\"99.9\",\"2\"]],\"asks\":[[\"100.1\",\"2\"]]}\n</stdout>\n"},{"id":"expensive-book","status":"success","output":"exit_code=0\n<stdout>\n{\"levels\":[[{\"px\":\"99.9\",\"sz\":\"2\"}],[{\"px\":\"100.1\",\"sz\":\"2\"}]]}\n</stdout>\n"}]
+    ;
+    const messages = [_]types.ChatMessage{
+        .{ .role = .assistant, .tool_calls = &calls },
+        .{ .role = .tool, .content = batch_output, .tool_call_id = "call_books", .tool_name = "terminal", .tool_result_status = .success },
+    };
+    const args =
+        \\{"side":"buy","candidates":[{"venue":"cheap","symbol":"BTCUSD","product":"perpetual","quote":"USD","book":{"source":{"sourceToolCall":0,"resultId":"cheap-book"},"bidsPointer":"/bids","asksPointer":"/asks","pricePointer":"/0","sizePointer":"/1","identityPointer":null}},{"venue":"expensive","symbol":"BTCUSD","product":"perpetual","quote":"USD","book":{"source":{"sourceToolCall":0,"resultId":"expensive-book"},"bidsPointer":"/levels/0","asksPointer":"/levels/1","pricePointer":"/px","sizePointer":"/sz","identityPointer":null}}]}
+    ;
+    const result = try rank(.{
+        .allocator = alloc,
+        .workspace_root = workspace,
+        .skills_dir = skills_dir,
+        .current_turn_messages = &messages,
+    }, args);
+    defer alloc.free(result);
+    var parsed = try std.json.parseFromSlice(Output, alloc, result, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("cheap", parsed.value.selected.?.venue);
+    try std.testing.expectApproxEqAbs(@as(f64, 14), parsed.value.selected.?.estimatedCostBps, 0.00001);
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.alternatives.len);
+    try std.testing.expectEqualStrings("expensive", parsed.value.alternatives[0].venue);
+    try std.testing.expectEqual(@as(usize, 0), parsed.value.excluded.len);
 }
