@@ -437,7 +437,16 @@ test "ranker reads terminal batch children and public skill fees" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const cheap_skill =
+    const now_secs: u64 = @intCast(@divFloor(io_mod.milliTimestamp(), std.time.ms_per_s));
+    const year_day = (std.time.epoch.EpochSeconds{ .secs = now_secs }).getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const today = try std.fmt.allocPrint(alloc, "{d:0>4}-{d:0>2}-{d:0>2}", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+    });
+    defer alloc.free(today);
+    const cheap_skill = try std.fmt.allocPrint(alloc,
         \\---
         \\name: cheap
         \\description: cheap venue
@@ -448,10 +457,11 @@ test "ranker reads terminal batch children and public skill fees" {
         \\      perpetual:
         \\        publicTakerFeeBps: 4
         \\        sourceUrl: https://cheap.example/fees
-        \\        asOf: 2026-09-03
+        \\        asOf: {s}
         \\---
-    ;
-    const expensive_skill =
+    , .{today});
+    defer alloc.free(cheap_skill);
+    const expensive_skill = try std.fmt.allocPrint(alloc,
         \\---
         \\name: expensive
         \\description: expensive venue
@@ -462,9 +472,10 @@ test "ranker reads terminal batch children and public skill fees" {
         \\      perpetual:
         \\        publicTakerFeeBps: 8
         \\        sourceUrl: https://expensive.example/fees
-        \\        asOf: 2026-09-03
+        \\        asOf: {s}
         \\---
-    ;
+    , .{today});
+    defer alloc.free(expensive_skill);
     try writeTempFile(&tmp, "workspace/.fx/skills/cheap/SKILL.md", cheap_skill);
     try writeTempFile(&tmp, "workspace/.fx/skills/expensive/SKILL.md", expensive_skill);
     try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills");
