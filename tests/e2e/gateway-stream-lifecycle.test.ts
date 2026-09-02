@@ -705,7 +705,7 @@ describe("gateway stream lifecycle", () => {
     })).toEqual([]);
   });
 
-  test("no-save ask sends status text with the exec-only terminal surface", async () => {
+  test("no-save ask sends status text with the foreground terminal surface", async () => {
     const root = createFixtureRoot("status-text-ask");
     const tracePath = join(root.root, "trace.log");
     const gateway = startGateway(() => fakeGatewayFinalText("STATUS_TEXT_ASK_COMPLETE"));
@@ -741,7 +741,7 @@ describe("gateway stream lifecycle", () => {
       expect(request.prompt[1]?.role).toBe("system");
       expect(contentText(request.prompt[1]?.content)).toBe(WEB_SEARCH_GUIDANCE);
       expect(toolByName(oracleRequest, "terminal")?.description).toBe(
-        "Run one captured command with a required finite timeout_ms and return its result. Timeout cleanup covers the process group and tracked descendants; fully detached descendant cleanup is best effort on macOS.",
+        "Run one captured foreground command with exec, or independent captured foreground commands concurrently with batch_exec. Each batch child is separately permission checked and results keep input order. A realistic finite timeout_ms is required. Timeout cleanup covers process groups and tracked descendants; fully detached descendant cleanup is best effort on macOS.",
       );
       expect(toolByName(oracleRequest, "skill")?.description).toContain(
         "the task clearly matches one",

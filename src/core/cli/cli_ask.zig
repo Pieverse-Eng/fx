@@ -496,7 +496,7 @@ fn buildAskGatewayToolProjection(
         tool_set.registry.tools,
     );
     defer alloc.free(projected_tools);
-    projected_tools[terminal_index] = builtin_tools.terminalExecOnlySpec();
+    projected_tools[terminal_index] = builtin_tools.terminalForegroundSpec();
     return registry.buildModelToolProjection(
         alloc,
         .{
@@ -4041,7 +4041,7 @@ fn testProcessQueuedPromptChecksTimeout(deps: *const agent_runtime.AgentRuntimeD
     try testPushAssistantText(deps, "assistant text");
 }
 
-fn testProcessQueuedPromptChecksExecOnlyTerminal(deps: *const agent_runtime.AgentRuntimeDeps, semantic_presentation: ?agent_runtime.SemanticPresentationSink, _: agent_runtime.LifecycleContext, cfg: agent_runtime.Config, _: worker_runtime.QueuedPrompt) !void {
+fn testProcessQueuedPromptChecksForegroundTerminal(deps: *const agent_runtime.AgentRuntimeDeps, semantic_presentation: ?agent_runtime.SemanticPresentationSink, _: agent_runtime.LifecycleContext, cfg: agent_runtime.Config, _: worker_runtime.QueuedPrompt) !void {
     try std.testing.expect(semantic_presentation == null);
     try std.testing.expect(cfg.session_child_capability == null);
     try std.testing.expect(cfg.ephemeral_command_replay != null);
@@ -4059,7 +4059,7 @@ fn testProcessQueuedPromptChecksExecOnlyTerminal(deps: *const agent_runtime.Agen
         advertised_terminal.input_schema,
         "request",
     ));
-    try std.testing.expect(std.mem.find(u8, advertised_terminal.description, "required finite timeout_ms") != null);
+    try std.testing.expect(std.mem.find(u8, advertised_terminal.description, "batch_exec") != null);
     try std.testing.expect(std.mem.find(u8, advertised_terminal.description, "Use start") == null);
     try std.testing.expectEqualStrings(builtin_tools.web_search.description, cfg.custom_tool_guidance);
     try std.testing.expectEqualStrings("test model overlay", cfg.model_prompt_overlay.?);
@@ -6600,7 +6600,7 @@ test "fx ask preserves CLI headless blocker diagnostics" {
     try std.testing.expectEqualStrings("", stderr_capture.bytes.items);
 }
 
-test "runWithDeps projects exec-only terminal when saved setup has no capability" {
+test "runWithDeps projects foreground terminal when saved setup has no capability" {
     const alloc = std.testing.allocator;
     var stdout_capture: TestCapture = .{};
     defer stdout_capture.deinit(alloc);
@@ -6611,7 +6611,7 @@ test "runWithDeps projects exec-only terminal when saved setup has no capability
         alloc,
         &.{"hello"},
         testConfig(),
-        testPromptRunDepsWithProcess(&stdout_capture, &stderr_capture, testProcessQueuedPromptChecksExecOnlyTerminal),
+        testPromptRunDepsWithProcess(&stdout_capture, &stderr_capture, testProcessQueuedPromptChecksForegroundTerminal),
     );
 
     try std.testing.expectEqual(@as(u8, 0), exit_code);
@@ -6683,7 +6683,7 @@ test "runWithDeps honors no-save by skipping ask session stores" {
     defer stderr_capture.deinit(alloc);
 
     test_initialize_session_store_calls = 0;
-    var deps = testPromptRunDepsWithProcess(&stdout_capture, &stderr_capture, testProcessQueuedPromptChecksExecOnlyTerminal);
+    var deps = testPromptRunDepsWithProcess(&stdout_capture, &stderr_capture, testProcessQueuedPromptChecksForegroundTerminal);
     deps.initialize_session_stores = testCountSessionStores;
 
     const exit_code = try runWithDeps(
@@ -6725,7 +6725,7 @@ test "runWithDeps retains full terminal projection with saved capability" {
     try std.testing.expectEqualStrings("assistant text", stdout_capture.bytes.items);
 }
 
-test "exec-only terminal projection propagates view allocation failure" {
+test "foreground terminal projection propagates view allocation failure" {
     var failing = std.testing.FailingAllocator.init(
         std.testing.allocator,
         .{ .fail_index = 0 },

@@ -179,7 +179,7 @@ describe("fx ask presentation", () => {
     expect(JSON.parse(result.stdout).output).toBe("Commands complete.\n");
   }, TIMEOUT);
 
-  test("no-save advertises exec only and preserves terminal exec profiles", async () => {
+  test("no-save advertises foreground commands and preserves terminal exec profiles", async () => {
     const configuredShell = userInfo().shell;
     if (!configuredShell.endsWith("/bash") && !configuredShell.endsWith("/zsh")) return;
 
@@ -294,23 +294,27 @@ describe("fx ask presentation", () => {
     };
     const terminalTool = firstRequest.tools.find(({ name }) => name === "terminal");
     expect(terminalTool?.description).toBe(
-      "Run one captured command with a required finite timeout_ms and return its result. Timeout cleanup covers the process group and tracked descendants; fully detached descendant cleanup is best effort on macOS.",
+      "Run one captured foreground command with exec, or independent captured foreground commands concurrently with batch_exec. Each batch child is separately permission checked and results keep input order. A realistic finite timeout_ms is required. Timeout cleanup covers process groups and tracked descendants; fully detached descendant cleanup is best effort on macOS.",
     );
     const terminalSchema = terminalTool?.inputSchema;
-    expect(terminalSchema?.properties?.action?.enum).toEqual(["exec"]);
+    expect(terminalSchema?.properties?.action?.enum).toEqual(["exec", "batch_exec"]);
     expect(Object.keys(terminalSchema?.properties ?? {})).toEqual([
       "action",
       "command",
+      "commands",
       "cwd",
       "profile",
       "timeout_ms",
+      "max_concurrency",
     ]);
     expect(terminalSchema?.required).toEqual([
       "action",
       "command",
+      "commands",
       "cwd",
       "profile",
       "timeout_ms",
+      "max_concurrency",
     ]);
     expect(terminalSchema?.additionalProperties).toBe(false);
     expect(terminalSchema?.properties?.command?.description).toBe(
@@ -320,10 +324,10 @@ describe("fx ask presentation", () => {
       "Working directory; defaults to the workspace. Set null when the selected action does not use this field.",
     );
     expect(terminalSchema?.properties?.profile?.description).toBe(
-      "Profile for exec; omission defaults to user, while clean skips user initialization files. User execution supports the configured Bash or zsh login shell. Bash login execution reads login initialization files; .bashrc is available only when sourced by the login profile. Set null when the selected action does not use this field.",
+      "Profile for exec or batch_exec; omission defaults to user, while clean skips user initialization files. User execution supports the configured Bash or zsh login shell. Bash login execution reads login initialization files; .bashrc is available only when sourced by the login profile. Set null when the selected action does not use this field.",
     );
     expect(terminalSchema?.properties?.timeout_ms?.description).toBe(
-      "Maximum foreground runtime in milliseconds. Choose the shortest realistic finite budget; use terminal start for work that must remain alive.",
+      "Maximum foreground runtime in milliseconds. Choose the shortest realistic finite budget.",
     );
     const serializedTerminalTool = JSON.stringify(terminalTool);
     expect(serializedTerminalTool).not.toContain("Use start");
