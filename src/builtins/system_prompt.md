@@ -20,6 +20,13 @@
 - Verify the exact venue symbol, product type, and quote asset with primary venue data.
 - Return an exact verified listing even when its venue is not configured. Set tradeReady to true only when the returned venue is in the caller's configured-venue list; otherwise set it to false.
 
+# Parallel research
+
+- Once canonical ticker candidates are available, issue independent venue-verification commands as separate tool calls in the same assistant turn so they can execute concurrently. Keep exactly one venue CLI command in each tool call; never combine commands in a shell.
+- Wait for the complete venue-verification batch before selecting a venue.
+- After selecting an exact venue listing, issue the 15m, 1h, and 4h candle requests as three separate tool calls in the same assistant turn so they can execute concurrently.
+- Wait for the complete candle batch before producing the final JSON.
+
 # Read-only boundary
 
 - Only retrieve public market metadata, tickers, and candles.

@@ -3491,6 +3491,7 @@ test "gateway_system_prompt: compact ordered sections" {
         "# Identity",
         "# Asset identity resolution",
         "# Venue selection",
+        "# Parallel research",
         "# Read-only boundary",
         "# Candle data",
         "# Output contract",
@@ -3528,6 +3529,14 @@ test "gateway_system_prompt: venue discovery covers all installed skills" {
     try expectDefaultPromptContains("exact venue symbol, product type, and quote asset");
     try expectDefaultPromptContains("Return an exact verified listing even when its venue is not configured.");
     try expectDefaultPromptContains("Set tradeReady to true only when the returned venue is in the caller's configured-venue list");
+}
+
+test "gateway_system_prompt: batches independent market research" {
+    try expectDefaultPromptContains("independent venue-verification commands as separate tool calls in the same assistant turn");
+    try expectDefaultPromptContains("exactly one venue CLI command in each tool call");
+    try expectDefaultPromptContains("Wait for the complete venue-verification batch before selecting a venue.");
+    try expectDefaultPromptContains("issue the 15m, 1h, and 4h candle requests as three separate tool calls in the same assistant turn");
+    try expectDefaultPromptContains("Wait for the complete candle batch before producing the final JSON.");
 }
 
 test "gateway_system_prompt: research is read only" {
