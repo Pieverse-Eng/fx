@@ -145,6 +145,7 @@ pub fn writeTools(
             tool.name,
             tool.description,
             .{ .static = tool.input_schema },
+            tool.strict_arguments,
         );
         count += 1;
     }
@@ -157,6 +158,7 @@ pub fn writeTools(
             tool.name,
             tool.description,
             .{ .static = tool.input_schema },
+            tool.strict_arguments,
         );
         count += 1;
     }
@@ -169,6 +171,7 @@ pub fn writeTools(
             tool.name,
             tool.description,
             .{ .dynamic = tool.input_schema },
+            false,
         );
         count += 1;
     }
@@ -638,6 +641,7 @@ fn writeFunctionTool(
     name: []const u8,
     description: []const u8,
     input_schema: InputSchema,
+    strict_arguments: bool,
 ) !void {
     if (name.len == 0) return error.InvalidToolSchema;
     try writer.writeAll("{\"type\":\"function\",\"name\":");
@@ -654,7 +658,7 @@ fn writeFunctionTool(
             try std.json.Stringify.value(schema, .{}, writer);
         },
     }
-    try writer.writeAll(",\"strict\":false}");
+    try writer.writeAll(if (strict_arguments) ",\"strict\":true}" else ",\"strict\":false}");
 }
 
 fn containsName(names: []const []const u8, expected: []const u8) bool {
@@ -684,9 +688,11 @@ test "Responses tools serialize typed static and dynamic functions once" {
         .model_schema = .{
             .name = "read_file",
             .description = "Read a file.",
+            .strict_arguments = true,
             .input_schema = .{
                 .properties = &.{.{ .name = "path", .json_type = .string }},
                 .required = &.{"path"},
+                .additional_properties = false,
             },
         },
         .decode = Static.decode,
@@ -720,6 +726,8 @@ test "Responses tools serialize typed static and dynamic functions once" {
     ));
     try std.testing.expect(std.mem.find(u8, out.written(), "\"name\":\"read_file\"") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "\"name\":\"mcp_search\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, out.written(), "\"strict\":true"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, out.written(), "\"strict\":false"));
 }
 
 test "Responses usage projection retains optional cached and reasoning detail" {

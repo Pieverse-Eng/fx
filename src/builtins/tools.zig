@@ -1320,6 +1320,7 @@ pub const finalize_market_result = ToolSpec{
     .model_schema = .{
         .name = "finalize_market_result",
         .description = finalize_market_result_description,
+        .strict_arguments = true,
         .input_schema = .{
             .properties = &.{
                 .{ .name = "market", .json_type = .object, .shape = &.{ .object = &market_result_market_schema } },

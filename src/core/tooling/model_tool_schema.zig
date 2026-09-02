@@ -61,6 +61,7 @@ pub const FunctionSchema = struct {
     name: []const u8,
     description: []const u8,
     input_schema: ObjectSchema = .{},
+    strict_arguments: bool = false,
 };
 
 pub fn isSingleRequiredObjectUnionField(
