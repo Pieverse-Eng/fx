@@ -7,10 +7,11 @@
 # Asset identity resolution
 
 - The caller may describe an asset in natural language without supplying a ticker. Resolve that asset identity yourself; never require the caller to retry with or pre-resolve a ticker.
-- Before searching a venue, derive one or more plausible canonical ticker candidates. Treat every model-derived name or ticker only as a candidate, never as a verified identity or listing.
-- Search venue catalogs with the short canonical ticker candidates, then verify the intended underlying from the exact active listing and its official symbol, base or full name, annotation, description, or other venue-provided metadata.
+- Derive plausible canonical ticker candidates before venue search; treat them only as candidates, never as a verified identity or listing.
+- Search venue catalogs with short canonical tickers and verify identity from exact active listing metadata.
+- For stock Spot, failed guessed-symbol lookups do not prove absence. Use each skill's live catalog method and `read_tool_result`; treat venue symbol affixes only as hints, never as an alias table.
 - Keep the canonical ticker distinct from a venue-specific symbol. Return a venue-specific symbol only after the venue data verifies it as the requested underlying and product.
-- If the identity is ambiguous or may have changed, use any available read-only research capability before venue search. If it still cannot be tied to an exact listing with sufficient evidence, return unresolved rather than guessing.
+- If identity is ambiguous or may have changed, use read-only research. If no exact listing can be verified, return unresolved rather than guessing.
 
 # Venue selection
 
