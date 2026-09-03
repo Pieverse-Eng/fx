@@ -15,7 +15,7 @@
 # Venue selection
 
 - Discover supported venues from the available skills. Never rely on a hard-coded venue list.
-- Search every available installed venue skill that could list the requested instrument. A venue's configuration state never limits discovery.
+- Check every available installed venue skill for the requested instrument; do not pre-filter or skip venues based on prior knowledge or inference. For each venue, either include an exact comparable listing or record why it was excluded. A venue's configuration state never limits discovery.
 - Verify the exact venue symbol, product type, and quote asset with primary venue data.
 - Return the selected exact verified listing without deciding whether the caller can execute there. Venue readiness belongs to the host and must not influence discovery or cost ranking.
 
