@@ -20,9 +20,21 @@
 - Verify the exact venue symbol, product type, and quote asset with primary venue data.
 - Return an exact verified listing even when its venue is not configured. Set tradeReady to true only when the returned venue is in the caller's configured-venue list; otherwise set it to false.
 
+# Venue cost comparison
+
+- Perform venue cost comparison only for market/taker execution when the caller supplies a side, positive quote-currency notional, and quote currency. Do not use this cost model for maker, passive-limit, conditional, or other non-taker orders. Without those order parameters, select one representative verified listing for candle research and make no lowest-cost claim.
+- With order parameters, find every configured, trade-ready listing that represents the same underlying exposure and comparable product. Query each listing's current order book and instrument metadata with its installed venue CLI, and retain enough correctly ordered depth to fill the supplied notional.
+- Obtain the current official public base/default taker fee for each exact product. Exclude VIP tiers, rebates, referral discounts, and token-payment discounts. Preserve the official fee source in the final evidence.
+- Include any additional execution fee explicitly documented by the installed venue skill. Use zero only when the execution path has no additional fee. Never guess or silently omit an applicable fee.
+- Omit a candidate from cost comparison when its order book or applicable fee cannot be verified. The calculator excludes a candidate when its supplied depth cannot fill the requested notional. Never treat a missing fee as zero, and never claim globally lowest cost when comparable configured candidates were omitted.
+- Determine the verified base-asset quantity represented by one raw order-book size unit from the venue's instrument metadata. Pass `baseSizePerUnit` as `1` only when sizes are already denominated in the base asset. For contract-denominated books, use an official multiplier such as `ctVal` only when its unit or companion currency field such as `ctValCcy` explicitly identifies the base asset. Omit inverse, quote-denominated, or otherwise price-dependent contract sizes; never treat a quote-currency contract value as a base-asset multiplier.
+- With at least two complete candidates, call `calculate_venue_costs` exactly once. Use a stable candidate id that maps unambiguously to the verified venue listing, supply the caller's exact quote notional and currency, and pass decimal raw price, raw size, verified `baseSizePerUnit`, and fee values as strings. Select the returned candidate with `totalCostRank` 1.
+- When only one complete candidate exists, skip `calculate_venue_costs` and do not claim that the venue was cost-optimized.
+- The cost calculator walks the supplied depth and performs arithmetic only. You remain responsible for asset identity, product comparability, quote-currency comparability, source verification, and mapping its selected id back to the exact listing.
+
 # Read-only boundary
 
-- Only retrieve public market metadata, tickers, and candles.
+- Only retrieve public market metadata, tickers, fee schedules, order books, and candles.
 - For terminal use, issue exactly one installed venue CLI command per tool call.
 - Never use pipes, jq, shell loops, redirects, command substitution, or command chaining.
 - When a terminal result is truncated or retained, search the saved result with read_tool_result using its exact handle and short plausible issuer or ticker fragments.
@@ -33,7 +45,7 @@
 
 # Candle data
 
-- After verifying an exact instrument, retrieve its latest 15m, 1h, and 4h candles from the selected venue skill.
+- After selecting an exact instrument and venue, retrieve its latest 15m, 1h, and 4h candles from that venue skill.
 - Return at most the latest 20 venue-provided candles per timeframe, ordered by openTime ascending, including the venue response's latest candle.
 - Normalize timestamps to Unix milliseconds and numeric strings to numbers.
 - Use null for unavailable candle data or volume whose base-asset meaning is ambiguous.

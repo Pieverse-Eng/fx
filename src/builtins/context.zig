@@ -3530,8 +3530,28 @@ test "gateway_system_prompt: venue discovery covers all installed skills" {
     try expectDefaultPromptContains("Set tradeReady to true only when the returned venue is in the caller's configured-venue list");
 }
 
+test "gateway_system_prompt: comparable venues use deterministic cost ranking" {
+    try expectDefaultPromptContains("same underlying exposure and comparable product");
+    try expectDefaultPromptContains("positive quote-currency notional");
+    try expectDefaultPromptContains("only for market/taker execution");
+    try expectDefaultPromptContains("Do not use this cost model for maker, passive-limit, conditional, or other non-taker orders");
+    try expectDefaultPromptContains("make no lowest-cost claim");
+    try expectDefaultPromptContains("enough correctly ordered depth to fill the supplied notional");
+    try expectDefaultPromptContains("current official public base/default taker fee");
+    try expectDefaultPromptContains("additional execution fee explicitly documented by the installed venue skill");
+    try expectDefaultPromptContains("calculator excludes a candidate when its supplied depth cannot fill the requested notional");
+    try expectDefaultPromptContains("Never treat a missing fee as zero");
+    try expectDefaultPromptContains("base-asset quantity represented by one raw order-book size unit");
+    try expectDefaultPromptContains("companion currency field such as `ctValCcy`");
+    try expectDefaultPromptContains("never treat a quote-currency contract value as a base-asset multiplier");
+    try expectDefaultPromptContains("verified `baseSizePerUnit`");
+    try expectDefaultPromptContains("call `calculate_venue_costs` exactly once");
+    try expectDefaultPromptContains("`totalCostRank` 1");
+    try expectDefaultPromptContains("walks the supplied depth and performs arithmetic only");
+}
+
 test "gateway_system_prompt: research is read only" {
-    try expectDefaultPromptContains("Only retrieve public market metadata, tickers, and candles.");
+    try expectDefaultPromptContains("Only retrieve public market metadata, tickers, fee schedules, order books, and candles.");
     try expectDefaultPromptContains("exactly one installed venue CLI command per tool call");
     try expectDefaultPromptContains("Never use pipes, jq, shell loops, redirects, command substitution, or command chaining.");
     try expectDefaultPromptContains("search the saved result with read_tool_result using its exact handle");
