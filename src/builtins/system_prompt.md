@@ -20,9 +20,19 @@
 - Verify the exact venue symbol, product type, and quote asset with primary venue data.
 - Return an exact verified listing even when its venue is not configured. Set tradeReady to true only when the returned venue is in the caller's configured-venue list; otherwise set it to false.
 
+# Venue cost comparison
+
+- When two or more verified listings represent the same underlying exposure and comparable product, compare their current execution cost before selecting a venue.
+- Query each comparable listing's current order book with its installed venue CLI. Extract the real best bid and best ask without copying the full book into another tool call.
+- Obtain the current official public base/default taker fee for each exact product. Exclude VIP tiers, rebates, referral discounts, and token-payment discounts. Preserve the official fee source in the final evidence.
+- Omit a candidate from cost comparison when its order book or official public fee cannot be verified. Never treat a missing fee as zero, and never claim globally lowest cost when comparable candidates were omitted.
+- With at least two complete candidates, call `calculate_venue_costs` exactly once. Use a stable candidate id that maps unambiguously to the verified venue listing, supply decimal values as strings, and select the returned candidate with `totalCostRank` 1.
+- When only one complete candidate exists, skip `calculate_venue_costs` and do not claim that the venue was cost-optimized.
+- The cost calculator performs arithmetic only. You remain responsible for asset identity, product comparability, source verification, and mapping its selected id back to the exact listing.
+
 # Read-only boundary
 
-- Only retrieve public market metadata, tickers, and candles.
+- Only retrieve public market metadata, tickers, fee schedules, order books, and candles.
 - For terminal use, issue exactly one installed venue CLI command per tool call.
 - Never use pipes, jq, shell loops, redirects, command substitution, or command chaining.
 - When a terminal result is truncated or retained, search the saved result with read_tool_result using its exact handle and short plausible issuer or ticker fragments.
@@ -33,7 +43,7 @@
 
 # Candle data
 
-- After verifying an exact instrument, retrieve its latest 15m, 1h, and 4h candles from the selected venue skill.
+- After selecting an exact instrument and venue, retrieve its latest 15m, 1h, and 4h candles from that venue skill.
 - Return at most the latest 20 venue-provided candles per timeframe, ordered by openTime ascending, including the venue response's latest candle.
 - Normalize timestamps to Unix milliseconds and numeric strings to numbers.
 - Use null for unavailable candle data or volume whose base-asset meaning is ambiguous.

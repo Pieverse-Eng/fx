@@ -25,6 +25,7 @@ const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const memory_impl = @import("../tools/memory/memory.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
 const finalize_market_result_impl = @import("../tools/market/finalize_market_result.zig");
+const calculate_venue_costs_impl = @import("../tools/market/calculate_venue_costs.zig");
 const terminal_impl = @import("../tools/terminal/terminal.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -1259,6 +1260,52 @@ const market_result_market_schema = model_tool_schema.ObjectSchema{
     .additional_properties = false,
 };
 
+const venue_cost_candidate_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "id", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 }, .description = "Stable identifier for the verified venue listing, such as binance:BTCUSDT." },
+        .{ .name = "bestBid", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Current positive best bid copied from the venue order-book result, as a decimal string." },
+        .{ .name = "bestAsk", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Current positive best ask copied from the venue order-book result, as a decimal string." },
+        .{ .name = "takerFeeBps", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Official non-negative public base/default taker fee for this exact product, in basis points as a decimal string." },
+    },
+    .required = &.{ "id", "bestBid", "bestAsk", "takerFeeBps" },
+    .additional_properties = false,
+};
+
+const calculate_venue_costs_description =
+    "Deterministically rank two or more verified, identity-equivalent venue listings by public base taker fee plus the side-specific half-spread. Supply only current best bid/ask values observed from real order-book tool results and a verified official public fee; never estimate or invent inputs. The tool returns independent fee, spread, and total-cost ranks. It does not fetch venue data or choose whether listings are comparable.";
+
+pub const calculate_venue_costs = ToolSpec{
+    .name = "calculate_venue_costs",
+    .description = calculate_venue_costs_description,
+    .model_schema = .{
+        .name = "calculate_venue_costs",
+        .description = calculate_venue_costs_description,
+        .strict_arguments = true,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "side", .json_type = .string, .shape = &.{ .enum_values = &.{ "buy", "sell" } } },
+                .{ .name = "candidates", .json_type = .array, .bounds = &.{ .min_items = 2, .max_items = 16 }, .shape = &.{ .array_objects = &venue_cost_candidate_schema } },
+            },
+            .required = &.{ "side", "candidates" },
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .calculate_venue_costs,
+    .activity_kind = .read,
+    .requires_approval = false,
+    .action_label = "Comparing",
+    .completed_action_label = "Compared",
+    .label_arg_kind = .none,
+    .label_arg_default = "venue costs",
+    .permission_target_kind = .none,
+    .decode = calculate_venue_costs_impl.decode,
+    .validate = calculate_venue_costs_impl.validate,
+    .call = calculate_venue_costs_impl.call,
+    .result_disposition = .continue_model,
+    .reads_only_fn = calculate_venue_costs_impl.readsOnly,
+    .irreversible_fn = calculate_venue_costs_impl.isIrreversible,
+};
+
 const market_result_evidence_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
         .{ .name = "source", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 } },
@@ -1369,6 +1416,7 @@ pub const all = [_]tool_dispatch.Tool{
     ask_user_question,
     vision,
     read_tool_result,
+    calculate_venue_costs,
     finalize_market_result,
 };
 
@@ -1402,7 +1450,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "19a87c191a709c83a7c1b2b7ae95f677663c6aa0f62ff1cb590e27c54d8ddf9a",
+        "336968ea9f482c276910445967c75305797164e7c2012b54b82629aa0aafe9a3",
         &actual_hex,
     );
 }
@@ -2041,6 +2089,7 @@ pub const advertisement_order = [_][]const u8{
     "ask_user_question",
     "web_fetch",
     "web_search",
+    "calculate_venue_costs",
     "finalize_market_result",
 };
 
@@ -2106,6 +2155,7 @@ test "built-in tools register exact active local order" {
         "ask_user_question",
         "vision",
         "read_tool_result",
+        "calculate_venue_costs",
         "finalize_market_result",
     };
 
