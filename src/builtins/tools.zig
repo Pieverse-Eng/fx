@@ -25,6 +25,7 @@ const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const memory_impl = @import("../tools/memory/memory.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
 const finalize_market_result_impl = @import("../tools/market/finalize_market_result.zig");
+const calculate_venue_costs_impl = @import("../tools/market/calculate_venue_costs.zig");
 const terminal_impl = @import("../tools/terminal/terminal.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -1259,6 +1260,65 @@ const market_result_market_schema = model_tool_schema.ObjectSchema{
     .additional_properties = false,
 };
 
+const venue_cost_level_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "price", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive decimal price from the verified order book." },
+        .{ .name = "size", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive raw venue-reported size available at this price." },
+    },
+    .required = &.{ "price", "size" },
+    .additional_properties = false,
+};
+
+const venue_cost_candidate_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "id", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 }, .description = "Stable identifier for the verified venue listing, such as binance:BTCUSDT." },
+        .{ .name = "baseSizePerUnit", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Verified positive base-asset quantity represented by one raw order-book size unit. Use 1 only when venue sizes are already base-asset units. Exclude quote-denominated, inverse, or price-dependent size units." },
+        .{ .name = "bids", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 200 }, .shape = &.{ .array_objects = &venue_cost_level_schema }, .description = "Current bid levels in descending price order, with raw venue-reported sizes." },
+        .{ .name = "asks", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 200 }, .shape = &.{ .array_objects = &venue_cost_level_schema }, .description = "Current ask levels in ascending price order, with raw venue-reported sizes." },
+        .{ .name = "takerFeeBps", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Verified non-negative public base/default taker fee for this exact product, in basis points." },
+        .{ .name = "additionalFeeBps", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Authoritative additional execution fee in basis points, or zero when none applies." },
+    },
+    .required = &.{ "id", "baseSizePerUnit", "bids", "asks", "takerFeeBps", "additionalFeeBps" },
+    .additional_properties = false,
+};
+
+const calculate_venue_costs_description =
+    "Deterministically rank two or more verified, identity-equivalent venue listings for one quote-currency market/taker order. It normalizes venue-native order-book sizes to base-asset depth, walks that depth, and combines side spread, depth slippage, public taker fee, and an authoritative additional fee. Candidates whose supplied depth cannot fill the notional are excluded. Supply only real order-book levels, verified base-denominated size multipliers, and verified fees; exclude inverse or quote-denominated size units and never estimate or invent inputs. It performs arithmetic only and does not decide whether listings are comparable.";
+
+pub const calculate_venue_costs = ToolSpec{
+    .name = "calculate_venue_costs",
+    .description = calculate_venue_costs_description,
+    .model_schema = .{
+        .name = "calculate_venue_costs",
+        .description = calculate_venue_costs_description,
+        .strict_arguments = true,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "side", .json_type = .string, .shape = &.{ .enum_values = &.{ "buy", "sell" } } },
+                .{ .name = "notionalQuote", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive order notional in the common quote currency." },
+                .{ .name = "quoteCurrency", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Common quote currency used for this comparison." },
+                .{ .name = "candidates", .json_type = .array, .bounds = &.{ .min_items = 2, .max_items = 16 }, .shape = &.{ .array_objects = &venue_cost_candidate_schema } },
+            },
+            .required = &.{ "side", "notionalQuote", "quoteCurrency", "candidates" },
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .calculate_venue_costs,
+    .activity_kind = .read,
+    .requires_approval = false,
+    .action_label = "Comparing",
+    .completed_action_label = "Compared",
+    .label_arg_kind = .none,
+    .label_arg_default = "venue costs",
+    .permission_target_kind = .none,
+    .decode = calculate_venue_costs_impl.decode,
+    .validate = calculate_venue_costs_impl.validate,
+    .call = calculate_venue_costs_impl.call,
+    .result_disposition = .continue_model,
+    .reads_only_fn = calculate_venue_costs_impl.readsOnly,
+    .irreversible_fn = calculate_venue_costs_impl.isIrreversible,
+};
+
 const market_result_evidence_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
         .{ .name = "source", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 } },
@@ -1369,6 +1429,7 @@ pub const all = [_]tool_dispatch.Tool{
     ask_user_question,
     vision,
     read_tool_result,
+    calculate_venue_costs,
     finalize_market_result,
 };
 
@@ -1402,7 +1463,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "19a87c191a709c83a7c1b2b7ae95f677663c6aa0f62ff1cb590e27c54d8ddf9a",
+        "c5cb202ef1f1063c748f1f33c508dd4c1121c4cb1b97e5c41e1b806ee4419cfd",
         &actual_hex,
     );
 }
@@ -2041,6 +2102,7 @@ pub const advertisement_order = [_][]const u8{
     "ask_user_question",
     "web_fetch",
     "web_search",
+    "calculate_venue_costs",
     "finalize_market_result",
 };
 
@@ -2106,6 +2168,7 @@ test "built-in tools register exact active local order" {
         "ask_user_question",
         "vision",
         "read_tool_result",
+        "calculate_venue_costs",
         "finalize_market_result",
     };
 
