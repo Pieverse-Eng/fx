@@ -42,7 +42,6 @@ const Output = struct {
     symbol: []const u8,
     product: []const u8,
     quote: []const u8,
-    tradeReady: bool,
     summary: []const u8,
     evidence: []const Evidence,
     timeframes: Timeframes,
@@ -116,7 +115,6 @@ fn finalizeArena(ctx: tool_dispatch.DispatchContext, input_json: []const u8) ![]
         .symbol = try requireString(try requireField(market, "symbol")),
         .product = try requireString(try requireField(market, "product")),
         .quote = try requireString(try requireField(market, "quote")),
-        .tradeReady = try requireBool(try requireField(market, "tradeReady")),
         .summary = try requireString(try requireField(root, "summary")),
         .evidence = evidence,
         .timeframes = .{
@@ -347,9 +345,6 @@ fn requireArray(value: std.json.Value) !std.json.Array {
 fn requireString(value: std.json.Value) ![]const u8 {
     return if (value == .string) value.string else error.ExpectedString;
 }
-fn requireBool(value: std.json.Value) !bool {
-    return if (value == .bool) value.bool else error.ExpectedBoolean;
-}
 fn numericTimestamp(value: std.json.Value) !i64 {
     return switch (value) {
         .integer => |number| number,
@@ -419,7 +414,7 @@ test "finalizer reads replay handles and emits normalized market result" {
     }
     const args = try std.fmt.allocPrint(
         arena,
-        "{{\"market\":{{\"venue\":\"demo\",\"symbol\":\"BTCUSD\",\"product\":\"perpetual\",\"quote\":\"USD\",\"tradeReady\":true}},\"summary\":\"verified\",\"evidence\":[{{\"source\":\"demo\",\"detail\":\"exact listing\"}}],\"candles\":{{\"sources\":{{\"15m\":\"{s}\",\"1h\":\"{s}\",\"4h\":\"{s}\"}},\"rows\":\"/data\",\"fields\":{{\"time\":\"/0\",\"open\":\"/1\",\"high\":\"/2\",\"low\":\"/3\",\"close\":\"/4\",\"volume\":\"/5\"}},\"timeUnit\":\"ms\"}}}}",
+        "{{\"market\":{{\"venue\":\"demo\",\"symbol\":\"BTCUSD\",\"product\":\"perpetual\",\"quote\":\"USD\"}},\"summary\":\"verified\",\"evidence\":[{{\"source\":\"demo\",\"detail\":\"exact listing\"}}],\"candles\":{{\"sources\":{{\"15m\":\"{s}\",\"1h\":\"{s}\",\"4h\":\"{s}\"}},\"rows\":\"/data\",\"fields\":{{\"time\":\"/0\",\"open\":\"/1\",\"high\":\"/2\",\"low\":\"/3\",\"close\":\"/4\",\"volume\":\"/5\"}},\"timeUnit\":\"ms\"}}}}",
         .{ handles[0], handles[1], handles[2] },
     );
     const result = try finalize(.{ .allocator = alloc, .ephemeral_command_replay = &store }, args);
@@ -431,7 +426,7 @@ test "finalizer reads replay handles and emits normalized market result" {
     try std.testing.expectEqual(@as(usize, 2), candles.len);
     try std.testing.expectEqual(@as(i64, 1000), candles[0].object.get("openTime").?.integer);
     try std.testing.expectEqual(@as(i64, 2000), candles[1].object.get("openTime").?.integer);
-    try std.testing.expectEqual(true, parsed.value.object.get("tradeReady").?.bool);
+    try std.testing.expect(parsed.value.object.get("tradeReady") == null);
 }
 
 test "finalizer reads ordinary terminal results from the current turn" {
@@ -453,7 +448,7 @@ test "finalizer reads ordinary terminal results from the current turn" {
         .{ .role = .assistant, .tool_calls = &finalizer_calls },
     };
     const args =
-        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD","tradeReady":true},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":null},"1h":{"sourceToolCall":1,"resultId":null},"4h":{"sourceToolCall":2,"resultId":null}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
+        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD"},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":null},"1h":{"sourceToolCall":1,"resultId":null},"4h":{"sourceToolCall":2,"resultId":null}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
     ;
     const result = try finalize(.{ .allocator = alloc, .current_turn_messages = &messages }, args);
     defer alloc.free(result);
@@ -477,7 +472,7 @@ test "finalizer selects terminal batch children without copied candle rows" {
         .{ .role = .tool, .content = batch_output, .tool_call_id = "call_batch", .tool_name = "terminal", .tool_result_status = .success },
     };
     const args =
-        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD","tradeReady":true},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":"15m"},"1h":{"sourceToolCall":0,"resultId":"1h"},"4h":{"sourceToolCall":0,"resultId":"4h"}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
+        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD"},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":"15m"},"1h":{"sourceToolCall":0,"resultId":"1h"},"4h":{"sourceToolCall":0,"resultId":"4h"}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
     ;
     const result = try finalize(.{ .allocator = alloc, .current_turn_messages = &messages }, args);
     defer alloc.free(result);

@@ -25,6 +25,9 @@ const Level = struct {
 
 const Candidate = struct {
     id: []const u8,
+    quote_currency: []const u8,
+    quote_to_reference_rate: f64,
+    quote_notional: f64,
     base_size_per_unit: f64,
     best_bid: f64,
     best_ask: f64,
@@ -37,11 +40,15 @@ const Candidate = struct {
     depth_slippage_bps: f64,
     estimated_cost_bps: f64,
     estimated_cost_quote: f64,
+    estimated_cost_reference: f64,
     total_cost_rank: usize = 0,
 };
 
 const CandidateOutput = struct {
     id: []const u8,
+    quoteCurrency: []const u8,
+    quoteToReferenceRate: f64,
+    quoteNotional: f64,
     baseSizePerUnit: f64,
     bestBid: f64,
     bestAsk: f64,
@@ -54,6 +61,7 @@ const CandidateOutput = struct {
     depthSlippageBps: f64,
     estimatedCostBps: f64,
     estimatedCostQuote: f64,
+    estimatedCostReference: f64,
     totalCostRank: usize,
 };
 
@@ -63,10 +71,10 @@ const ExcludedOutput = struct {
 };
 
 const Output = struct {
-    method: []const u8 = "quote_notional_taker_fee_plus_spread_and_depth",
+    method: []const u8 = "reference_notional_taker_fee_plus_spread_and_depth",
     side: []const u8,
-    notionalQuote: f64,
-    quoteCurrency: []const u8,
+    referenceNotional: f64,
+    referenceCurrency: []const u8,
     calculatedAt: i64,
     selected: CandidateOutput,
     candidates: []const CandidateOutput,
@@ -114,10 +122,10 @@ fn calculate(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
     const root = try requireObject(parsed.value);
     const side_text = try requireString(try requireField(root, "side"));
     const side = std.meta.stringToEnum(Side, side_text) orelse return error.InvalidSide;
-    const notional_quote = try numeric(try requireField(root, "notionalQuote"));
-    if (!std.math.isFinite(notional_quote) or notional_quote <= 0) return error.InvalidNotional;
-    const quote_currency = try requireString(try requireField(root, "quoteCurrency"));
-    if (quote_currency.len == 0 or quote_currency.len > 32) return error.InvalidQuoteCurrency;
+    const reference_notional = try numeric(try requireField(root, "referenceNotional"));
+    if (!std.math.isFinite(reference_notional) or reference_notional <= 0) return error.InvalidNotional;
+    const reference_currency = try requireString(try requireField(root, "referenceCurrency"));
+    if (reference_currency.len == 0 or reference_currency.len > 32) return error.InvalidQuoteCurrency;
     const values = try requireArray(try requireField(root, "candidates"));
     if (values.items.len < 2) return error.TooFewCandidates;
     if (values.items.len > max_candidates) return error.TooManyCandidates;
@@ -138,6 +146,16 @@ fn calculate(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
         seen_ids[seen_count] = id;
         seen_count += 1;
 
+        const quote_currency = try requireString(try requireField(item, "quoteCurrency"));
+        if (quote_currency.len == 0 or quote_currency.len > 32) return error.InvalidQuoteCurrency;
+        const quote_to_reference_rate = try numeric(try requireField(item, "quoteToReferenceRate"));
+        if (!std.math.isFinite(quote_to_reference_rate) or quote_to_reference_rate <= 0)
+            return error.InvalidQuoteConversion;
+        if (std.ascii.eqlIgnoreCase(quote_currency, reference_currency) and quote_to_reference_rate != 1)
+            return error.InvalidQuoteConversion;
+        const quote_notional = reference_notional / quote_to_reference_rate;
+        if (!std.math.isFinite(quote_notional) or quote_notional <= 0) return error.InvalidQuoteConversion;
+
         const bids = try parseLevels(arena, try requireField(item, "bids"), .descending);
         const asks = try parseLevels(arena, try requireField(item, "asks"), .ascending);
         const best_bid = bids[0].price;
@@ -148,7 +166,7 @@ fn calculate(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
         const base_size_per_unit = try positiveFinite(try requireField(item, "baseSizePerUnit"));
 
         const mid = (best_bid + best_ask) / 2;
-        const base_quantity = notional_quote / mid;
+        const base_quantity = quote_notional / mid;
         const estimated_fill_price = (switch (side) {
             .buy => fillPrice(asks, base_quantity, base_size_per_unit),
             .sell => fillPrice(bids, base_quantity, base_size_per_unit),
@@ -170,13 +188,17 @@ fn calculate(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
             .sell => (best_bid - estimated_fill_price) / mid * 10_000,
         });
         const estimated_cost_bps = taker_fee_bps + additional_fee_bps + side_spread_cost_bps + depth_slippage_bps;
-        const estimated_cost_quote = notional_quote * estimated_cost_bps / 10_000;
-        inline for (&.{ mid, estimated_fill_price, full_spread_bps, side_spread_cost_bps, depth_slippage_bps, estimated_cost_bps, estimated_cost_quote }) |number| {
+        const estimated_cost_quote = quote_notional * estimated_cost_bps / 10_000;
+        const estimated_cost_reference = estimated_cost_quote * quote_to_reference_rate;
+        inline for (&.{ mid, estimated_fill_price, full_spread_bps, side_spread_cost_bps, depth_slippage_bps, estimated_cost_bps, estimated_cost_quote, estimated_cost_reference }) |number| {
             if (!std.math.isFinite(number) or number < 0) return error.InvalidCost;
         }
 
         candidates[candidate_count] = .{
             .id = id,
+            .quote_currency = quote_currency,
+            .quote_to_reference_rate = quote_to_reference_rate,
+            .quote_notional = quote_notional,
             .base_size_per_unit = base_size_per_unit,
             .best_bid = best_bid,
             .best_ask = best_ask,
@@ -189,6 +211,7 @@ fn calculate(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
             .depth_slippage_bps = depth_slippage_bps,
             .estimated_cost_bps = estimated_cost_bps,
             .estimated_cost_quote = estimated_cost_quote,
+            .estimated_cost_reference = estimated_cost_reference,
         };
         candidate_count += 1;
     }
@@ -205,8 +228,8 @@ fn calculate(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
     for (indexes, 0..) |candidate_index, output_index| outputs[output_index] = candidateOutput(ranked_candidates[candidate_index]);
     const output = Output{
         .side = @tagName(side),
-        .notionalQuote = notional_quote,
-        .quoteCurrency = quote_currency,
+        .referenceNotional = reference_notional,
+        .referenceCurrency = reference_currency,
         .calculatedAt = now_ms,
         .selected = outputs[0],
         .candidates = outputs,
@@ -257,6 +280,9 @@ fn fillPrice(levels: []const Level, base_quantity: f64, base_size_per_unit: f64)
 fn candidateOutput(candidate: Candidate) CandidateOutput {
     return .{
         .id = candidate.id,
+        .quoteCurrency = candidate.quote_currency,
+        .quoteToReferenceRate = candidate.quote_to_reference_rate,
+        .quoteNotional = candidate.quote_notional,
         .baseSizePerUnit = candidate.base_size_per_unit,
         .bestBid = candidate.best_bid,
         .bestAsk = candidate.best_ask,
@@ -269,6 +295,7 @@ fn candidateOutput(candidate: Candidate) CandidateOutput {
         .depthSlippageBps = candidate.depth_slippage_bps,
         .estimatedCostBps = candidate.estimated_cost_bps,
         .estimatedCostQuote = candidate.estimated_cost_quote,
+        .estimatedCostReference = candidate.estimated_cost_reference,
         .totalCostRank = candidate.total_cost_rank,
     };
 }
@@ -338,7 +365,7 @@ pub fn isIrreversible(_: tool_dispatch.ToolInput) bool {
 test "ranks quote-notional fills by fee spread and depth" {
     const now_ms: i64 = 1_788_369_158_545;
     const input =
-        \\{"side":"buy","notionalQuote":"100","quoteCurrency":"USDT","candidates":[{"id":"shallow-low-fee","baseSizePerUnit":"1","bids":[{"price":"99","size":"10"}],"asks":[{"price":"101","size":"0.2"},{"price":"104","size":"10"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"deep-higher-fee","baseSizePerUnit":"1","bids":[{"price":"99.9","size":"10"}],"asks":[{"price":"100.1","size":"10"}],"takerFeeBps":"5","additionalFeeBps":"0"}]}
+        \\{"side":"buy","referenceNotional":"100","referenceCurrency":"USDT","candidates":[{"id":"shallow-low-fee","quoteCurrency":"USDT","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"10"}],"asks":[{"price":"101","size":"0.2"},{"price":"104","size":"10"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"deep-higher-fee","quoteCurrency":"USDT","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99.9","size":"10"}],"asks":[{"price":"100.1","size":"10"}],"takerFeeBps":"5","additionalFeeBps":"0"}]}
     ;
     const result = try calculate(std.testing.allocator, input, now_ms);
     defer std.testing.allocator.free(result);
@@ -352,7 +379,7 @@ test "ranks quote-notional fills by fee spread and depth" {
 
 test "sell fills consume descending bids" {
     const input =
-        \\{"side":"sell","notionalQuote":"100","quoteCurrency":"USD","candidates":[{"id":"venue-b","baseSizePerUnit":"1","bids":[{"price":"100","size":"0.4"},{"price":"99","size":"10"}],"asks":[{"price":"101","size":"10"}],"takerFeeBps":"2","additionalFeeBps":"0"},{"id":"venue-a","baseSizePerUnit":"1","bids":[{"price":"100","size":"10"}],"asks":[{"price":"101","size":"10"}],"takerFeeBps":"2","additionalFeeBps":"0"}]}
+        \\{"side":"sell","referenceNotional":"100","referenceCurrency":"USD","candidates":[{"id":"venue-b","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"100","size":"0.4"},{"price":"99","size":"10"}],"asks":[{"price":"101","size":"10"}],"takerFeeBps":"2","additionalFeeBps":"0"},{"id":"venue-a","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"100","size":"10"}],"asks":[{"price":"101","size":"10"}],"takerFeeBps":"2","additionalFeeBps":"0"}]}
     ;
     const result = try calculate(std.testing.allocator, input, 1);
     defer std.testing.allocator.free(result);
@@ -363,7 +390,7 @@ test "sell fills consume descending bids" {
 
 test "includes public and additional execution fees" {
     const input =
-        \\{"side":"buy","notionalQuote":"100","quoteCurrency":"USDT","candidates":[{"id":"lower-base-higher-total","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"101","size":"2"}],"takerFeeBps":"2","additionalFeeBps":"3"},{"id":"higher-base-lower-total","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"101","size":"2"}],"takerFeeBps":"4","additionalFeeBps":"0"}]}
+        \\{"side":"buy","referenceNotional":"100","referenceCurrency":"USDT","candidates":[{"id":"lower-base-higher-total","quoteCurrency":"USDT","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"101","size":"2"}],"takerFeeBps":"2","additionalFeeBps":"3"},{"id":"higher-base-lower-total","quoteCurrency":"USDT","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"101","size":"2"}],"takerFeeBps":"4","additionalFeeBps":"0"}]}
     ;
     const result = try calculate(std.testing.allocator, input, 1);
     defer std.testing.allocator.free(result);
@@ -376,7 +403,7 @@ test "includes public and additional execution fees" {
 
 test "excludes insufficient depth and rejects unsorted books" {
     const insufficient =
-        \\{"side":"buy","notionalQuote":"100","quoteCurrency":"USD","candidates":[{"id":"a","baseSizePerUnit":"1","bids":[{"price":"99","size":"1"}],"asks":[{"price":"100","size":"0.1"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"b","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"100","size":"2"}],"takerFeeBps":"1","additionalFeeBps":"0"}]}
+        \\{"side":"buy","referenceNotional":"100","referenceCurrency":"USD","candidates":[{"id":"a","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"1"}],"asks":[{"price":"100","size":"0.1"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"b","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"100","size":"2"}],"takerFeeBps":"1","additionalFeeBps":"0"}]}
     ;
     const result = try calculate(std.testing.allocator, insufficient, 1);
     defer std.testing.allocator.free(result);
@@ -388,14 +415,14 @@ test "excludes insufficient depth and rejects unsorted books" {
     try std.testing.expectEqualStrings("a", excluded[0].object.get("id").?.string);
     try std.testing.expectEqualStrings("insufficient_depth", excluded[0].object.get("reason").?.string);
     const unsorted =
-        \\{"side":"buy","notionalQuote":"100","quoteCurrency":"USD","candidates":[{"id":"a","baseSizePerUnit":"1","bids":[{"price":"99","size":"1"},{"price":"100","size":"1"}],"asks":[{"price":"101","size":"1"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"b","baseSizePerUnit":"1","bids":[{"price":"99","size":"1"}],"asks":[{"price":"101","size":"1"}],"takerFeeBps":"1","additionalFeeBps":"0"}]}
+        \\{"side":"buy","referenceNotional":"100","referenceCurrency":"USD","candidates":[{"id":"a","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"1"},{"price":"100","size":"1"}],"asks":[{"price":"101","size":"1"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"b","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"1"}],"asks":[{"price":"101","size":"1"}],"takerFeeBps":"1","additionalFeeBps":"0"}]}
     ;
     try std.testing.expectError(error.UnsortedBook, calculate(std.testing.allocator, unsorted, 1));
 }
 
 test "converts venue-native contract size to base-asset depth" {
     const input =
-        \\{"side":"buy","notionalQuote":"100","quoteCurrency":"USD","candidates":[{"id":"contracts","baseSizePerUnit":"0.01","bids":[{"price":"99","size":"200"}],"asks":[{"price":"100","size":"50"},{"price":"102","size":"100"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"base-units","baseSizePerUnit":"1","bids":[{"price":"96","size":"2"}],"asks":[{"price":"104","size":"2"}],"takerFeeBps":"1","additionalFeeBps":"0"}]}
+        \\{"side":"buy","referenceNotional":"100","referenceCurrency":"USD","candidates":[{"id":"contracts","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"0.01","bids":[{"price":"99","size":"200"}],"asks":[{"price":"100","size":"50"},{"price":"102","size":"100"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"base-units","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"96","size":"2"}],"asks":[{"price":"104","size":"2"}],"takerFeeBps":"1","additionalFeeBps":"0"}]}
     ;
     const result = try calculate(std.testing.allocator, input, 1);
     defer std.testing.allocator.free(result);
@@ -405,4 +432,26 @@ test "converts venue-native contract size to base-asset depth" {
     try std.testing.expectEqualStrings("contracts", selected.get("id").?.string);
     try std.testing.expectApproxEqAbs(@as(f64, 0.01), try numeric(selected.get("baseSizePerUnit").?), 0.000001);
     try std.testing.expect(try numeric(selected.get("estimatedFillPrice").?) > 101);
+}
+
+test "compares books quoted in different currencies at one reference notional" {
+    const input =
+        \\{"side":"buy","referenceNotional":"100","referenceCurrency":"USDC","candidates":[{"id":"usdc-market","quoteCurrency":"USDC","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"101","size":"2"}],"takerFeeBps":"5","additionalFeeBps":"0"},{"id":"usdt-market","quoteCurrency":"USDT","quoteToReferenceRate":"0.999","baseSizePerUnit":"1","bids":[{"price":"99.9","size":"2"}],"asks":[{"price":"100.1","size":"2"}],"takerFeeBps":"4","additionalFeeBps":"0"}]}
+    ;
+    const result = try calculate(std.testing.allocator, input, 1);
+    defer std.testing.allocator.free(result);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, result, .{});
+    defer parsed.deinit();
+    const selected = parsed.value.object.get("selected").?.object;
+    try std.testing.expectEqualStrings("usdt-market", selected.get("id").?.string);
+    try std.testing.expectEqualStrings("USDT", selected.get("quoteCurrency").?.string);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.999), try numeric(selected.get("quoteToReferenceRate").?), 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 100.1001001), try numeric(selected.get("quoteNotional").?), 0.000001);
+}
+
+test "same-currency candidates require an identity conversion rate" {
+    const input =
+        \\{"side":"buy","referenceNotional":"100","referenceCurrency":"USD","candidates":[{"id":"a","quoteCurrency":"USD","quoteToReferenceRate":"0.999","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"101","size":"2"}],"takerFeeBps":"1","additionalFeeBps":"0"},{"id":"b","quoteCurrency":"USD","quoteToReferenceRate":"1","baseSizePerUnit":"1","bids":[{"price":"99","size":"2"}],"asks":[{"price":"101","size":"2"}],"takerFeeBps":"1","additionalFeeBps":"0"}]}
+    ;
+    try std.testing.expectError(error.InvalidQuoteConversion, calculate(std.testing.allocator, input, 1));
 }

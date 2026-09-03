@@ -3523,15 +3523,15 @@ test "gateway_system_prompt: venue discovery covers all installed skills" {
     try expectDefaultPromptContains("Never rely on a hard-coded venue list.");
     try expectDefaultPromptContains("Search every available installed venue skill");
     try expectDefaultPromptContains("configuration state never limits discovery");
-    try expectDefaultPromptContains("configured-venue list only as execution-readiness state");
-    try expectDefaultPromptContains("Continue searching installed venue skills when that list is empty.");
     try expectDefaultPromptContains("exact venue symbol, product type, and quote asset");
-    try expectDefaultPromptContains("Return an exact verified listing even when its venue is not configured.");
-    try expectDefaultPromptContains("Set tradeReady to true only when the returned venue is in the caller's configured-venue list");
+    try expectDefaultPromptContains("Venue readiness belongs to the host");
+    try expectDefaultPromptContains("must not influence discovery or cost ranking");
+    try expectDefaultPromptDoesNotContain("configured-venue list");
 }
 
 test "gateway_system_prompt: comparable venues use deterministic cost ranking" {
     try expectDefaultPromptContains("same underlying exposure and comparable product");
+    try expectDefaultPromptContains("regardless of venue configuration");
     try expectDefaultPromptContains("positive quote-currency notional");
     try expectDefaultPromptContains("only for market/taker execution");
     try expectDefaultPromptContains("Do not use this cost model for maker, passive-limit, conditional, or other non-taker orders");
@@ -3545,6 +3545,10 @@ test "gateway_system_prompt: comparable venues use deterministic cost ranking" {
     try expectDefaultPromptContains("companion currency field such as `ctValCcy`");
     try expectDefaultPromptContains("never treat a quote-currency contract value as a base-asset multiplier");
     try expectDefaultPromptContains("verified `baseSizePerUnit`");
+    try expectDefaultPromptContains("different quote currencies");
+    try expectDefaultPromptContains("never assume stablecoins are at parity");
+    try expectDefaultPromptContains("`referenceNotional` and `referenceCurrency`");
+    try expectDefaultPromptContains("verified `quoteToReferenceRate`");
     try expectDefaultPromptContains("call `calculate_venue_costs` exactly once");
     try expectDefaultPromptContains("`totalCostRank` 1");
     try expectDefaultPromptContains("walks the supplied depth and performs arithmetic only");
@@ -3584,14 +3588,14 @@ test "gateway_system_prompt: output is strict JSON" {
         "\"symbol\":string|null",
         "\"product\":string|null",
         "\"quote\":string|null",
-        "\"tradeReady\":boolean",
         "\"timeframes\"",
         "\"15m\"",
         "\"1h\"",
         "\"4h\"",
     }) |field| try expectDefaultPromptContains(field);
     try expectDefaultPromptContains("Never add fields or include raw API responses.");
-    try expectDefaultPromptContains("set tradeReady to false");
+    try expectDefaultPromptContains("return null for venue, symbol, product, quote");
+    try expectDefaultPromptDoesNotContain("\"tradeReady\"");
 }
 
 test "gateway_system_prompt: excludes general coding-agent behavior" {
