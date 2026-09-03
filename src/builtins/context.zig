@@ -3511,9 +3511,12 @@ test "gateway_system_prompt: resolves natural-language assets before venue looku
     try expectDefaultPromptContains("never require the caller to retry with or pre-resolve a ticker");
     try expectDefaultPromptContains("plausible canonical ticker candidates");
     try expectDefaultPromptContains("never as a verified identity or listing");
-    try expectDefaultPromptContains("official symbol, base or full name, annotation, description");
+    try expectDefaultPromptContains("verify identity from exact active listing metadata");
+    try expectDefaultPromptContains("failed guessed-symbol lookups do not prove absence");
+    try expectDefaultPromptContains("Use each skill's live catalog method and `read_tool_result`");
+    try expectDefaultPromptContains("never as an alias table");
     try expectDefaultPromptContains("Keep the canonical ticker distinct from a venue-specific symbol.");
-    try expectDefaultPromptContains("use any available read-only research capability");
+    try expectDefaultPromptContains("use read-only research");
     try expectDefaultPromptContains("return unresolved rather than guessing");
 }
 
