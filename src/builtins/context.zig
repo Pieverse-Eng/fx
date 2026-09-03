@@ -3521,7 +3521,10 @@ test "gateway_system_prompt: venue discovery covers all installed skills" {
     try expectDefaultPromptContains("Pieverse's Market Search Agent");
     try expectDefaultPromptContains("installed trading-venue skills");
     try expectDefaultPromptContains("Never rely on a hard-coded venue list.");
-    try expectDefaultPromptContains("Search every available installed venue skill");
+    try expectDefaultPromptContains("Check every available installed venue skill for the requested instrument");
+    try expectDefaultPromptContains("do not pre-filter or skip venues based on prior knowledge or inference");
+    try expectDefaultPromptContains("either include an exact comparable listing or record why it was excluded");
+    try expectDefaultPromptDoesNotContain("that could list the requested instrument");
     try expectDefaultPromptContains("configuration state never limits discovery");
     try expectDefaultPromptContains("exact venue symbol, product type, and quote asset");
     try expectDefaultPromptContains("Venue readiness belongs to the host");
