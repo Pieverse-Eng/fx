@@ -1254,9 +1254,8 @@ const market_result_market_schema = model_tool_schema.ObjectSchema{
         .{ .name = "symbol", .json_type = .string },
         .{ .name = "product", .json_type = .string },
         .{ .name = "quote", .json_type = .string },
-        .{ .name = "tradeReady", .json_type = .boolean },
     },
-    .required = &.{ "venue", "symbol", "product", "quote", "tradeReady" },
+    .required = &.{ "venue", "symbol", "product", "quote" },
     .additional_properties = false,
 };
 
@@ -1272,18 +1271,20 @@ const venue_cost_level_schema = model_tool_schema.ObjectSchema{
 const venue_cost_candidate_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
         .{ .name = "id", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 }, .description = "Stable identifier for the verified venue listing, such as binance:BTCUSDT." },
+        .{ .name = "quoteCurrency", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Exact quote currency of this candidate listing." },
+        .{ .name = "quoteToReferenceRate", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Verified current reference-currency value of one quote-currency unit. Use exactly 1 only when quoteCurrency equals referenceCurrency." },
         .{ .name = "baseSizePerUnit", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Verified positive base-asset quantity represented by one raw order-book size unit. Use 1 only when venue sizes are already base-asset units. Exclude quote-denominated, inverse, or price-dependent size units." },
         .{ .name = "bids", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 200 }, .shape = &.{ .array_objects = &venue_cost_level_schema }, .description = "Current bid levels in descending price order, with raw venue-reported sizes." },
         .{ .name = "asks", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 200 }, .shape = &.{ .array_objects = &venue_cost_level_schema }, .description = "Current ask levels in ascending price order, with raw venue-reported sizes." },
         .{ .name = "takerFeeBps", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Verified non-negative public base/default taker fee for this exact product, in basis points." },
         .{ .name = "additionalFeeBps", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Authoritative additional execution fee in basis points, or zero when none applies." },
     },
-    .required = &.{ "id", "baseSizePerUnit", "bids", "asks", "takerFeeBps", "additionalFeeBps" },
+    .required = &.{ "id", "quoteCurrency", "quoteToReferenceRate", "baseSizePerUnit", "bids", "asks", "takerFeeBps", "additionalFeeBps" },
     .additional_properties = false,
 };
 
 const calculate_venue_costs_description =
-    "Deterministically rank two or more verified, identity-equivalent venue listings for one quote-currency market/taker order. It normalizes venue-native order-book sizes to base-asset depth, walks that depth, and combines side spread, depth slippage, public taker fee, and an authoritative additional fee. Candidates whose supplied depth cannot fill the notional are excluded. Supply only real order-book levels, verified base-denominated size multipliers, and verified fees; exclude inverse or quote-denominated size units and never estimate or invent inputs. It performs arithmetic only and does not decide whether listings are comparable.";
+    "Deterministically rank two or more verified, identity-equivalent venue listings for one market/taker order, including listings with different quote currencies. It converts the reference notional into each venue quote, normalizes venue-native order-book sizes to base-asset depth, walks that depth, and combines side spread, depth slippage, public taker fee, and an authoritative additional fee. Candidates whose supplied depth cannot fill the notional are excluded. Supply only real order-book levels, verified current quote conversion rates, verified base-denominated size multipliers, and verified fees; exclude inverse or quote-denominated size units and never estimate or invent inputs. It performs arithmetic only and does not decide whether listings are comparable.";
 
 pub const calculate_venue_costs = ToolSpec{
     .name = "calculate_venue_costs",
@@ -1295,11 +1296,11 @@ pub const calculate_venue_costs = ToolSpec{
         .input_schema = .{
             .properties = &.{
                 .{ .name = "side", .json_type = .string, .shape = &.{ .enum_values = &.{ "buy", "sell" } } },
-                .{ .name = "notionalQuote", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive order notional in the common quote currency." },
-                .{ .name = "quoteCurrency", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Common quote currency used for this comparison." },
+                .{ .name = "referenceNotional", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive user-supplied order notional in referenceCurrency." },
+                .{ .name = "referenceCurrency", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "User-supplied currency in which the notional and comparable costs are expressed." },
                 .{ .name = "candidates", .json_type = .array, .bounds = &.{ .min_items = 2, .max_items = 16 }, .shape = &.{ .array_objects = &venue_cost_candidate_schema } },
             },
-            .required = &.{ "side", "notionalQuote", "quoteCurrency", "candidates" },
+            .required = &.{ "side", "referenceNotional", "referenceCurrency", "candidates" },
             .additional_properties = false,
         },
     },
@@ -1463,7 +1464,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "c5cb202ef1f1063c748f1f33c508dd4c1121c4cb1b97e5c41e1b806ee4419cfd",
+        "c0e0f103e755730c51ef9f851f2177199aa77727991e6efe625c8f9d36f2a44c",
         &actual_hex,
     );
 }

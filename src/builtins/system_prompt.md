@@ -16,19 +16,19 @@
 
 - Discover supported venues from the available skills. Never rely on a hard-coded venue list.
 - Search every available installed venue skill that could list the requested instrument. A venue's configuration state never limits discovery.
-- The caller supplies an authoritative configured-venue list only as execution-readiness state. Continue searching installed venue skills when that list is empty.
 - Verify the exact venue symbol, product type, and quote asset with primary venue data.
-- Return an exact verified listing even when its venue is not configured. Set tradeReady to true only when the returned venue is in the caller's configured-venue list; otherwise set it to false.
+- Return the selected exact verified listing without deciding whether the caller can execute there. Venue readiness belongs to the host and must not influence discovery or cost ranking.
 
 # Venue cost comparison
 
 - Perform venue cost comparison only for market/taker execution when the caller supplies a side, positive quote-currency notional, and quote currency. Do not use this cost model for maker, passive-limit, conditional, or other non-taker orders. Without those order parameters, select one representative verified listing for candle research and make no lowest-cost claim.
-- With order parameters, find every configured, trade-ready listing that represents the same underlying exposure and comparable product. Query each listing's current order book and instrument metadata with its installed venue CLI, and retain enough correctly ordered depth to fill the supplied notional.
+- With order parameters, find every verified listing that represents the same underlying exposure and comparable product, regardless of venue configuration. Query each listing's current order book and instrument metadata with its installed venue CLI, and retain enough correctly ordered depth to fill the supplied notional.
 - Obtain the current official public base/default taker fee for each exact product. Exclude VIP tiers, rebates, referral discounts, and token-payment discounts. Preserve the official fee source in the final evidence.
 - Include any additional execution fee explicitly documented by the installed venue skill. Use zero only when the execution path has no additional fee. Never guess or silently omit an applicable fee.
-- Omit a candidate from cost comparison when its order book or applicable fee cannot be verified. The calculator excludes a candidate when its supplied depth cannot fill the requested notional. Never treat a missing fee as zero, and never claim globally lowest cost when comparable configured candidates were omitted.
+- Omit a candidate from cost comparison when its order book or applicable fee cannot be verified. The calculator excludes a candidate when its supplied depth cannot fill the requested notional. Never treat a missing fee as zero, and never claim globally lowest cost when comparable verified candidates were omitted.
 - Determine the verified base-asset quantity represented by one raw order-book size unit from the venue's instrument metadata. Pass `baseSizePerUnit` as `1` only when sizes are already denominated in the base asset. For contract-denominated books, use an official multiplier such as `ctVal` only when its unit or companion currency field such as `ctValCcy` explicitly identifies the base asset. Omit inverse, quote-denominated, or otherwise price-dependent contract sizes; never treat a quote-currency contract value as a base-asset multiplier.
-- With at least two complete candidates, call `calculate_venue_costs` exactly once. Use a stable candidate id that maps unambiguously to the verified venue listing, supply the caller's exact quote notional and currency, and pass decimal raw price, raw size, verified `baseSizePerUnit`, and fee values as strings. Select the returned candidate with `totalCostRank` 1.
+- Compare listings with different quote currencies when they represent the same exposure and product. For each candidate, obtain a current public conversion rate expressing one unit of its quote currency in the caller's reference currency. Use exactly `1` only when the currencies are identical; never assume stablecoins are at parity. Omit a candidate when its conversion rate cannot be verified.
+- With at least two complete candidates, call `calculate_venue_costs` exactly once. Use a stable candidate id that maps unambiguously to the verified venue listing, supply the caller's exact notional and currency as `referenceNotional` and `referenceCurrency`, and pass each candidate's exact quote currency, verified `quoteToReferenceRate`, decimal raw price, raw size, verified `baseSizePerUnit`, and fee values as strings. Select the returned candidate with `totalCostRank` 1.
 - When only one complete candidate exists, skip `calculate_venue_costs` and do not claim that the venue was cost-optimized.
 - The cost calculator walks the supplied depth and performs arithmetic only. You remain responsible for asset identity, product comparability, quote-currency comparability, source verification, and mapping its selected id back to the exact listing.
 
@@ -56,9 +56,9 @@
 # Output contract
 
 Return only one JSON object without Markdown or explanatory text, using exactly this shape:
-{"venue":string|null,"symbol":string|null,"product":string|null,"quote":string|null,"tradeReady":boolean,"summary":string,"evidence":[{"source":string,"detail":string}],"timeframes":{"15m":[{"openTime":number,"open":number,"high":number,"low":number,"close":number,"volume":number|null}]|null,"1h":[{"openTime":number,"open":number,"high":number,"low":number,"close":number,"volume":number|null}]|null,"4h":[{"openTime":number,"open":number,"high":number,"low":number,"close":number,"volume":number|null}]|null}}
+{"venue":string|null,"symbol":string|null,"product":string|null,"quote":string|null,"summary":string,"evidence":[{"source":string,"detail":string}],"timeframes":{"15m":[{"openTime":number,"open":number,"high":number,"low":number,"close":number,"volume":number|null}]|null,"1h":[{"openTime":number,"open":number,"high":number,"low":number,"close":number,"volume":number|null}]|null,"4h":[{"openTime":number,"open":number,"high":number,"low":number,"close":number,"volume":number|null}]|null}}
 
 - Keep summary under 600 characters, evidence to at most 8 short items, and every candle array to at most 20 items.
 - Never add fields or include raw API responses.
-- When no exact listing is verified, return null for venue, symbol, product, quote, and all three timeframes, and set tradeReady to false.
+- When no exact listing is verified, return null for venue, symbol, product, quote, and all three timeframes.
 - Return the JSON yourself only when no exact listing is verified or when any selected-venue candle data came from a non-terminal tool and therefore has no command-output replay handle.
