@@ -37,6 +37,24 @@ const Timeframes = struct {
     @"4h": ?[]const Candle,
 };
 
+const OnchainRoute = struct {
+    issuer: []const u8,
+    tokenSymbol: []const u8,
+    chain: []const u8,
+    contract: []const u8,
+    inputAsset: []const u8,
+    inputContract: []const u8,
+    provider: []const u8,
+    route: []const u8,
+    amountIn: f64,
+    amountOut: f64,
+    exposureShares: f64,
+    gasReference: f64,
+    effectiveReferencePerShare: f64,
+    referenceCurrency: []const u8,
+    quotedAt: i64,
+};
+
 const Output = struct {
     venue: []const u8,
     symbol: []const u8,
@@ -45,6 +63,7 @@ const Output = struct {
     summary: []const u8,
     evidence: []const Evidence,
     timeframes: Timeframes,
+    onchainRoute: ?OnchainRoute,
 };
 
 pub fn decode(ctx: tool_dispatch.DispatchContext, args_json: []const u8) tool_dispatch.DispatchError!tool_dispatch.DecodeResult {
@@ -117,6 +136,7 @@ fn finalizeArena(ctx: tool_dispatch.DispatchContext, input_json: []const u8) ![]
         .quote = try requireString(try requireField(market, "quote")),
         .summary = try requireString(try requireField(root, "summary")),
         .evidence = evidence,
+        .onchainRoute = try parseOnchainRoute(root.get("onchainRoute") orelse return error.MissingField),
         .timeframes = .{
             .@"15m" = try extractTimeframe(ctx, sources, fields, rows_pointer, time_unit, "15m"),
             .@"1h" = try extractTimeframe(ctx, sources, fields, rows_pointer, time_unit, "1h"),
@@ -128,6 +148,34 @@ fn finalizeArena(ctx: tool_dispatch.DispatchContext, input_json: []const u8) ![]
     defer writer.deinit();
     try std.json.Stringify.value(output, .{}, &writer.writer);
     return writer.toOwnedSlice();
+}
+
+fn parseOnchainRoute(value: std.json.Value) !?OnchainRoute {
+    if (value == .null) return null;
+    const route = try requireObject(value);
+    const amount_in = try positiveNumeric(try requireField(route, "amountIn"));
+    const amount_out = try positiveNumeric(try requireField(route, "amountOut"));
+    const exposure_shares = try positiveNumeric(try requireField(route, "exposureShares"));
+    const gas_reference = try nonNegativeNumeric(try requireField(route, "gasReference"));
+    const effective = try positiveNumeric(try requireField(route, "effectiveReferencePerShare"));
+    const quoted_at = try positiveInteger(try requireField(route, "quotedAt"));
+    return .{
+        .issuer = try requireString(try requireField(route, "issuer")),
+        .tokenSymbol = try requireString(try requireField(route, "tokenSymbol")),
+        .chain = try requireString(try requireField(route, "chain")),
+        .contract = try requireString(try requireField(route, "contract")),
+        .inputAsset = try requireString(try requireField(route, "inputAsset")),
+        .inputContract = try requireString(try requireField(route, "inputContract")),
+        .provider = try requireString(try requireField(route, "provider")),
+        .route = try requireString(try requireField(route, "route")),
+        .amountIn = amount_in,
+        .amountOut = amount_out,
+        .exposureShares = exposure_shares,
+        .gasReference = gas_reference,
+        .effectiveReferencePerShare = effective,
+        .referenceCurrency = try requireString(try requireField(route, "referenceCurrency")),
+        .quotedAt = quoted_at,
+    };
 }
 
 fn extractTimeframe(
@@ -363,6 +411,20 @@ fn numeric(value: std.json.Value) !f64 {
     if (!std.math.isFinite(number)) return error.InvalidNumber;
     return number;
 }
+fn positiveNumeric(value: std.json.Value) !f64 {
+    const number = try numeric(value);
+    if (number <= 0) return error.InvalidNumber;
+    return number;
+}
+fn nonNegativeNumeric(value: std.json.Value) !f64 {
+    const number = try numeric(value);
+    if (number < 0) return error.InvalidNumber;
+    return number;
+}
+fn positiveInteger(value: std.json.Value) !i64 {
+    if (value != .integer or value.integer <= 0) return error.InvalidNumber;
+    return value.integer;
+}
 fn nullableNumeric(value: std.json.Value) !?f64 {
     if (value == .null) return null;
     const value_number = try numeric(value);
@@ -391,6 +453,20 @@ test "JSON pointer supports array and object candle rows" {
     try std.testing.expectEqual(@as(i64, 3), (try resolvePointer(alloc, parsed.value, "/a~1b")).integer);
 }
 
+test "onchain execution route is validated and normalized" {
+    const alloc = std.testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"issuer\":\"xstocks\",\"tokenSymbol\":\"CRCLx\",\"chain\":\"Solana\",\"contract\":\"mint\",\"inputAsset\":\"USDC\",\"inputContract\":\"usdc-mint\",\"provider\":\"bitget_wallet\",\"route\":\"dflow\",\"amountIn\":\"100\",\"amountOut\":\"0.98\",\"exposureShares\":\"0.98\",\"gasReference\":\"0.01\",\"effectiveReferencePerShare\":\"102.05\",\"referenceCurrency\":\"USD\",\"quotedAt\":1788451200000}",
+        .{},
+    );
+    defer parsed.deinit();
+    const route = (try parseOnchainRoute(parsed.value)).?;
+    try std.testing.expectEqualStrings("CRCLx", route.tokenSymbol);
+    try std.testing.expectEqual(@as(f64, 0.98), route.exposureShares);
+}
+
 test "finalizer reads replay handles and emits normalized market result" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -414,7 +490,7 @@ test "finalizer reads replay handles and emits normalized market result" {
     }
     const args = try std.fmt.allocPrint(
         arena,
-        "{{\"market\":{{\"venue\":\"demo\",\"symbol\":\"BTCUSD\",\"product\":\"perpetual\",\"quote\":\"USD\"}},\"summary\":\"verified\",\"evidence\":[{{\"source\":\"demo\",\"detail\":\"exact listing\"}}],\"candles\":{{\"sources\":{{\"15m\":\"{s}\",\"1h\":\"{s}\",\"4h\":\"{s}\"}},\"rows\":\"/data\",\"fields\":{{\"time\":\"/0\",\"open\":\"/1\",\"high\":\"/2\",\"low\":\"/3\",\"close\":\"/4\",\"volume\":\"/5\"}},\"timeUnit\":\"ms\"}}}}",
+        "{{\"market\":{{\"venue\":\"demo\",\"symbol\":\"BTCUSD\",\"product\":\"perpetual\",\"quote\":\"USD\"}},\"onchainRoute\":null,\"summary\":\"verified\",\"evidence\":[{{\"source\":\"demo\",\"detail\":\"exact listing\"}}],\"candles\":{{\"sources\":{{\"15m\":\"{s}\",\"1h\":\"{s}\",\"4h\":\"{s}\"}},\"rows\":\"/data\",\"fields\":{{\"time\":\"/0\",\"open\":\"/1\",\"high\":\"/2\",\"low\":\"/3\",\"close\":\"/4\",\"volume\":\"/5\"}},\"timeUnit\":\"ms\"}}}}",
         .{ handles[0], handles[1], handles[2] },
     );
     const result = try finalize(.{ .allocator = alloc, .ephemeral_command_replay = &store }, args);
@@ -448,7 +524,7 @@ test "finalizer reads ordinary terminal results from the current turn" {
         .{ .role = .assistant, .tool_calls = &finalizer_calls },
     };
     const args =
-        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD"},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":null},"1h":{"sourceToolCall":1,"resultId":null},"4h":{"sourceToolCall":2,"resultId":null}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
+        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD"},"onchainRoute":null,"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":null},"1h":{"sourceToolCall":1,"resultId":null},"4h":{"sourceToolCall":2,"resultId":null}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
     ;
     const result = try finalize(.{ .allocator = alloc, .current_turn_messages = &messages }, args);
     defer alloc.free(result);
@@ -472,7 +548,7 @@ test "finalizer selects terminal batch children without copied candle rows" {
         .{ .role = .tool, .content = batch_output, .tool_call_id = "call_batch", .tool_name = "terminal", .tool_result_status = .success },
     };
     const args =
-        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD"},"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":"15m"},"1h":{"sourceToolCall":0,"resultId":"1h"},"4h":{"sourceToolCall":0,"resultId":"4h"}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
+        \\{"market":{"venue":"demo","symbol":"BTCUSD","product":"perpetual","quote":"USD"},"onchainRoute":null,"summary":"verified","evidence":[],"candles":{"sources":{"15m":{"sourceToolCall":0,"resultId":"15m"},"1h":{"sourceToolCall":0,"resultId":"1h"},"4h":{"sourceToolCall":0,"resultId":"4h"}},"rows":"","fields":{"time":"/0","open":"/1","high":"/2","low":"/3","close":"/4","volume":"/5"},"timeUnit":"ms"}}
     ;
     const result = try finalize(.{ .allocator = alloc, .current_turn_messages = &messages }, args);
     defer alloc.free(result);
