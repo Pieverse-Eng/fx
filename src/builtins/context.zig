@@ -3490,6 +3490,7 @@ test "gateway_system_prompt: compact ordered sections" {
     const sections = [_][]const u8{
         "# Identity",
         "# Asset identity resolution",
+        "# Embedded venue contracts",
         "# Venue selection",
         "# Read-only boundary",
         "# Candle data",
@@ -3503,7 +3504,7 @@ test "gateway_system_prompt: compact ordered sections" {
         previous_index = found_index;
     }
 
-    try std.testing.expect(gateway_system_prompt.len < 8 * 1024);
+    try std.testing.expect(gateway_system_prompt.len < 24 * 1024);
 }
 
 test "gateway_system_prompt: resolves natural-language assets before venue lookup" {
@@ -3513,18 +3514,36 @@ test "gateway_system_prompt: resolves natural-language assets before venue looku
     try expectDefaultPromptContains("never as a verified identity or listing");
     try expectDefaultPromptContains("verify identity from exact active listing metadata");
     try expectDefaultPromptContains("failed guessed-symbol lookups do not prove absence");
-    try expectDefaultPromptContains("Use each skill's live catalog method and `read_tool_result`");
+    try expectDefaultPromptContains("Use each venue contract's live catalog method and `read_tool_result`");
     try expectDefaultPromptContains("never as an alias table");
     try expectDefaultPromptContains("Keep the canonical ticker distinct from a venue-specific symbol.");
     try expectDefaultPromptContains("use read-only research");
     try expectDefaultPromptContains("return unresolved rather than guessing");
 }
 
-test "gateway_system_prompt: venue discovery covers all installed skills" {
+test "gateway_system_prompt: embeds every supported venue contract" {
     try expectDefaultPromptContains("Pieverse's Market Search Agent");
-    try expectDefaultPromptContains("installed trading-venue skills");
-    try expectDefaultPromptContains("Never rely on a hard-coded venue list.");
-    try expectDefaultPromptContains("Check every available installed venue skill for the requested instrument");
+    try expectDefaultPromptContains("The venue contracts in this prompt are complete for this workflow.");
+    try expectDefaultPromptContains("Do not search for, load, install, or infer instructions from skills.");
+    inline for (&.{
+        "## Aster",
+        "## Binance",
+        "## Bitget",
+        "## Gate",
+        "## Hyperliquid",
+        "## Kraken",
+        "## Lighter",
+        "## OKX CEX",
+    }) |venue| try expectDefaultPromptContains(venue);
+    try expectDefaultPromptContains("python3 /usr/local/lib/fx-market-data/aster_api.py ticker");
+    try expectDefaultPromptContains("binance-cli spot ticker-price");
+    try expectDefaultPromptContains("bgc market --action instruments");
+    try expectDefaultPromptContains("gate-cli cex futures market contract");
+    try expectDefaultPromptContains("purr hyperliquid search");
+    try expectDefaultPromptContains("kraken pairs");
+    try expectDefaultPromptContains("purr lighter market");
+    try expectDefaultPromptContains("okx market instruments");
+    try expectDefaultPromptContains("Check Aster, Binance, Bitget, Gate, Hyperliquid, Kraken, Lighter, and OKX CEX");
     try expectDefaultPromptContains("do not pre-filter or skip venues based on prior knowledge or inference");
     try expectDefaultPromptContains("either include an exact comparable listing or record why it was excluded");
     try expectDefaultPromptDoesNotContain("that could list the requested instrument");
@@ -3533,6 +3552,8 @@ test "gateway_system_prompt: venue discovery covers all installed skills" {
     try expectDefaultPromptContains("Venue readiness belongs to the host");
     try expectDefaultPromptContains("must not influence discovery or cost ranking");
     try expectDefaultPromptDoesNotContain("configured-venue list");
+    try expectDefaultPromptDoesNotContain("installed venue skill");
+    try expectDefaultPromptDoesNotContain("available skills");
 }
 
 test "gateway_system_prompt: comparable venues use deterministic cost ranking" {
@@ -3544,7 +3565,7 @@ test "gateway_system_prompt: comparable venues use deterministic cost ranking" {
     try expectDefaultPromptContains("make no lowest-cost claim");
     try expectDefaultPromptContains("enough correctly ordered depth to fill the supplied notional");
     try expectDefaultPromptContains("current official public base/default taker fee");
-    try expectDefaultPromptContains("additional execution fee explicitly documented by the installed venue skill");
+    try expectDefaultPromptContains("additional execution fee explicitly documented by the embedded venue contract");
     try expectDefaultPromptContains("calculator excludes a candidate when its supplied depth cannot fill the requested notional");
     try expectDefaultPromptContains("Never treat a missing fee as zero");
     try expectDefaultPromptContains("base-asset quantity represented by one raw order-book size unit");
@@ -3562,7 +3583,7 @@ test "gateway_system_prompt: comparable venues use deterministic cost ranking" {
 
 test "gateway_system_prompt: research is read only" {
     try expectDefaultPromptContains("Only retrieve public market metadata, tickers, fee schedules, order books, and candles.");
-    try expectDefaultPromptContains("exactly one installed venue CLI command per tool call");
+    try expectDefaultPromptContains("exactly one documented venue CLI command per tool call");
     try expectDefaultPromptContains("Never use pipes, jq, shell loops, redirects, command substitution, or command chaining.");
     try expectDefaultPromptContains("search the saved result with read_tool_result using its exact handle");
     try expectDefaultPromptContains("Do not rerun or shell-filter a complete market catalog.");
