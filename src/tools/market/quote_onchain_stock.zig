@@ -253,14 +253,11 @@ fn discoverXstocks(arena: Allocator, ticker: []const u8, deployments: *std.Array
         const stablecoins_value = item.get("stablecoins") orelse continue;
         const stablecoins = requireArray(stablecoins_value) catch continue;
         const stablecoin = chooseUsdStablecoin(stablecoins.items, provider) orelse continue;
-        var multiplier: f64 = 1;
-        if (std.mem.eql(u8, network, "Solana")) {
-            const multiplier_url = try std.fmt.allocPrint(arena, "https://api.xstocks.fi/api/v2/public/assets/{s}/multiplier?network=Solana", .{symbol});
-            const multiplier_body = fetch(arena, .GET, multiplier_url, null, &.{}) catch continue;
-            var multiplier_parsed = std.json.parseFromSlice(std.json.Value, arena, multiplier_body, .{}) catch continue;
-            defer multiplier_parsed.deinit();
-            multiplier = numeric((requireObject(multiplier_parsed.value) catch continue).get("currentMultiplier") orelse continue) catch continue;
-        }
+        const multiplier_url = try std.fmt.allocPrint(arena, "https://api.xstocks.fi/api/v2/public/assets/{s}/multiplier?network={s}", .{ symbol, network });
+        const multiplier_body = fetch(arena, .GET, multiplier_url, null, &.{}) catch continue;
+        var multiplier_parsed = std.json.parseFromSlice(std.json.Value, arena, multiplier_body, .{}) catch continue;
+        defer multiplier_parsed.deinit();
+        const multiplier = numeric((requireObject(multiplier_parsed.value) catch continue).get("currentMultiplier") orelse continue) catch continue;
         if (!std.math.isFinite(multiplier) or multiplier <= 0) continue;
         try deployments.append(arena, .{
             .issuer = "xstocks",
@@ -303,15 +300,20 @@ fn discoverBstocks(arena: Allocator, ticker: []const u8, deployments: *std.Array
     const assets_root = requireObject(assets_parsed.value) catch return;
     const values = requireArray(assets_root.get("data") orelse return) catch return;
     var symbol: ?[]const u8 = null;
+    var multiplier: ?f64 = null;
     for (values.items) |value| {
         const item = requireObject(value) catch continue;
         const underlying = optionalString(item, "uq") orelse continue;
         if (!std.ascii.eqlIgnoreCase(underlying, ticker) or !(optionalBool(item, "trading") orelse false)) continue;
         if (!hasString(item.get("tags") orelse continue, "bStocks")) continue;
-        symbol = optionalString(item, "assetCode");
-        if (symbol != null) break;
+        const candidate_symbol = optionalString(item, "assetCode") orelse continue;
+        const candidate_multiplier = numeric(item.get("ml") orelse continue) catch continue;
+        if (!std.math.isFinite(candidate_multiplier) or candidate_multiplier <= 0) continue;
+        symbol = candidate_symbol;
+        multiplier = candidate_multiplier;
+        break;
     }
-    if (symbol == null) return;
+    if (symbol == null or multiplier == null) return;
 
     const networks_body = fetch(arena, .GET, "https://www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll", null, &.{}) catch return;
     var networks_parsed = std.json.parseFromSlice(std.json.Value, arena, networks_body, .{}) catch return;
@@ -333,7 +335,7 @@ fn discoverBstocks(arena: Allocator, ticker: []const u8, deployments: *std.Array
                 .contract = contract,
                 .input_symbol = "USDT",
                 .input_contract = "0x55d398326f99059fF775485246999027B3197955",
-                .multiplier = 1,
+                .multiplier = multiplier.?,
                 .provider = .bitget_wallet,
             });
         }
@@ -684,7 +686,7 @@ test "parses and ranks Bitget quotes by exact input plus gas" {
         .contract = "0xstock",
         .input_symbol = "USDT",
         .input_contract = "0xusdt",
-        .multiplier = 1,
+        .multiplier = 1.25,
         .provider = .bitget_wallet,
     };
     const body =
@@ -692,7 +694,8 @@ test "parses and ranks Bitget quotes by exact input plus gas" {
     ;
     const result = try parseBitgetQuote(arena, body, deployment, 100, 1, 1);
     try std.testing.expectEqualStrings("route-b", result.route);
-    try std.testing.expectApproxEqAbs(@as(f64, 100.05 / 0.99), result.effective_reference_per_share, 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.99 * 1.25), result.exposure_shares, 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 100.05 / (0.99 * 1.25)), result.effective_reference_per_share, 0.000001);
 }
 
 test "rejects unsafe ticker characters" {

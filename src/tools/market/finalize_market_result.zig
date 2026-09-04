@@ -51,6 +51,7 @@ const OnchainRoute = struct {
     exposureShares: f64,
     gasReference: f64,
     effectiveReferencePerShare: f64,
+    referenceNotional: f64,
     referenceCurrency: []const u8,
     quotedAt: i64,
 };
@@ -166,20 +167,21 @@ fn parseOnchainRoute(ctx: tool_dispatch.DispatchContext, value: std.json.Value) 
     const gas_reference = try nonNegativeNumeric(try requireField(route, "gasReference"));
     const effective = try positiveNumeric(try requireField(route, "effectiveReferencePerShare"));
     return .{
-        .issuer = try requireString(try requireField(route, "issuer")),
-        .tokenSymbol = try requireString(try requireField(route, "tokenSymbol")),
-        .chain = try requireString(try requireField(route, "chain")),
-        .contract = try requireString(try requireField(route, "contract")),
-        .inputAsset = try requireString(try requireField(route, "inputAsset")),
-        .inputContract = try requireString(try requireField(route, "inputContract")),
-        .provider = try requireString(try requireField(route, "provider")),
-        .route = try requireString(try requireField(route, "route")),
+        .issuer = try ownedString(ctx.allocator, try requireField(route, "issuer")),
+        .tokenSymbol = try ownedString(ctx.allocator, try requireField(route, "tokenSymbol")),
+        .chain = try ownedString(ctx.allocator, try requireField(route, "chain")),
+        .contract = try ownedString(ctx.allocator, try requireField(route, "contract")),
+        .inputAsset = try ownedString(ctx.allocator, try requireField(route, "inputAsset")),
+        .inputContract = try ownedString(ctx.allocator, try requireField(route, "inputContract")),
+        .provider = try ownedString(ctx.allocator, try requireField(route, "provider")),
+        .route = try ownedString(ctx.allocator, try requireField(route, "route")),
         .amountIn = amount_in,
         .amountOut = amount_out,
         .exposureShares = exposure_shares,
         .gasReference = gas_reference,
         .effectiveReferencePerShare = effective,
-        .referenceCurrency = try requireString(try requireField(root, "referenceCurrency")),
+        .referenceNotional = try positiveNumeric(try requireField(root, "referenceNotional")),
+        .referenceCurrency = try ownedString(ctx.allocator, try requireField(root, "referenceCurrency")),
         .quotedAt = try positiveInteger(try requireField(root, "quotedAt")),
     };
 }
@@ -430,6 +432,9 @@ fn requireArray(value: std.json.Value) !std.json.Array {
 fn requireString(value: std.json.Value) ![]const u8 {
     return if (value == .string) value.string else error.ExpectedString;
 }
+fn ownedString(alloc: Allocator, value: std.json.Value) ![]const u8 {
+    return alloc.dupe(u8, try requireString(value));
+}
 fn numericTimestamp(value: std.json.Value) !i64 {
     return switch (value) {
         .integer => |number| number,
@@ -492,21 +497,25 @@ test "JSON pointer supports array and object candle rows" {
 
 test "onchain execution route is loaded from the quote tool result" {
     const alloc = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
     const calls = [_]types.ToolCall{
         .{ .id = "call_quote", .name = "quote_onchain_stock", .arguments_json = "{}" },
     };
     const quote_result =
-        \\{"ticker":"CRCL","referenceCurrency":"USD","quotedAt":1788451200000,"selected":{"issuer":"xstocks","tokenSymbol":"CRCLx","chain":"Solana","contract":"mint","inputAsset":"USDC","inputContract":"usdc-mint","provider":"bitget_wallet","route":"dflow","amountIn":"100","amountOut":"0.98","exposureShares":"0.98","gasReference":"0.01","effectiveReferencePerShare":"102.05"}}
+        \\{"ticker":"CRCL","referenceNotional":100,"referenceCurrency":"USD","quotedAt":1788451200000,"selected":{"issuer":"xstocks","tokenSymbol":"CRCLx","chain":"Solana","contract":"mint","inputAsset":"USDC","inputContract":"usdc-mint","provider":"bitget_wallet","route":"dflow","amountIn":"100","amountOut":"0.98","exposureShares":"0.98","gasReference":"0.01","effectiveReferencePerShare":"102.05"}}
     ;
     const messages = [_]types.ChatMessage{
         .{ .role = .assistant, .tool_calls = &calls },
         .{ .role = .tool, .content = quote_result, .tool_call_id = "call_quote", .tool_name = "quote_onchain_stock", .tool_result_status = .success },
     };
-    var source = try std.json.parseFromSlice(std.json.Value, alloc, "{\"sourceToolCall\":0}", .{});
+    var source = try std.json.parseFromSlice(std.json.Value, arena, "{\"sourceToolCall\":0}", .{});
     defer source.deinit();
-    const route = (try parseOnchainRoute(.{ .allocator = alloc, .current_turn_messages = &messages }, source.value)).?;
+    const route = (try parseOnchainRoute(.{ .allocator = arena, .current_turn_messages = &messages }, source.value)).?;
     try std.testing.expectEqualStrings("CRCLx", route.tokenSymbol);
     try std.testing.expectEqual(@as(f64, 0.98), route.exposureShares);
+    try std.testing.expectEqual(@as(f64, 100), route.referenceNotional);
 }
 
 test "finalizer reads replay handles and emits normalized market result" {
