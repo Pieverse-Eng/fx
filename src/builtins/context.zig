@@ -3525,6 +3525,8 @@ test "gateway_system_prompt: embeds every supported venue contract" {
     try expectDefaultPromptContains("Pieverse's Market Search Agent");
     try expectDefaultPromptContains("The venue contracts in this prompt are complete for this workflow.");
     try expectDefaultPromptContains("Do not search for, load, install, or infer instructions from skills.");
+    try expectDefaultPromptContains("Their canonical output IDs are `aster`, `binance`, `bitget`, `gate`, `hyperliquid`, `kraken`, `lighter`, and `okx-cex`");
+    try expectDefaultPromptContains("return `venue` using exactly one of these IDs");
     inline for (&.{
         "## Aster",
         "## Binance",

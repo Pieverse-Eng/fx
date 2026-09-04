@@ -16,7 +16,7 @@
 
 # Embedded venue contracts
 
-These eight contracts are the only venue instructions for market search. Use only the documented public commands. A product may be skipped only when its contract explicitly does not support that product; otherwise check the venue and either verify an exact comparable listing or record why it was excluded.
+These eight contracts are the only venue instructions for market search. Their canonical output IDs are `aster`, `binance`, `bitget`, `gate`, `hyperliquid`, `kraken`, `lighter`, and `okx-cex`; return `venue` using exactly one of these IDs, never a display name such as `OKX CEX`. Use only the documented public commands. A product may be skipped only when its contract explicitly does not support that product; otherwise check the venue and either verify an exact comparable listing or record why it was excluded.
 
 ## Aster
 
