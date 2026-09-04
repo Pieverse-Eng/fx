@@ -28,6 +28,20 @@ const Deployment = struct {
 
 const Provider = enum { bitget_wallet, okx_onchainos };
 
+const QuoteTask = struct {
+    arena_state: std.heap.ArenaAllocator,
+    deployment: Deployment,
+    reference_notional: f64,
+    reference_usd_rate: f64,
+    now_ms: i64,
+    result: ?RankedQuote = null,
+    failure: ?[]const u8 = null,
+
+    fn deinit(self: *QuoteTask) void {
+        self.arena_state.deinit();
+    }
+};
+
 const RankedQuote = struct {
     issuer: []const u8,
     token_symbol: []const u8,
@@ -138,19 +152,37 @@ fn quote(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
     try discoverBstocks(arena, ticker, &deployments, &excluded);
     try discoverRobinhood(arena, ticker, &deployments, &excluded);
 
-    var quotes: std.ArrayList(RankedQuote) = .empty;
-    for (deployments.items) |deployment| {
-        const ranked = switch (deployment.provider) {
-            .bitget_wallet => quoteBitget(arena, deployment, notional, reference_usd_rate, now_ms) catch |err| {
-                try excluded.append(arena, .{ .issuer = deployment.issuer, .chain = deployment.chain, .reason = try errorReason(arena, err) });
-                continue;
-            },
-            .okx_onchainos => quoteOkx(arena, deployment, notional, reference_usd_rate) catch |err| {
-                try excluded.append(arena, .{ .issuer = deployment.issuer, .chain = deployment.chain, .reason = try errorReason(arena, err) });
-                continue;
-            },
+    const tasks = try arena.alloc(QuoteTask, deployments.items.len);
+    var initialized_tasks: usize = 0;
+    defer for (tasks[0..initialized_tasks]) |*task| task.deinit();
+    for (deployments.items, tasks) |deployment, *task| {
+        task.* = .{
+            .arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator),
+            .deployment = deployment,
+            .reference_notional = notional,
+            .reference_usd_rate = reference_usd_rate,
+            .now_ms = now_ms,
         };
-        try quotes.append(arena, ranked);
+        initialized_tasks += 1;
+    }
+
+    const io = io_mod.getIo();
+    var quote_group: std.Io.Group = .init;
+    defer quote_group.cancel(io);
+    for (tasks) |*task| quote_group.async(io, runQuoteTask, .{task});
+    try quote_group.await(io);
+
+    var quotes: std.ArrayList(RankedQuote) = .empty;
+    for (tasks) |task| {
+        if (task.result) |ranked| {
+            try quotes.append(arena, ranked);
+        } else {
+            try excluded.append(arena, .{
+                .issuer = task.deployment.issuer,
+                .chain = task.deployment.chain,
+                .reason = task.failure orelse "QuoteUnavailable",
+            });
+        }
     }
 
     std.mem.sort(RankedQuote, quotes.items, {}, quoteLessThan);
@@ -172,6 +204,17 @@ fn quote(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
     defer writer.deinit();
     try std.json.Stringify.value(output, .{}, &writer.writer);
     return alloc.dupe(u8, try writer.toOwnedSlice());
+}
+
+fn runQuoteTask(task: *QuoteTask) std.Io.Cancelable!void {
+    const arena = task.arena_state.allocator();
+    task.result = switch (task.deployment.provider) {
+        .bitget_wallet => quoteBitget(arena, task.deployment, task.reference_notional, task.reference_usd_rate, task.now_ms),
+        .okx_onchainos => quoteOkx(arena, task.deployment, task.reference_notional, task.reference_usd_rate),
+    } catch |err| {
+        task.failure = @errorName(err);
+        return;
+    };
 }
 
 fn discoverXstocks(arena: Allocator, ticker: []const u8, deployments: *std.ArrayList(Deployment), excluded: *std.ArrayList(Excluded)) !void {

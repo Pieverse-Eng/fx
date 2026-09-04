@@ -1410,25 +1410,11 @@ const market_result_candles_schema = model_tool_schema.ObjectSchema{
     .additional_properties = false,
 };
 
-const market_result_onchain_route_schema = model_tool_schema.ObjectSchema{
+const market_result_onchain_route_source_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
-        .{ .name = "issuer", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "tokenSymbol", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "chain", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "contract", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 128 } },
-        .{ .name = "inputAsset", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "inputContract", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 128 } },
-        .{ .name = "provider", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "route", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 128 } },
-        .{ .name = "amountIn", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "amountOut", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "exposureShares", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "gasReference", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "effectiveReferencePerShare", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 } },
-        .{ .name = "referenceCurrency", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 } },
-        .{ .name = "quotedAt", .json_type = .integer, .bounds = &.{ .minimum = 1 } },
+        .{ .name = "sourceToolCall", .json_type = .integer, .bounds = &.{ .minimum = 0 }, .description = "Zero-based index in the most recent assistant tool-call batch containing quote_onchain_stock." },
     },
-    .required = &.{ "issuer", "tokenSymbol", "chain", "contract", "inputAsset", "inputContract", "provider", "route", "amountIn", "amountOut", "exposureShares", "gasReference", "effectiveReferencePerShare", "referenceCurrency", "quotedAt" },
+    .required = &.{"sourceToolCall"},
     .additional_properties = false,
 };
 
@@ -1448,7 +1434,7 @@ pub const finalize_market_result = ToolSpec{
                 .{ .name = "summary", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 600 } },
                 .{ .name = "evidence", .json_type = .array, .bounds = &.{ .max_items = 8 }, .shape = &.{ .array_objects = &market_result_evidence_schema } },
                 .{ .name = "candles", .json_type = .object, .shape = &.{ .object = &market_result_candles_schema } },
-                .{ .name = "onchainRoute", .json_type = .object, .nullable = &.{ .description = "Selected onchain execution route when it beats the comparable centralized Spot route; null otherwise." }, .shape = &.{ .object = &market_result_onchain_route_schema } },
+                .{ .name = "onchainRoute", .json_type = .object, .nullable = &.{ .description = "Reference to the successful quote_onchain_stock result when its selected route beats the comparable centralized Spot route; null otherwise." }, .shape = &.{ .object = &market_result_onchain_route_source_schema } },
             },
             .required = &.{ "market", "summary", "evidence", "candles", "onchainRoute" },
             .additional_properties = false,

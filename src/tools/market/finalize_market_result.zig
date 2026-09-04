@@ -136,7 +136,7 @@ fn finalizeArena(ctx: tool_dispatch.DispatchContext, input_json: []const u8) ![]
         .quote = try requireString(try requireField(market, "quote")),
         .summary = try requireString(try requireField(root, "summary")),
         .evidence = evidence,
-        .onchainRoute = try parseOnchainRoute(root.get("onchainRoute") orelse return error.MissingField),
+        .onchainRoute = try parseOnchainRoute(ctx, root.get("onchainRoute") orelse return error.MissingField),
         .timeframes = .{
             .@"15m" = try extractTimeframe(ctx, sources, fields, rows_pointer, time_unit, "15m"),
             .@"1h" = try extractTimeframe(ctx, sources, fields, rows_pointer, time_unit, "1h"),
@@ -150,15 +150,21 @@ fn finalizeArena(ctx: tool_dispatch.DispatchContext, input_json: []const u8) ![]
     return writer.toOwnedSlice();
 }
 
-fn parseOnchainRoute(value: std.json.Value) !?OnchainRoute {
+fn parseOnchainRoute(ctx: tool_dispatch.DispatchContext, value: std.json.Value) !?OnchainRoute {
     if (value == .null) return null;
-    const route = try requireObject(value);
+    const source = try requireObject(value);
+    const raw = try readCurrentTurnToolResult(ctx, source, "quote_onchain_stock");
+    var parsed = try std.json.parseFromSlice(std.json.Value, ctx.allocator, raw, .{});
+    defer parsed.deinit();
+    const root = try requireObject(parsed.value);
+    const route_value = root.get("selected") orelse return error.OnchainQuoteMissingSelection;
+    if (route_value == .null) return error.OnchainQuoteMissingSelection;
+    const route = try requireObject(route_value);
     const amount_in = try positiveNumeric(try requireField(route, "amountIn"));
     const amount_out = try positiveNumeric(try requireField(route, "amountOut"));
     const exposure_shares = try positiveNumeric(try requireField(route, "exposureShares"));
     const gas_reference = try nonNegativeNumeric(try requireField(route, "gasReference"));
     const effective = try positiveNumeric(try requireField(route, "effectiveReferencePerShare"));
-    const quoted_at = try positiveInteger(try requireField(route, "quotedAt"));
     return .{
         .issuer = try requireString(try requireField(route, "issuer")),
         .tokenSymbol = try requireString(try requireField(route, "tokenSymbol")),
@@ -173,9 +179,40 @@ fn parseOnchainRoute(value: std.json.Value) !?OnchainRoute {
         .exposureShares = exposure_shares,
         .gasReference = gas_reference,
         .effectiveReferencePerShare = effective,
-        .referenceCurrency = try requireString(try requireField(route, "referenceCurrency")),
-        .quotedAt = quoted_at,
+        .referenceCurrency = try requireString(try requireField(root, "referenceCurrency")),
+        .quotedAt = try positiveInteger(try requireField(root, "quotedAt")),
     };
+}
+
+fn readCurrentTurnToolResult(ctx: tool_dispatch.DispatchContext, source: std.json.ObjectMap, expected_tool: []const u8) ![]const u8 {
+    const call_index = try nonNegativeIndex(try requireField(source, "sourceToolCall"));
+    var message_index = ctx.current_turn_messages.len;
+    while (message_index > 0) {
+        message_index -= 1;
+        const assistant = ctx.current_turn_messages[message_index];
+        if (assistant.role != .assistant or assistant.tool_calls.len == 0) continue;
+        var has_expected_tool = false;
+        for (assistant.tool_calls) |candidate_call| {
+            if (std.mem.eql(u8, candidate_call.name, expected_tool)) {
+                has_expected_tool = true;
+                break;
+            }
+        }
+        if (!has_expected_tool) continue;
+        if (call_index >= assistant.tool_calls.len) return error.OnchainQuoteToolCallNotFound;
+        const source_call = assistant.tool_calls[call_index];
+        if (!std.mem.eql(u8, source_call.name, expected_tool)) return error.InvalidOnchainQuoteSourceTool;
+        const result = findToolResult(ctx.current_turn_messages, message_index + 1, source_call.id) orelse
+            return error.OnchainQuoteToolResultNotFound;
+        if (result.tool_name) |name| {
+            if (!std.mem.eql(u8, name, expected_tool)) return error.InvalidOnchainQuoteSourceTool;
+        }
+        if (result.tool_result_status) |status| {
+            if (status != .success) return error.OnchainQuoteToolFailed;
+        }
+        return result.content orelse return error.OnchainQuoteToolResultMissing;
+    }
+    return error.OnchainQuoteToolCallNotFound;
 }
 
 fn extractTimeframe(
@@ -453,16 +490,21 @@ test "JSON pointer supports array and object candle rows" {
     try std.testing.expectEqual(@as(i64, 3), (try resolvePointer(alloc, parsed.value, "/a~1b")).integer);
 }
 
-test "onchain execution route is validated and normalized" {
+test "onchain execution route is loaded from the quote tool result" {
     const alloc = std.testing.allocator;
-    var parsed = try std.json.parseFromSlice(
-        std.json.Value,
-        alloc,
-        "{\"issuer\":\"xstocks\",\"tokenSymbol\":\"CRCLx\",\"chain\":\"Solana\",\"contract\":\"mint\",\"inputAsset\":\"USDC\",\"inputContract\":\"usdc-mint\",\"provider\":\"bitget_wallet\",\"route\":\"dflow\",\"amountIn\":\"100\",\"amountOut\":\"0.98\",\"exposureShares\":\"0.98\",\"gasReference\":\"0.01\",\"effectiveReferencePerShare\":\"102.05\",\"referenceCurrency\":\"USD\",\"quotedAt\":1788451200000}",
-        .{},
-    );
-    defer parsed.deinit();
-    const route = (try parseOnchainRoute(parsed.value)).?;
+    const calls = [_]types.ToolCall{
+        .{ .id = "call_quote", .name = "quote_onchain_stock", .arguments_json = "{}" },
+    };
+    const quote_result =
+        \\{"ticker":"CRCL","referenceCurrency":"USD","quotedAt":1788451200000,"selected":{"issuer":"xstocks","tokenSymbol":"CRCLx","chain":"Solana","contract":"mint","inputAsset":"USDC","inputContract":"usdc-mint","provider":"bitget_wallet","route":"dflow","amountIn":"100","amountOut":"0.98","exposureShares":"0.98","gasReference":"0.01","effectiveReferencePerShare":"102.05"}}
+    ;
+    const messages = [_]types.ChatMessage{
+        .{ .role = .assistant, .tool_calls = &calls },
+        .{ .role = .tool, .content = quote_result, .tool_call_id = "call_quote", .tool_name = "quote_onchain_stock", .tool_result_status = .success },
+    };
+    var source = try std.json.parseFromSlice(std.json.Value, alloc, "{\"sourceToolCall\":0}", .{});
+    defer source.deinit();
+    const route = (try parseOnchainRoute(.{ .allocator = alloc, .current_turn_messages = &messages }, source.value)).?;
     try std.testing.expectEqualStrings("CRCLx", route.tokenSymbol);
     try std.testing.expectEqual(@as(f64, 0.98), route.exposureShares);
 }
