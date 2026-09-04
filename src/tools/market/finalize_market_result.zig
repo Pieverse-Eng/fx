@@ -504,7 +504,7 @@ test "onchain execution route is loaded from the quote tool result" {
         .{ .id = "call_quote", .name = "quote_onchain_stock", .arguments_json = "{}" },
     };
     const quote_result =
-        \\{"ticker":"CRCL","referenceNotional":100,"referenceCurrency":"USD","quotedAt":1788451200000,"selected":{"issuer":"xstocks","tokenSymbol":"CRCLx","chain":"Solana","contract":"mint","inputAsset":"USDC","inputContract":"usdc-mint","provider":"bitget_wallet","route":"dflow","amountIn":"100","amountOut":"0.98","exposureShares":"0.98","gasReference":"0.01","effectiveReferencePerShare":"102.05"}}
+        \\{"ticker":"CRCL","referenceNotional":100,"referenceCurrency":"USD","quotedAt":1788451200000,"selected":{"issuer":"xstocks","tokenSymbol":"CRCLx","chain":"Solana","contract":"mint","inputAsset":"USDC","inputContract":"usdc-mint","provider":"dflow","route":"dflow","amountIn":"100","amountOut":"0.98","exposureShares":"0.98","gasReference":"0.01","effectiveReferencePerShare":"102.05"}}
     ;
     const messages = [_]types.ChatMessage{
         .{ .role = .assistant, .tool_calls = &calls },
