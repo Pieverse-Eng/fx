@@ -494,7 +494,7 @@ fn parsePlatformDflowQuote(arena: Allocator, body: []const u8, deployment: Deplo
     if (!std.math.isFinite(exposure) or exposure <= 0) return error.InvalidQuote;
 
     const network_fee_lamports = try numeric(quote_item.get("networkFeeLamports") orelse return error.InvalidQuote);
-    if (!std.math.isFinite(network_fee_lamports) or network_fee_lamports < 0) return error.InvalidQuote;
+    if (!std.math.isFinite(network_fee_lamports) or network_fee_lamports <= 0 or @floor(network_fee_lamports) != network_fee_lamports) return error.InvalidQuote;
     if (!std.math.isFinite(sol_usd_rate) or sol_usd_rate <= 0) return error.ConversionUnavailable;
     const gas_usd = network_fee_lamports / 1_000_000_000 * sol_usd_rate;
     const actual_input_amount = (std.fmt.parseFloat(f64, expected_raw_amount) catch return error.InvalidQuote) / std.math.pow(f64, 10, @floatFromInt(deployment.input_decimals.?));
