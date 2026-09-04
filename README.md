@@ -65,6 +65,8 @@ fx ask "research this market"
 
 `FX_MODEL` is used as-is, so an embedding platform can pass the parent agent's current model when it starts fx. `FX_PIEVERSE_API_KEY` authorizes only the Pieverse provider and is never accepted by the Vercel, Codex, or Grok routes. `FX_PIEVERSE_BASE_URL` is optional and defaults to `https://ai.pieverse.io/v1`.
 
+The embedded Pieverse market-research prompt also exposes deterministic cost tools. `calculate_venue_costs` ranks verified centralized listings for an exact taker notional. For verified stock Spot buys, `quote_onchain_stock` resolves issuer-authoritative bStocks, xStocks, and Robinhood Stock Token deployments, obtains public exact-input quotes on supported chains, normalizes each token to underlying-share exposure, and ranks routes including externally paid gas. Both tools are read-only; wallet readiness, confirmation, signing, and execution remain the embedding host's responsibility.
+
 To use an AI Gateway API key instead:
 
 ```bash

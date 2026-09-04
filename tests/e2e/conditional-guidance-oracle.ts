@@ -16,6 +16,7 @@ export const CANONICAL_BUILTIN_NAMES = [
   "web_fetch",
   "web_search",
   "calculate_venue_costs",
+  "quote_onchain_stock",
   "finalize_market_result",
   "read_tool_result",
   "vision",

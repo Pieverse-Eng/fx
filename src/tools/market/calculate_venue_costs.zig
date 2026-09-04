@@ -41,6 +41,7 @@ const Candidate = struct {
     estimated_cost_bps: f64,
     estimated_cost_quote: f64,
     estimated_cost_reference: f64,
+    effective_reference_price_per_base_unit: f64,
     total_cost_rank: usize = 0,
 };
 
@@ -62,6 +63,7 @@ const CandidateOutput = struct {
     estimatedCostBps: f64,
     estimatedCostQuote: f64,
     estimatedCostReference: f64,
+    effectiveReferencePricePerBaseUnit: f64,
     totalCostRank: usize,
 };
 
@@ -190,7 +192,12 @@ fn calculate(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
         const estimated_cost_bps = taker_fee_bps + additional_fee_bps + side_spread_cost_bps + depth_slippage_bps;
         const estimated_cost_quote = quote_notional * estimated_cost_bps / 10_000;
         const estimated_cost_reference = estimated_cost_quote * quote_to_reference_rate;
-        inline for (&.{ mid, estimated_fill_price, full_spread_bps, side_spread_cost_bps, depth_slippage_bps, estimated_cost_bps, estimated_cost_quote, estimated_cost_reference }) |number| {
+        const fee_fraction = (taker_fee_bps + additional_fee_bps) / 10_000;
+        const effective_reference_price_per_base_unit = estimated_fill_price * quote_to_reference_rate * switch (side) {
+            .buy => 1 + fee_fraction,
+            .sell => 1 - fee_fraction,
+        };
+        inline for (&.{ mid, estimated_fill_price, full_spread_bps, side_spread_cost_bps, depth_slippage_bps, estimated_cost_bps, estimated_cost_quote, estimated_cost_reference, effective_reference_price_per_base_unit }) |number| {
             if (!std.math.isFinite(number) or number < 0) return error.InvalidCost;
         }
 
@@ -212,6 +219,7 @@ fn calculate(alloc: Allocator, input_json: []const u8, now_ms: i64) ![]u8 {
             .estimated_cost_bps = estimated_cost_bps,
             .estimated_cost_quote = estimated_cost_quote,
             .estimated_cost_reference = estimated_cost_reference,
+            .effective_reference_price_per_base_unit = effective_reference_price_per_base_unit,
         };
         candidate_count += 1;
     }
@@ -296,6 +304,7 @@ fn candidateOutput(candidate: Candidate) CandidateOutput {
         .estimatedCostBps = candidate.estimated_cost_bps,
         .estimatedCostQuote = candidate.estimated_cost_quote,
         .estimatedCostReference = candidate.estimated_cost_reference,
+        .effectiveReferencePricePerBaseUnit = candidate.effective_reference_price_per_base_unit,
         .totalCostRank = candidate.total_cost_rank,
     };
 }
@@ -375,6 +384,11 @@ test "ranks quote-notional fills by fee spread and depth" {
     try std.testing.expectEqualStrings("deep-higher-fee", root.get("selected").?.object.get("id").?.string);
     try std.testing.expectEqual(now_ms, root.get("calculatedAt").?.integer);
     try std.testing.expectEqual(@as(f64, 0), try numeric(root.get("selected").?.object.get("depthSlippageBps").?));
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 100.1 * 1.0005),
+        try numeric(root.get("selected").?.object.get("effectiveReferencePricePerBaseUnit").?),
+        0.000001,
+    );
 }
 
 test "sell fills consume descending bids" {

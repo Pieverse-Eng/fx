@@ -3583,6 +3583,16 @@ test "gateway_system_prompt: comparable venues use deterministic cost ranking" {
     try expectDefaultPromptContains("walks the supplied depth and performs arithmetic only");
 }
 
+test "gateway_system_prompt: stock spot can compare verified onchain routes" {
+    try expectDefaultPromptContains("call `quote_onchain_stock` once");
+    try expectDefaultPromptContains("canonical underlying ticker");
+    try expectDefaultPromptContains("authoritative bStocks, xStocks, and Robinhood Stock Token catalogs");
+    try expectDefaultPromptContains("effectiveReferencePerShare");
+    try expectDefaultPromptContains("same underlying stock exposure");
+    try expectDefaultPromptContains("Do not invoke this workflow for perpetuals, shorts, non-stock assets");
+    try expectDefaultPromptContains("Never replace issuer-catalog identity with a generic token search result");
+}
+
 test "gateway_system_prompt: research is read only" {
     try expectDefaultPromptContains("Only retrieve public market metadata, tickers, fee schedules, order books, and candles.");
     try expectDefaultPromptContains("exactly one documented venue CLI command per tool call");
