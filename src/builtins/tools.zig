@@ -1322,7 +1322,7 @@ pub const calculate_venue_costs = ToolSpec{
 };
 
 const quote_onchain_stock_description =
-    "Discover and quote verified onchain representations of one stock for an exact user-supplied buy notional. The tool resolves issuer-authoritative bStocks, xStocks, and Robinhood Stock Token deployments on supported chains, requests public exact-input swap quotes, includes externally paid gas, normalizes issuer multipliers to underlying-share exposure, and ranks executable routes deterministically. It never uses token-search results as identity evidence, accesses a wallet, or prepares or submits a transaction.";
+    "Discover and quote verified onchain representations of one stock for an exact user-supplied buy notional. The tool resolves issuer-authoritative bStocks, xStocks, and Robinhood Stock Token deployments on supported chains, requests public exact-input swap quotes including DFlow for Solana xStocks, includes externally paid gas, normalizes issuer multipliers to underlying-share exposure, and ranks executable routes deterministically. It never uses token-search results as identity evidence, accesses a wallet, or prepares or submits a transaction.";
 
 pub const quote_onchain_stock = ToolSpec{
     .name = "quote_onchain_stock",
