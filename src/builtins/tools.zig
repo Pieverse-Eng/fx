@@ -26,6 +26,7 @@ const memory_impl = @import("../tools/memory/memory.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
 const finalize_market_result_impl = @import("../tools/market/finalize_market_result.zig");
 const calculate_venue_costs_impl = @import("../tools/market/calculate_venue_costs.zig");
+const quote_onchain_stock_impl = @import("../tools/market/quote_onchain_stock.zig");
 const terminal_impl = @import("../tools/terminal/terminal.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -1320,6 +1321,43 @@ pub const calculate_venue_costs = ToolSpec{
     .irreversible_fn = calculate_venue_costs_impl.isIrreversible,
 };
 
+const quote_onchain_stock_description =
+    "Discover and quote verified onchain representations of one stock for an exact user-supplied buy notional. The tool resolves issuer-authoritative bStocks, xStocks, and Robinhood Stock Token deployments on supported chains, requests public exact-input swap quotes, includes externally paid gas, normalizes issuer multipliers to underlying-share exposure, and ranks executable routes deterministically. It never uses token-search results as identity evidence, accesses a wallet, or prepares or submits a transaction.";
+
+pub const quote_onchain_stock = ToolSpec{
+    .name = "quote_onchain_stock",
+    .description = quote_onchain_stock_description,
+    .model_schema = .{
+        .name = "quote_onchain_stock",
+        .description = quote_onchain_stock_description,
+        .strict_arguments = true,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "ticker", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 16 }, .description = "Canonical underlying stock ticker already resolved and supported by primary identity evidence." },
+                .{ .name = "side", .json_type = .string, .shape = &.{ .enum_values = &.{"buy"} }, .description = "MVP supports exact-input spot buys only." },
+                .{ .name = "referenceNotional", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive exact buy notional supplied by the caller." },
+                .{ .name = "referenceCurrency", .json_type = .string, .shape = &.{ .enum_values = &.{ "USD", "USDT", "USDC" } }, .description = "Currency of referenceNotional. Public USD stablecoin routes are compared on this reference basis." },
+            },
+            .required = &.{ "ticker", "side", "referenceNotional", "referenceCurrency" },
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .quote_onchain_stock,
+    .activity_kind = .read,
+    .requires_approval = false,
+    .action_label = "Quoting",
+    .completed_action_label = "Quoted",
+    .label_arg_kind = .none,
+    .label_arg_default = "onchain stock routes",
+    .permission_target_kind = .none,
+    .decode = quote_onchain_stock_impl.decode,
+    .validate = quote_onchain_stock_impl.validate,
+    .call = quote_onchain_stock_impl.call,
+    .result_disposition = .continue_model,
+    .reads_only_fn = quote_onchain_stock_impl.readsOnly,
+    .irreversible_fn = quote_onchain_stock_impl.isIrreversible,
+};
+
 const market_result_evidence_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
         .{ .name = "source", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 } },
@@ -1431,6 +1469,7 @@ pub const all = [_]tool_dispatch.Tool{
     vision,
     read_tool_result,
     calculate_venue_costs,
+    quote_onchain_stock,
     finalize_market_result,
 };
 
@@ -2104,6 +2143,7 @@ pub const advertisement_order = [_][]const u8{
     "web_fetch",
     "web_search",
     "calculate_venue_costs",
+    "quote_onchain_stock",
     "finalize_market_result",
 };
 
@@ -2170,6 +2210,7 @@ test "built-in tools register exact active local order" {
         "vision",
         "read_tool_result",
         "calculate_venue_costs",
+        "quote_onchain_stock",
         "finalize_market_result",
     };
 

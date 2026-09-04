@@ -373,6 +373,7 @@ pub const ExecutorKind = enum {
     read_file,
     read_tool_result,
     calculate_venue_costs,
+    quote_onchain_stock,
     finalize_market_result,
     write_file,
     edit_file,

@@ -25,6 +25,8 @@ pub fn isReadOnlyCall(registry: tool_dispatch.Registry, call: ToolCall) bool {
         .skill,
         .web_fetch,
         .web_search,
+        .calculate_venue_costs,
+        .quote_onchain_stock,
         => tool.activity_kind == .read,
         else => false,
     };
