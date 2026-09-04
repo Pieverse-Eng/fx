@@ -27,7 +27,7 @@ const Deployment = struct {
     provider: Provider,
 };
 
-const Provider = enum { bitget_wallet, platform_dflow, platform_okx_dex };
+const Provider = enum { bitget_wallet, platform_dflow };
 
 const QuoteTask = struct {
     arena_state: std.heap.ArenaAllocator,
@@ -212,7 +212,6 @@ fn runQuoteTask(task: *QuoteTask) std.Io.Cancelable!void {
     task.result = switch (task.deployment.provider) {
         .bitget_wallet => quoteBitget(arena, task.deployment, task.reference_notional, task.reference_usd_rate, task.now_ms),
         .platform_dflow => quotePlatformDflow(arena, task.deployment, task.reference_notional, task.reference_usd_rate),
-        .platform_okx_dex => quotePlatformOkxDex(arena, task.deployment, task.reference_notional, task.reference_usd_rate),
     } catch |err| {
         task.failure = @errorName(err);
         return;
@@ -249,14 +248,7 @@ fn discoverXstocks(arena: Allocator, ticker: []const u8, deployments: *std.Array
     for (array.items) |item_value| {
         const item = requireObject(item_value) catch continue;
         const network = optionalString(item, "network") orelse continue;
-        const provider: Provider = if (std.mem.eql(u8, network, "XLayer"))
-            .platform_okx_dex
-        else if (std.mem.eql(u8, network, "Solana"))
-            .platform_dflow
-        else if (std.mem.eql(u8, network, "Ethereum"))
-            .bitget_wallet
-        else
-            continue;
+        const provider = xstocksProvider(network) orelse continue;
         if (!(optionalBool(item, "supportsAtomicSwaps") orelse false)) continue;
         const contract = optionalString(item, "address") orelse continue;
         const stablecoins_value = item.get("stablecoins") orelse continue;
@@ -288,7 +280,6 @@ fn chooseUsdStablecoin(values: []const std.json.Value, provider: Provider) ?Stab
     const preferred: []const []const u8 = switch (provider) {
         .bitget_wallet => &.{ "USDT", "USDC", "USDG" },
         .platform_dflow => &.{ "USDC", "USDG", "USDT" },
-        .platform_okx_dex => &.{ "USDC", "USDG", "USDT" },
     };
     for (preferred) |wanted| for (values) |value| {
         const item = requireObject(value) catch continue;
@@ -299,6 +290,10 @@ fn chooseUsdStablecoin(values: []const std.json.Value, provider: Provider) ?Stab
             return .{ .symbol = symbol, .contract = contract, .decimals = decimalPlaces(item, "decimals") };
     };
     return null;
+}
+
+fn xstocksProvider(network: []const u8) ?Provider {
+    return if (std.mem.eql(u8, network, "Solana")) .platform_dflow else null;
 }
 
 fn discoverBstocks(arena: Allocator, ticker: []const u8, deployments: *std.ArrayList(Deployment), excluded: *std.ArrayList(Excluded)) !void {
@@ -388,7 +383,7 @@ fn discoverRobinhood(arena: Allocator, ticker: []const u8, deployments: *std.Arr
 }
 
 fn quoteBitget(arena: Allocator, deployment: Deployment, reference_notional: f64, reference_usd_rate: f64, now_ms: i64) !RankedQuote {
-    const chain = if (std.mem.eql(u8, deployment.chain, "BNB Smart Chain")) "bnb" else if (std.mem.eql(u8, deployment.chain, "Solana")) "sol" else if (std.mem.eql(u8, deployment.chain, "Ethereum")) "eth" else if (std.mem.eql(u8, deployment.chain, "Robinhood Chain")) "robinhood" else return error.UnsupportedChain;
+    const chain = if (std.mem.eql(u8, deployment.chain, "BNB Smart Chain")) "bnb" else if (std.mem.eql(u8, deployment.chain, "Solana")) "sol" else if (std.mem.eql(u8, deployment.chain, "Robinhood Chain")) "robinhood" else return error.UnsupportedChain;
     const address = if (std.mem.eql(u8, chain, "sol")) "11111111111111111111111111111111" else "0x0000000000000000000000000000000000000001";
     const input_usd_rate = try bitgetTokenUsdRate(arena, chain, deployment.input_contract, now_ms);
     const input_amount = reference_notional * reference_usd_rate / input_usd_rate;
@@ -515,93 +510,12 @@ fn parsePlatformDflowQuote(arena: Allocator, body: []const u8, deployment: Deplo
     };
 }
 
-fn quotePlatformOkxDex(arena: Allocator, deployment: Deployment, reference_notional: f64, reference_usd_rate: f64) !RankedQuote {
-    const quote_url = io_mod.getenv("FX_PLATFORM_QUOTE_URL") orelse return error.QuoteBrokerUnavailable;
-    const capability = io_mod.getenv("FX_PLATFORM_QUOTE_TOKEN") orelse return error.QuoteBrokerUnavailable;
-    if (quote_url.len == 0 or capability.len == 0) return error.QuoteBrokerUnavailable;
-    const input_decimals = deployment.input_decimals orelse return error.MissingTokenDecimals;
-    const input_usd_rate = try currencyUsdRate(arena, deployment.input_symbol);
-    const input_amount = reference_notional * reference_usd_rate / input_usd_rate;
-    const raw_amount = try rawTokenAmount(arena, input_amount, input_decimals);
-    const body_value = .{
-        .fromTokenAddress = deployment.input_contract,
-        .toTokenAddress = deployment.contract,
-        .amount = raw_amount,
-    };
-    var body_writer: std.Io.Writer.Allocating = .init(arena);
-    defer body_writer.deinit();
-    try std.json.Stringify.value(body_value, .{}, &body_writer.writer);
-    const payload = try body_writer.toOwnedSlice();
-    const headers = [_]std.http.Header{
-        .{ .name = "x-pieverse-market-quote-capability", .value = capability },
-    };
-    const response = try fetch(arena, .POST, quote_url, payload, &headers);
-    return parsePlatformOkxQuote(arena, response, deployment, input_usd_rate, reference_usd_rate, raw_amount);
-}
-
-fn parsePlatformOkxQuote(arena: Allocator, body: []const u8, deployment: Deployment, input_usd_rate: f64, reference_usd_rate: f64, expected_raw_amount: []const u8) !RankedQuote {
-    var parsed = try std.json.parseFromSlice(std.json.Value, arena, body, .{});
-    defer parsed.deinit();
-    const root = try requireObject(parsed.value);
-    if (!(optionalBool(root, "ok") orelse false)) return error.QuoteUnavailable;
-    const quote_item = try requireObject(root.get("data") orelse return error.QuoteUnavailable);
-    if (!std.mem.eql(u8, optionalString(quote_item, "chainIndex") orelse return error.InvalidQuote, "196")) return error.InvalidQuote;
-    if (!std.mem.eql(u8, optionalString(quote_item, "fromTokenAmount") orelse return error.InvalidQuote, expected_raw_amount)) return error.InvalidQuote;
-    const from_token = try requireObject(quote_item.get("fromToken") orelse return error.InvalidQuote);
-    const to_token = try requireObject(quote_item.get("toToken") orelse return error.QuoteUnavailable);
-    if (!addressesEqual(optionalString(from_token, "address") orelse return error.InvalidQuote, deployment.input_contract) or
-        !addressesEqual(optionalString(to_token, "address") orelse return error.InvalidQuote, deployment.contract)) return error.InvalidQuote;
-    const from_decimals = try numeric(from_token.get("decimals") orelse return error.InvalidQuote);
-    if (from_decimals != @as(f64, @floatFromInt(deployment.input_decimals.?))) return error.InvalidQuote;
-    const raw_out = try numeric(quote_item.get("toTokenAmount") orelse return error.QuoteUnavailable);
-    const decimals = try numeric(to_token.get("decimals") orelse return error.QuoteUnavailable);
-    if (!std.math.isFinite(decimals) or decimals < 0 or decimals > 30 or @floor(decimals) != decimals) return error.InvalidQuote;
-    const amount_out = raw_out / std.math.pow(f64, 10, decimals);
-    const gas_usd = numeric(quote_item.get("tradeFeeUsd") orelse return error.MissingUsdGasCost) catch return error.MissingUsdGasCost;
-    const exposure = amount_out * deployment.multiplier;
-    if (!std.math.isFinite(exposure) or exposure <= 0 or !std.math.isFinite(gas_usd) or gas_usd < 0) return error.InvalidQuote;
-    const actual_input_amount = (std.fmt.parseFloat(f64, expected_raw_amount) catch return error.InvalidQuote) / std.math.pow(f64, 10, @floatFromInt(deployment.input_decimals.?));
-    const route = try joinedProtocols(arena, quote_item.get("protocols"));
-    return .{
-        .issuer = deployment.issuer,
-        .token_symbol = deployment.token_symbol,
-        .chain = deployment.chain,
-        .contract = deployment.contract,
-        .input_asset = deployment.input_symbol,
-        .input_contract = deployment.input_contract,
-        .provider = "okx_dex",
-        .route = route,
-        .amount_in = actual_input_amount,
-        .amount_out = amount_out,
-        .exposure_shares = exposure,
-        .gas_reference = gas_usd / reference_usd_rate,
-        .effective_reference_per_share = (actual_input_amount * input_usd_rate + gas_usd) / reference_usd_rate / exposure,
-    };
-}
-
 fn rawTokenAmount(arena: Allocator, amount: f64, decimals: u8) ![]const u8 {
     if (!std.math.isFinite(amount) or amount <= 0 or decimals > 30) return error.InvalidTokenAmount;
     const scaled = amount * std.math.pow(f64, 10, @floatFromInt(decimals));
     if (!std.math.isFinite(scaled) or scaled < 1 or scaled > @as(f64, @floatFromInt(std.math.maxInt(u128)))) return error.InvalidTokenAmount;
     const raw: u128 = @intFromFloat(@round(scaled));
     return std.fmt.allocPrint(arena, "{d}", .{raw});
-}
-
-fn addressesEqual(left: []const u8, right: []const u8) bool {
-    return std.ascii.eqlIgnoreCase(left, right);
-}
-
-fn joinedProtocols(arena: Allocator, value: ?std.json.Value) ![]const u8 {
-    const array = requireArray(value orelse return "okx_aggregator") catch return "okx_aggregator";
-    var output: std.Io.Writer.Allocating = .init(arena);
-    defer output.deinit();
-    for (array.items) |item| {
-        if (item != .string or item.string.len == 0) continue;
-        if (output.writer.end != 0) try output.writer.writeAll(" + ");
-        try output.writer.writeAll(item.string);
-    }
-    if (output.writer.end == 0) return "okx_aggregator";
-    return output.toOwnedSlice();
 }
 
 fn currencyUsdRate(arena: Allocator, currency: []const u8) !f64 {
@@ -842,31 +756,11 @@ test "parses and ranks Bitget quotes by exact input plus gas" {
     try std.testing.expectApproxEqAbs(@as(f64, 100.05 / (0.99 * 1.25)), result.effective_reference_per_share, 0.000001);
 }
 
-test "parses a scoped platform X Layer quote" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const deployment = Deployment{
-        .issuer = "xstocks",
-        .token_symbol = "CRCLx",
-        .chain = "XLayer",
-        .contract = "0xfebded1b0986a8ee107f5ab1a1c5a813491deceb",
-        .input_symbol = "USDC",
-        .input_contract = "0xb6ceceab302e2e4948951ee7843fc24e92933061",
-        .input_decimals = 6,
-        .multiplier = 1,
-        .provider = .platform_okx_dex,
-    };
-    const body =
-        \\{"ok":true,"data":{"chainIndex":"196","fromTokenAmount":"100000000","toTokenAmount":"981218606619704013","tradeFeeUsd":"0.00061514543395727","estimateGasFee":"334258","priceImpactPercent":"0.01","fromToken":{"address":"0xb6ceceab302e2e4948951ee7843fc24e92933061","symbol":"USDC","decimals":6},"toToken":{"address":"0xfebded1b0986a8ee107f5ab1a1c5a813491deceb","symbol":"CRCLx","decimals":18},"protocols":["Uniswap V3","xStocks wrap V2"]}}
-    ;
-    const result = try parsePlatformOkxQuote(arena, body, deployment, 1, 1, "100000000");
-    try std.testing.expectEqualStrings("okx_dex", result.provider);
-    try std.testing.expectEqualStrings("Uniswap V3 + xStocks wrap V2", result.route);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.981218606619704013), result.amount_out, 0.000000000001);
-    try std.testing.expectApproxEqAbs(@as(f64, 100.00061514543396 / 0.981218606619704013), result.effective_reference_per_share, 0.000000001);
+test "xStocks discovery supports only Solana" {
+    try std.testing.expectEqual(Provider.platform_dflow, xstocksProvider("Solana").?);
+    try std.testing.expect(xstocksProvider("Ethereum") == null);
+    try std.testing.expect(xstocksProvider("XLayer") == null);
 }
-
 test "parses a scoped platform DFlow quote in atomic token units" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

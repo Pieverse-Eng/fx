@@ -67,7 +67,7 @@ fx ask "research this market"
 
 The embedded Pieverse market-research prompt also exposes deterministic cost tools. `calculate_venue_costs` ranks verified centralized listings for an exact taker notional. For verified stock Spot buys, `quote_onchain_stock` resolves issuer-authoritative bStocks, xStocks, and Robinhood Stock Token deployments, obtains public exact-input quotes on supported chains, normalizes each token to underlying-share exposure, and ranks routes including externally paid gas. Both tools are read-only; wallet readiness, confirmation, signing, and execution remain the embedding host's responsibility.
 
-X Layer discovery uses an embedding-host quote broker configured through `FX_PLATFORM_QUOTE_URL` and `FX_PLATFORM_QUOTE_TOKEN`. The broker owns its upstream credentials and returns only sanitized quote data; fx excludes the X Layer candidate when that capability is unavailable.
+Solana xStocks discovery uses an embedding-host DFlow quote broker configured through `FX_PLATFORM_DFLOW_QUOTE_URL` and `FX_PLATFORM_QUOTE_TOKEN`. The broker returns only sanitized quote data; fx excludes the Solana candidate when that capability is unavailable. Onchain stock comparison intentionally covers BNB Smart Chain, Solana, and Robinhood Chain.
 
 To use an AI Gateway API key instead:
 
