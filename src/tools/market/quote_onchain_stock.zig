@@ -493,10 +493,10 @@ fn parsePlatformDflowQuote(arena: Allocator, body: []const u8, deployment: Deplo
     const exposure = amount_out * deployment.multiplier;
     if (!std.math.isFinite(exposure) or exposure <= 0) return error.InvalidQuote;
 
-    const priority_lamports = if (quote_item.get("prioritizationFeeLamports")) |value| numeric(value) catch return error.InvalidQuote else 0;
-    if (!std.math.isFinite(priority_lamports) or priority_lamports < 0) return error.InvalidQuote;
+    const network_fee_lamports = try numeric(quote_item.get("networkFeeLamports") orelse return error.InvalidQuote);
+    if (!std.math.isFinite(network_fee_lamports) or network_fee_lamports < 0) return error.InvalidQuote;
     if (!std.math.isFinite(sol_usd_rate) or sol_usd_rate <= 0) return error.ConversionUnavailable;
-    const gas_usd = (priority_lamports + 5000) / 1_000_000_000 * sol_usd_rate;
+    const gas_usd = network_fee_lamports / 1_000_000_000 * sol_usd_rate;
     const actual_input_amount = (std.fmt.parseFloat(f64, expected_raw_amount) catch return error.InvalidQuote) / std.math.pow(f64, 10, @floatFromInt(deployment.input_decimals.?));
     return .{
         .issuer = deployment.issuer,
@@ -883,14 +883,35 @@ test "parses a scoped platform DFlow quote in atomic token units" {
         .provider = .platform_dflow,
     };
     const body =
-        \\{"ok":true,"data":{"inputMint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","inAmount":"100000000","outputMint":"XsueG8BtpquVJX9LVLLEGuViXUungE6WmK5YZ3p3bd1","outAmount":"98121860","outputMintDecimals":8,"prioritizationFeeLamports":"10000","route":"Jupiter"}}
+        \\{"ok":true,"data":{"inputMint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","inAmount":"100000000","outputMint":"XsueG8BtpquVJX9LVLLEGuViXUungE6WmK5YZ3p3bd1","outAmount":"98121860","outputMintDecimals":8,"networkFeeLamports":"5150","priorityFeeLevel":"high","route":"Jupiter"}}
     ;
     const result = try parsePlatformDflowQuote(arena, body, deployment, 1, 1, 100, "100000000");
     try std.testing.expectEqualStrings("dflow", result.provider);
     try std.testing.expectEqualStrings("Jupiter", result.route);
     try std.testing.expectApproxEqAbs(@as(f64, 0.98121860), result.amount_out, 0.000000001);
-    try std.testing.expect(result.gas_reference > 0);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.000515), result.gas_reference, 0.000000001);
     try std.testing.expect(result.effective_reference_per_share > @as(f64, 100) / 0.98121860);
+}
+
+test "rejects a scoped platform DFlow quote without a trusted network fee" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const deployment = Deployment{
+        .issuer = "xstocks",
+        .token_symbol = "CRCLx",
+        .chain = "Solana",
+        .contract = "XsueG8BtpquVJX9LVLLEGuViXUungE6WmK5YZ3p3bd1",
+        .input_symbol = "USDC",
+        .input_contract = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        .input_decimals = 6,
+        .multiplier = 1,
+        .provider = .platform_dflow,
+    };
+    const body =
+        \\{"ok":true,"data":{"inputMint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","inAmount":"100000000","outputMint":"XsueG8BtpquVJX9LVLLEGuViXUungE6WmK5YZ3p3bd1","outAmount":"98121860","outputMintDecimals":8,"route":"Jupiter"}}
+    ;
+    try std.testing.expectError(error.InvalidQuote, parsePlatformDflowQuote(arena, body, deployment, 1, 1, 100, "100000000"));
 }
 
 test "converts readable token amounts to exact raw units" {
