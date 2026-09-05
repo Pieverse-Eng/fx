@@ -119,6 +119,8 @@ With `--json`, `output` contains accumulated assistant Markdown across the reque
 
 Foreground terminal commands run with an explicit finite deadline. fx uses durable terminal sessions for services, watchers, GUI applications, and other long-lived work, and retains captured foreground output for provenance in the active session or `--no-save` process.
 
+Native `fx ask --auto` and `fx ask --yolo` run consecutive independent terminal exec calls from the same model round concurrently, up to eight at a time after permission admission. No model-supplied parallel flag is needed. Put dependent commands in separate rounds or one ordered command. Persistent terminal actions retain their existing scheduling.
+
 For large JSON command responses, the agent can filter records in the same terminal call:
 
 ```json

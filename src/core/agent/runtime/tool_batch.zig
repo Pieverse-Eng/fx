@@ -164,10 +164,17 @@ pub fn assembleParallelToolResults(
                 },
             }
         };
-        var prepared = try runtime_execution_memory.prepareToolModelOutput(arena, config, original_call, execution.model_output);
+        if (execution.cancelled and cancelled_call == null) cancelled_call = original_call;
+        var prepared = if (execution.prepared_result_memory) |memory|
+            @import("../../session/result_store.zig").PreparedResult{
+                .model_output = try arena.dupe(u8, execution.model_output),
+                .memory = (try runtime_parallel_execution.duplicateToolResultMemory(arena, memory)).?,
+            }
+        else
+            try runtime_execution_memory.prepareToolModelOutput(arena, config, original_call, execution.model_output);
         runtime_execution_memory.applyToolResultMemory(
             &prepared.memory,
-            execution.tool_result_memory,
+            if (execution.prepared_result_memory == null) execution.tool_result_memory else null,
         );
         const safe_tool_output = prepared.model_output;
         if (precomputed == null) {

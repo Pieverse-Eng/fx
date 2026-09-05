@@ -10,6 +10,9 @@ const session_child_store = @import("session_child_store.zig");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Stream = command_output_content.Stream;
+// Saved capability route caches and rename bookkeeping are mutable. Serialize
+// only replay metadata operations; command execution and output writes overlap.
+var saved_metadata_mutex: std.Io.Mutex = .init;
 const replay_magic = "FXRPLY01";
 const frame_header_bytes: usize = 9;
 const max_frame_payload_bytes: usize = 1024 * 1024;
@@ -714,6 +717,8 @@ pub const Capture = struct {
         const backing = self.backing orelse return error.ReplayStoreUnavailable;
         if (backing == .ephemeral) return;
         const capability = backing.saved;
+        saved_metadata_mutex.lockUncancelable(io_mod.getIo());
+        defer saved_metadata_mutex.unlock(io_mod.getIo());
         const target_handle = try contentAddressedHandle(
             alloc,
             spool.handle,
@@ -812,12 +817,16 @@ pub const Capture = struct {
     fn deleteSpool(self: *Capture, handle: []const u8) void {
         const backing = self.backing orelse return;
         switch (backing) {
-            .saved => |capability| capability.delete(.command_artifacts, handle) catch |err| {
-                @import("../shared/debug_trace.zig").logf(
-                    "session",
-                    "command replay orphan cleanup failed handle_bytes={d} err={s}",
-                    .{ handle.len, @errorName(err) },
-                );
+            .saved => |capability| {
+                saved_metadata_mutex.lockUncancelable(io_mod.getIo());
+                defer saved_metadata_mutex.unlock(io_mod.getIo());
+                capability.delete(.command_artifacts, handle) catch |err| {
+                    @import("../shared/debug_trace.zig").logf(
+                        "session",
+                        "command replay orphan cleanup failed handle_bytes={d} err={s}",
+                        .{ handle.len, @errorName(err) },
+                    );
+                };
             },
             .ephemeral => |store| store.delete(handle),
         }
@@ -858,6 +867,8 @@ fn createSpoolWithStem(
     return switch (backing) {
         .ephemeral => |store| store.createSpoolWithStem(alloc, stem),
         .saved => |capability| blk: {
+            saved_metadata_mutex.lockUncancelable(io_mod.getIo());
+            defer saved_metadata_mutex.unlock(io_mod.getIo());
             const handle = try std.fmt.allocPrint(alloc, "{s}.bin", .{stem});
             errdefer alloc.free(handle);
             const file = capability.createExclusiveFile(
@@ -957,11 +968,11 @@ pub const Reader = struct {
         descriptor: types.CommandOutputReplayDescriptor,
     ) !void {
         var file = switch (backing) {
-            .saved => |capability| ReplayFile{ .saved = try capability.openFileReadOnly(
-                alloc,
-                .command_artifacts,
-                descriptor.handle,
-            ) },
+            .saved => |capability| blk: {
+                saved_metadata_mutex.lockUncancelable(io_mod.getIo());
+                defer saved_metadata_mutex.unlock(io_mod.getIo());
+                break :blk ReplayFile{ .saved = try capability.openFileReadOnly(alloc, .command_artifacts, descriptor.handle) };
+            },
             .ephemeral => |store| try store.open(descriptor.handle),
         };
         const size = file.size() catch |err| {
@@ -992,6 +1003,8 @@ pub const Reader = struct {
         handle: []const u8,
     ) !void {
         if (!hasContentDigest(handle)) return error.ResultHandleNotFound;
+        saved_metadata_mutex.lockUncancelable(io_mod.getIo());
+        defer saved_metadata_mutex.unlock(io_mod.getIo());
         var file = ReplayFile{ .saved = capability.openFileReadOnly(
             alloc,
             .command_artifacts,

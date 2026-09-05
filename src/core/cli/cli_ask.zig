@@ -575,6 +575,7 @@ const AskContext = struct {
     raw_trailing_newlines: u8 = 0,
     raw_has_output: bool = false,
     command_output_line_open: bool = false,
+    command_output_mutex: std.Io.Mutex = .init,
     assistant_output: std.ArrayList(u8) = .empty,
     final_output: std.ArrayList(u8) = .empty,
     tool_call_records: std.ArrayList(ToolCallRecord) = .empty,
@@ -1946,6 +1947,7 @@ fn agentRuntimeDeps(ctx: *AskContext) agent_runtime.AgentRuntimeDeps {
         .describe_tool_action_completed = describeToolActionCompleted,
         .describe_tool_action_denied = describeToolActionDenied,
         .permission_target_for_call = permissionTargetForCall,
+        .parallel_command_execution = true,
         .execute_tool_call = executeToolCallAuthorized,
         .publish_committed_file_handoff = publishCommittedFileHandoff,
         .propagate_history_turn = propagateHistoryTurn,
@@ -3068,6 +3070,8 @@ fn formatToolExecutionError(_: *anyopaque, arena: Allocator, tool_name: []const 
 
 fn onCommandOutputChunk(raw_ctx: *anyopaque, _: ?types.ToolLifecycleId, _: command_output_content.Stream, chunk: []const u8) !void {
     const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
+    ctx.command_output_mutex.lockUncancelable(io_mod.getIo());
+    defer ctx.command_output_mutex.unlock(io_mod.getIo());
     if (ctx.output_mode.isTerminal()) return;
     try ctx.writeStderr(chunk);
     if (chunk.len > 0) ctx.command_output_line_open = chunk[chunk.len - 1] != '\n';

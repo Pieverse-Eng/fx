@@ -365,6 +365,8 @@ function toolResultOutput(body: string, callId: string): string {
     part.type === "tool-result" && part.toolCallId === callId
   );
   if (!result) throw new Error(`Missing tool result for ${callId}`);
+  const output = result.output as Record<string, unknown> | undefined;
+  if (output?.type === "execution-denied" && typeof output.reason === "string") return output.reason;
   return contentText(result.output);
 }
 
@@ -3005,6 +3007,199 @@ describe("gateway stream lifecycle", () => {
       rmSync(root.root, { recursive: true, force: true });
     }
   });
+
+  for (const noSave of [false, true]) {
+    test(`terminal parallel queries all start before any finishes (${noSave ? "no-save" : "saved"})`, async () => {
+      const root = createFixtureRoot("parallel-venue-queries");
+      const tracePath = join(root.root, "trace.log");
+      // A sequential executor cannot pass this rendezvous: each command waits
+      // for all eight siblings before producing its result. No timing ratio is
+      // used to infer concurrency, and no parallel argument is supplied.
+      writeFileSync(join(root.workspace, "query.py"), [
+        "import json, pathlib, sys, time",
+        "i = sys.argv[1]",
+        "pathlib.Path('started-' + i).write_text('started')",
+        "deadline = time.monotonic() + 5",
+        "while len(list(pathlib.Path('.').glob('started-*'))) < 8:",
+        "    if time.monotonic() > deadline: raise SystemExit('queries did not overlap')",
+        "    time.sleep(0.01)",
+        "print(json.dumps({'data': [{'symbol': 'IREN', 'venue': i}, {'symbol': 'UNRELATED'}]}))",
+      ].join("\n"));
+      let step = 0;
+      const handles: string[] = [];
+      const gateway = startGateway((body) => {
+        if (step++ === 0) return fakeGatewaySse([
+          ...Array.from({ length: 8 }, (_, i) => ({
+            type: "tool-call", toolCallId: `venue_${i}`, toolName: "terminal",
+            input: {
+              action: "exec", command: `python3 query.py ${i}`, profile: "clean", timeout_ms: 10000,
+              output_filter: { json_pointer: "/data", contains: ["IREN"] },
+            },
+          })),
+          { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
+        ]);
+        for (let i = 0; i < 8; i++) {
+          const output = toolResultOutput(body, `venue_${i}`);
+          expect(output).not.toContain("UNRELATED");
+          const projected = JSON.parse(output.split("\n<command_output_handle>")[0]!);
+          expect(projected.output.data).toEqual([{ symbol: "IREN", venue: String(i) }]);
+          const handle = output.match(/<command_output_handle>([^<]+)<\/command_output_handle>/)?.[1] ?? "";
+          expect(handle).not.toBe("");
+          handles.push(handle);
+        }
+        return fakeGatewayFinalText("Eight venues queried concurrently.");
+      });
+      try {
+        const result = await runFx(["ask", "--json", "--auto", ...(noSave ? ["--no-save"] : []), "Run all eight independent fixture queries."], {
+          cwd: root.workspace, env: fixtureEnv(root, gateway, tracePath), timeoutMs: 20000,
+        });
+        expect(result.code).toBe(0);
+        const json = parseAskJson(result.stdout);
+        expect(json.output).toContain("Eight venues queried concurrently.");
+        expect(gateway.requests).toHaveLength(2);
+        expect(new Set(handles).size).toBe(8);
+        if (!noSave) {
+          for (const handle of handles) {
+            const raw = readFileSync(join(root.home, ".fx", "sessions", json.session_id, "logs", "commands", handle));
+            expect(raw.includes(Buffer.from("UNRELATED"))).toBe(true);
+          }
+        }
+        expect(result.stderr).not.toContain("panic");
+      } finally {
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    }, 30000);
+  }
+
+  test("terminal parallel queries isolate timeout and failed commands", async () => {
+    const root = createFixtureRoot("parallel-query-failures");
+    const tracePath = join(root.root, "trace.log");
+    writeFileSync(join(root.workspace, "query.py"), [
+      "import pathlib, sys, time",
+      "mode = sys.argv[1]",
+      "if mode == 'slow':",
+      "    print('slow-started', flush=True)",
+      "    time.sleep(10)",
+      "    pathlib.Path('late-effect').write_text('unexpected')",
+      "elif mode == 'fail':",
+      "    print('venue-unavailable', file=sys.stderr)",
+      "    sys.exit(7)",
+      "else: print('successful-venue-result', flush=True)",
+    ].join("\n"));
+    let step = 0;
+    const gateway = startGateway((body) => {
+      if (step++ === 0) return fakeGatewaySse([
+        ...["slow", "fail", "ok"].map((mode) => ({
+          type: "tool-call", toolCallId: mode, toolName: "terminal",
+          input: { action: "exec", command: `python3 query.py ${mode}`, profile: "clean", timeout_ms: mode === "slow" ? 500 : 5000 },
+        })),
+        { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
+      ]);
+      expect(toolResultOutput(body, "slow")).toContain("timeout=true");
+      expect(toolResultOutput(body, "fail")).toContain("venue-unavailable");
+      expect(toolResultOutput(body, "ok")).toContain("successful-venue-result");
+      return fakeGatewayFinalText("Successful result survived other venue failures.");
+    });
+    try {
+      const result = await runFx(["ask", "--json", "--yolo", "--no-save", "Run the independent fixture queries."], {
+        cwd: root.workspace, env: fixtureEnv(root, gateway, tracePath), timeoutMs: 15000,
+      });
+      expect(result.code).toBe(0);
+      expect(parseAskJson(result.stdout).output).toContain("Successful result survived");
+      expect(existsSync(join(root.workspace, "late-effect"))).toBe(false);
+      expect(result.stderr).not.toContain("panic");
+    } finally {
+      gateway.stop();
+      rmSync(root.root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  test("terminal parallel queries drain all active commands on SIGTERM", async () => {
+    const root = createFixtureRoot("parallel-query-cancel");
+    const tracePath = join(root.root, "trace.log");
+    writeFileSync(join(root.workspace, "query.py"), [
+      "import os, pathlib, sys, time",
+      "pathlib.Path('pid-' + sys.argv[1]).write_text(str(os.getpid()))",
+      "print('query-started', flush=True)",
+      "time.sleep(60)",
+    ].join("\n"));
+    const gateway = startGateway(() => fakeGatewaySse([
+      ...Array.from({ length: 3 }, (_, i) => ({
+        type: "tool-call", toolCallId: `active_${i}`, toolName: "terminal",
+        input: { action: "exec", command: `python3 query.py ${i}`, profile: "clean", timeout_ms: 60000 },
+      })),
+      { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
+    ]));
+    const proc = Bun.spawn([FX_BIN, "ask", "--json", "--yolo", "--no-save", "Run the three independent queries."], {
+      cwd: root.workspace,
+      env: { ...process.env, ...fixtureEnv(root, gateway, tracePath), FX_AUTO_UPGRADE: "0" },
+      stdin: "ignore", stdout: "pipe", stderr: "pipe",
+    });
+    const pids: number[] = [];
+    try {
+      const deadline = Date.now() + 10000;
+      for (let i = 0; i < 3; i++) {
+        const path = join(root.workspace, `pid-${i}`);
+        while (!existsSync(path)) {
+          if (Date.now() > deadline) throw new Error("parallel commands did not start");
+          await Bun.sleep(10);
+        }
+        const pid = Number(readFileSync(path, "utf8"));
+        expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
+        pids.push(pid);
+      }
+      proc.kill("SIGTERM");
+      expect(await proc.exited).toBe(143);
+      for (const pid of pids) await waitForProcessExit(pid, 3000);
+      expect(await new Response(proc.stderr).text()).not.toContain("panic");
+    } finally {
+      proc.kill("SIGKILL");
+      await proc.exited;
+      for (const pid of pids) if (isProcessAlive(pid)) {
+        try { process.kill(pid, "SIGKILL"); } catch {}
+      }
+      gateway.stop();
+      rmSync(root.root, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  test("terminal parallel queries preserve permission denial", async () => {
+    const root = createFixtureRoot("parallel-query-denial");
+    const tracePath = join(root.root, "trace.log");
+    let step = 0;
+    const deniedCalls = (prefix: string) => fakeGatewaySse([
+      ...Array.from({ length: 2 }, (_, i) => ({
+        type: "tool-call", toolCallId: `${prefix}_${i}`, toolName: "terminal",
+        input: { action: "exec", command: `python3 -c 'open("effect-${i}", "w").write("changed")'`, profile: "clean", timeout_ms: 1000 },
+      })),
+      { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
+    ]);
+    const gateway = startGateway((body) => {
+      const current = step++;
+      if (current === 0) return deniedCalls("denied");
+      const prefix = current === 1 ? "denied" : "repeated";
+      for (let i = 0; i < 2; i++) {
+        expect(toolResultOutput(body, `${prefix}_${i}`)).toContain("tool_review_held");
+        expect(existsSync(join(root.workspace, `effect-${i}`))).toBe(false);
+      }
+      if (current === 1) return deniedCalls("repeated");
+      return fakeGatewayFinalText("Denied commands did not run.");
+    }, "caution");
+    try {
+      const result = await runFx(["ask", "--json", "--auto", "--no-save", "Inspect these fixture commands."], {
+        cwd: root.workspace, env: fixtureEnv(root, gateway, tracePath), timeoutMs: 15000,
+      });
+      expect(result.code).toBe(0);
+      expect(gateway.classifierRequests).toHaveLength(2);
+      const json = parseAskJson(result.stdout);
+      expect(json.tool_calls).toHaveLength(4);
+      expect(json.output).toContain("Denied commands did not run.");
+    } finally {
+      gateway.stop();
+      rmSync(root.root, { recursive: true, force: true });
+    }
+  }, 30000);
 
   for (const noSave of [false, true]) {
     test(`terminal output_filter returns tail records directly (${noSave ? "no-save" : "saved"})`, async () => {
