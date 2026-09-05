@@ -424,25 +424,6 @@ const test_vision = blk: {
     break :blk spec;
 };
 
-const test_read_tool_result = blk: {
-    var spec = test_read_file;
-    spec.name = "read_tool_result";
-    spec.description = "Test tool result lookup. When to use: exercise registry projection. When NOT to use: assert product-specific session behavior.";
-    spec.model_schema = .{
-        .name = "read_tool_result",
-        .description = spec.description,
-    };
-    spec.executor_kind = .read_tool_result;
-    spec.activity_kind = .read;
-    spec.requires_approval = false;
-    spec.action_label = "Reading";
-    spec.completed_action_label = "Read";
-    spec.label_arg_kind = .path;
-    spec.label_arg_default = "tool result";
-    spec.permission_target_kind = .none;
-    break :blk spec;
-};
-
 const test_mcp_search_tools = blk: {
     var spec = test_mcp_select_tool;
     spec.name = "mcp_search_tools";
@@ -529,7 +510,6 @@ const test_all_tools = [_]tool_dispatch.Tool{
     test_mcp_select_tool,
     test_ask_user_question,
     test_vision,
-    test_read_tool_result,
 };
 
 const test_order = [_][]const u8{

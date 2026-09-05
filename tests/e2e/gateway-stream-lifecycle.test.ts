@@ -3006,95 +3006,104 @@ describe("gateway stream lifecycle", () => {
     }
   });
 
-  test("suffixless stored result handle remains readable", async () => {
-    const root = createFixtureRoot("suffixless-tool-result-handle");
-    const tracePath = join(root.root, "trace.log");
-    const readFileCallId = "suffixless_handle_read_file_1";
-    const readResultCallId = "suffixless_handle_read_result_1";
-    const needle = "E2E_SUFFIX_NEEDLE";
-    const lines = Array.from(
-      { length: 500 },
-      (_, index) => `fixture line ${index.toString().padStart(3, "0")}: ${"x".repeat(72)}`,
-    );
-    lines[300] = needle;
-    writeFileSync(join(root.workspace, "large-result.txt"), `${lines.join("\n")}\n`);
-
-    let step = 0;
-    let canonicalHandle = "";
-    let suffixlessHandle = "";
-    const gateway = startGateway((body) => {
-      switch (step++) {
-        case 0:
-          return fakeGatewayToolCall(readFileCallId, "read_file", {
-            path: "large-result.txt",
-          });
-        case 1: {
-          const output = toolResultOutput(body, readFileCallId);
-          const match = output.match(
-            /<tool_result_handle>([^<]+)<\/tool_result_handle>/,
-          );
-          canonicalHandle = match?.[1] ?? "";
-          expect(canonicalHandle.endsWith(".txt")).toBe(true);
-          suffixlessHandle = canonicalHandle.slice(0, -4);
-          return fakeGatewayToolCall(readResultCallId, "read_tool_result", {
-            handle: suffixlessHandle,
-            query: needle,
+  for (const noSave of [false, true]) {
+    test(`terminal output_filter returns tail records directly (${noSave ? "no-save" : "saved"})`, async () => {
+      const root = createFixtureRoot("terminal-output-filter");
+      const tracePath = join(root.root, "trace.log");
+      const callId = "filtered_catalog";
+      const catalog = {
+        code: "00000",
+        data: [
+          ...Array.from({ length: 4000 }, (_, i) => ({ symbol: `UNRELATED${i}`, description: "x".repeat(100) })),
+          { symbol: "RIRENUSDT", status: "online", issuer: "fixture" },
+          { symbol: "RAPLDUSDT", status: "online", issuer: "fixture" },
+        ],
+      };
+      writeFileSync(join(root.workspace, "catalog.json"), JSON.stringify(catalog));
+      let step = 0;
+      let handle = "";
+      const gateway = startGateway((body) => {
+        if (step++ === 0) {
+          expect(serializedToolNames(parseGatewayRequest(body))).not.toContain("read_tool_result");
+          return fakeGatewayToolCall(callId, "terminal", {
+            action: "exec", command: "cat catalog.json", profile: "clean", timeout_ms: 15000,
+            output_filter: { json_pointer: "/data", contains: ["iren", "apld", "hut"] },
           });
         }
-        case 2: {
-          const output = toolResultOutput(body, readResultCallId);
-          expect(output).toContain(needle);
-          expect(output).toContain(
-            `<tool_result_query handle="${canonicalHandle}">`,
-          );
-          return fakeGatewayFinalText("Suffixless result handle inspected.");
-        }
-        default:
-          return new Response("unexpected request", { status: 500 });
-      }
-    });
-
-    try {
-      const result = await runFx(
-        ["ask", "--json", "--yolo", "Inspect the retained large result."],
-        {
-          cwd: root.workspace,
-          env: fixtureEnv(root, gateway, tracePath),
-          timeoutMs: 15_000,
-        },
-      );
-      const json = parseAskJson(result.stdout);
-      const sessionRoot = join(root.home, ".fx", "sessions", json.session_id);
-
-      expect(result.code).toBe(0);
-      expect(json.error).toBeUndefined();
-      expect(json.output).toContain("Suffixless result handle inspected.");
-      expect(gateway.requestCount()).toBe(3);
-      expect(json.tool_calls).toContainEqual({ name: "read_file", status: "success" });
-      expect(json.tool_calls).toContainEqual({
-        name: "read_tool_result",
-        status: "success",
+        const output = toolResultOutput(body, callId);
+        expect(output).not.toContain("UNRELATED");
+        expect(output).not.toContain("read_tool_result");
+        expect(output.length).toBeLessThan(4096);
+        handle = output.match(/<command_output_handle>([^<]+)<\/command_output_handle>/)?.[1] ?? "";
+        expect(handle).not.toBe("");
+        const filtered = JSON.parse(output.split("\n<command_output_handle>")[0]!);
+        expect(filtered.filter).toEqual({ status: "complete", matched: 2, returned: 2, truncated: false });
+        expect(filtered.output.code).toBe("00000");
+        expect(filtered.output.data).toEqual(catalog.data.slice(-2));
+        return fakeGatewayFinalText("Found both candidate records in one call.");
       });
-      expect(existsSync(join(sessionRoot, "tool-results", canonicalHandle))).toBe(true);
-      const sessionEvents = readFileSync(join(sessionRoot, "events.jsonl"), "utf8");
-      expect(sessionEvents).toContain(suffixlessHandle);
-      expect(sessionEvents).toContain(canonicalHandle);
-      expect(sessionEvents).toContain(needle);
-      expect(result.stderr).not.toContain("ResultHandleNotFound");
-    } finally {
-      gateway.stop();
-      rmSync(root.root, { recursive: true, force: true });
-    }
-  });
+      try {
+        const result = await runFx(["ask", "--json", "--yolo", ...(noSave ? ["--no-save"] : []), "Find the fixture tickers."], {
+          cwd: root.workspace, env: fixtureEnv(root, gateway, tracePath), timeoutMs: 15000,
+        });
+        expect(result.code).toBe(0);
+        expect(result.stderr).not.toContain("panic");
+        const json = parseAskJson(result.stdout);
+        expect(json.output).toContain("Found both candidate records in one call.");
+        expect(gateway.requestCount()).toBe(2);
+        if (!noSave) {
+          const original = readFileSync(join(root.home, ".fx", "sessions", json.session_id, "logs", "commands", handle));
+          expect(original.includes(Buffer.from("UNRELATED0"))).toBe(true);
+          expect(original.includes(Buffer.from("RIRENUSDT"))).toBe(true);
+        }
+      } finally {
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    }, 30000);
+  }
 
-  test("no-save terminal timeout returns a readable process-scoped replay handle", async () => {
+  for (const fixture of [
+    { name: "invalid JSON", content: "CLI says unavailable", pointer: "/data", expected: "InvalidJson", command: "cat catalog.json" },
+    { name: "wrong path", content: '{"error":"upstream error"}', pointer: "/data", expected: "PathNotFound", command: "cat catalog.json" },
+    { name: "stderr", content: '{"data":[{"symbol":"IREN"}]}', pointer: "/data", expected: "diagnostic-sentinel", command: "cat catalog.json; printf diagnostic-sentinel >&2" },
+    { name: "nonzero exit", content: '{"data":[{"symbol":"IREN"}]}', pointer: "/data", expected: "non-zero", command: "cat catalog.json; exit 7" },
+  ]) {
+    test(`terminal output_filter preserves ${fixture.name}`, async () => {
+      const root = createFixtureRoot("terminal-filter-failure");
+      const tracePath = join(root.root, "trace.log");
+      writeFileSync(join(root.workspace, "catalog.json"), fixture.content);
+      let step = 0;
+      const gateway = startGateway((body) => {
+        if (step++ === 0) return fakeGatewayToolCall("filter_failure", "terminal", {
+          action: "exec", command: fixture.command, profile: "clean", timeout_ms: 15000,
+          output_filter: { json_pointer: fixture.pointer, contains: ["IREN"] },
+        });
+        const output = toolResultOutput(body, "filter_failure");
+        expect(output).toContain(fixture.expected);
+        expect(output).not.toContain('"matched":0');
+        return fakeGatewayFinalText("Diagnostic preserved.");
+      });
+      try {
+        const result = await runFx(["ask", "--json", "--yolo", "--no-save", "Run the diagnostic fixture."], {
+          cwd: root.workspace, env: fixtureEnv(root, gateway, tracePath), timeoutMs: 15000,
+        });
+        expect(result.code).toBe(0);
+        expect(gateway.requestCount()).toBe(2);
+      } finally {
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    }, 30000);
+  }
+
+  test("no-save terminal timeout retains a process-scoped replay handle", async () => {
     const root = createFixtureRoot("terminal-timeout-replay");
     const tracePath = join(root.root, "trace.log");
     const markerPath = join(root.workspace, "must-not-run.txt");
     const childPidPath = join(root.workspace, "timeout-child.pid");
     const invalidCallId = "terminal_missing_timeout_1";
     const timeoutCallId = "terminal_timeout_1";
-    const readCallId = "terminal_replay_read_1";
     let step = 0;
     let replayHandle = "";
     const gateway = startGateway((body) => {
@@ -3125,14 +3134,9 @@ describe("gateway stream lifecycle", () => {
           );
           replayHandle = match?.[1] ?? "";
           expect(replayHandle).not.toBe("");
-          return fakeGatewayToolCall(readCallId, "read_tool_result", {
-            handle: replayHandle,
-            query: "PRE-TIMEOUT-OUT",
-          });
+          expect(timedOut).not.toContain("read_tool_result");
+          return fakeGatewayFinalText("Timeout replay retained.");
         }
-        case 3:
-          expect(toolResultOutput(body, readCallId)).toContain("PRE-TIMEOUT-OUT");
-          return fakeGatewayFinalText("Timeout replay inspected.");
         default:
           return new Response("unexpected request", { status: 500 });
       }
@@ -3152,8 +3156,8 @@ describe("gateway stream lifecycle", () => {
       const json = parseAskJson(result.stdout);
 
       expect(result.code).toBe(0);
-      expect(json.output).toContain("Timeout replay inspected.");
-      expect(gateway.requestCount()).toBe(4);
+      expect(json.output).toContain("Timeout replay retained.");
+      expect(gateway.requestCount()).toBe(3);
       expect(elapsedMs).toBeLessThan(5_000);
       expect(existsSync(markerPath)).toBe(false);
       expect(existsSync(join(root.home, ".fx", "sessions"))).toBe(false);
@@ -3162,35 +3166,6 @@ describe("gateway stream lifecycle", () => {
       await waitForProcessExit(childPid);
       expect(isProcessAlive(childPid)).toBe(false);
 
-      const expiredCallId = "expired_replay_read_1";
-      const expiredResponses = [
-        fakeGatewayToolCall(expiredCallId, "read_tool_result", {
-          handle: replayHandle,
-          start_byte: 1,
-          byte_count: 1024,
-        }),
-        fakeGatewayFinalText("Expired replay handled."),
-      ];
-      const expiredGateway = startGateway(() =>
-        expiredResponses.shift() ?? new Response("unexpected request", { status: 500 })
-      );
-      try {
-        const expired = await runFx(
-          ["ask", "--json", "--yolo", "--no-save", "Read the prior replay."],
-          {
-            cwd: root.workspace,
-            env: fixtureEnv(root, expiredGateway, tracePath),
-            timeoutMs: 15_000,
-          },
-        );
-        expect(expired.code).toBe(0);
-        expect(expiredGateway.requestCount()).toBe(2);
-        expect(
-          toolResultOutput(expiredGateway.requests[1]!.body, expiredCallId),
-        ).toContain("ResultHandleNotFound");
-      } finally {
-        expiredGateway.stop();
-      }
     } finally {
       gateway.stop();
       rmSync(root.root, { recursive: true, force: true });
@@ -3202,7 +3177,6 @@ describe("gateway stream lifecycle", () => {
     const tracePath = join(root.root, "trace.log");
     const effectPath = join(root.workspace, "post-timeout-effect.txt");
     const timeoutCallId = "terminal_timeout_stops_trailing_1";
-    const readCallId = "terminal_timeout_stops_trailing_read_1";
     const trailingMarker = "POST-TIMEOUT-SHOULD-NOT-RUN";
     let step = 0;
     let replayHandle = "";
@@ -3223,15 +3197,6 @@ describe("gateway stream lifecycle", () => {
           );
           replayHandle = match?.[1] ?? "";
           expect(replayHandle).not.toBe("");
-          return fakeGatewayToolCall(readCallId, "read_tool_result", {
-            handle: replayHandle,
-            query: trailingMarker,
-          });
-        }
-        case 2: {
-          const replay = toolResultOutput(body, readCallId);
-          expect(replay).toContain("(no matches)");
-          expect(replay).not.toContain(`[stdout]\n${trailingMarker}`);
           return fakeGatewayFinalText("Post-timeout statements were blocked.");
         }
         default:
@@ -3252,7 +3217,7 @@ describe("gateway stream lifecycle", () => {
 
       expect(result.code).toBe(0);
       expect(json.output).toContain("Post-timeout statements were blocked.");
-      expect(gateway.requestCount()).toBe(3);
+      expect(gateway.requestCount()).toBe(2);
       expect(existsSync(effectPath)).toBe(false);
       expect(readFileSync(tracePath, "utf8")).toContain(
         "command termination requested source=timeout",
@@ -3490,13 +3455,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     }
   }, 30_000);
 
-  test("saved terminal replay handle remains readable after resume without re-execution", async () => {
+  test("saved terminal replay survives resume without re-execution", async () => {
     const root = createFixtureRoot("saved-terminal-replay");
     const firstTracePath = join(root.root, "first-trace.log");
     const resumeTracePath = join(root.root, "resume-trace.log");
     const executionsPath = join(root.workspace, "executions.txt");
     const commandCallId = "saved_terminal_command_1";
-    const readCallId = "saved_terminal_read_1";
     let replayHandle = "";
     const firstResponses = [
       fakeGatewayToolCall(commandCallId, "terminal", {
@@ -3512,13 +3476,6 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         );
         replayHandle = match?.[1] ?? "";
         expect(replayHandle).not.toBe("");
-        return fakeGatewayToolCall(readCallId, "read_tool_result", {
-          handle: replayHandle,
-          query: "SAVED-REPLAY-NEEDLE",
-        });
-      },
-      (body: string) => {
-        expect(toolResultOutput(body, readCallId)).toContain("SAVED-REPLAY-NEEDLE");
         return fakeGatewayFinalText("Saved replay inspected.");
       },
     ];
@@ -3543,24 +3500,12 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       expect(firstJson.session_id).not.toBe("");
       expect(readFileSync(executionsPath, "utf8")).toBe("run\n");
 
-      const resumedReadCallId = "saved_terminal_resume_read_1";
-      const resumeResponses = [
-        fakeGatewayToolCall(resumedReadCallId, "read_tool_result", {
-          handle: replayHandle,
-          query: "SAVED-REPLAY-NEEDLE",
-        }),
-        (body: string) => {
-          expect(toolResultOutput(body, resumedReadCallId)).toContain(
-            "SAVED-REPLAY-NEEDLE",
-          );
-          return fakeGatewayFinalText("Resumed replay inspected.");
-        },
-      ];
-      const resumeGateway = startGateway((body) => {
-        const response = resumeResponses.shift();
-        if (!response) return new Response("unexpected request", { status: 500 });
-        return typeof response === "function" ? response(body) : response;
-      });
+      const retainedPath = join(root.home, ".fx", "sessions", firstJson.session_id, "logs", "commands", replayHandle);
+      expect(readFileSync(retainedPath).includes(Buffer.from("SAVED-REPLAY-NEEDLE"))).toBe(true);
+      const resumeResponses = [fakeGatewayFinalText("Resumed replay retained.")];
+      const resumeGateway = startGateway(() =>
+        resumeResponses.shift() ?? new Response("unexpected request", { status: 500 })
+      );
       try {
         const resumed = await runFx(
           [
@@ -3569,7 +3514,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
             "--yolo",
             "--resume-id",
             firstJson.session_id,
-            "Read the saved replay again.",
+            "Summarize the prior command.",
           ],
           {
             cwd: root.workspace,
@@ -3579,7 +3524,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         );
         expect(resumed.code).toBe(0);
         expect(parseAskJson(resumed.stdout).output).toContain(
-          "Resumed replay inspected.",
+          "Resumed replay retained.",
         );
         expect(readFileSync(executionsPath, "utf8")).toBe("run\n");
       } finally {
@@ -3869,7 +3814,6 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const readyPath = join(root.workspace, "cancelled-command.ready");
     const executionsPath = join(root.workspace, "cancelled-executions.txt");
     const commandCallId = "saved_cancelled_terminal_1";
-    const readCallId = "saved_cancelled_replay_read_1";
     const command = [
       "printf 'run\\n' >> cancelled-executions.txt",
       "printf 'CANCELLED-REPLAY-NEEDLE\\n'",
@@ -3898,14 +3842,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(replayMatches).toHaveLength(1);
         replayHandle = replayMatches[0]?.[1] ?? "";
         expect(replayHandle).not.toBe("");
-        return fakeGatewayToolCall(readCallId, "read_tool_result", {
-          handle: replayHandle,
-          query: "CANCELLED-REPLAY-NEEDLE",
-        });
       }
-      expect(toolResultOutput(body, readCallId)).toContain(
-        "CANCELLED-REPLAY-NEEDLE",
-      );
       return fakeGatewayFinalText("Cancelled replay inspected after resume.");
     });
     const proc = Bun.spawn(
@@ -3968,7 +3905,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         "Cancelled replay inspected after resume.",
       );
       expect(readFileSync(executionsPath, "utf8")).toBe("run\n");
-      expect(gateway.requestCount()).toBe(3);
+      expect(gateway.requestCount()).toBe(2);
+      expect(readFileSync(join(sessionRoot, "logs", "commands", replayHandle)).includes(Buffer.from("CANCELLED-REPLAY-NEEDLE"))).toBe(true);
     } finally {
       if (proc.exitCode === null) proc.kill("SIGKILL");
       gateway.stop();

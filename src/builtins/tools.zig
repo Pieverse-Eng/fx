@@ -23,7 +23,6 @@ const grep_files_impl = @import("../tools/filesystem/grep_files.zig");
 const read_file_impl = @import("../tools/filesystem/read_file.zig");
 const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const memory_impl = @import("../tools/memory/memory.zig");
-const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
 const finalize_market_result_impl = @import("../tools/market/finalize_market_result.zig");
 const calculate_venue_costs_impl = @import("../tools/market/calculate_venue_costs.zig");
 const quote_onchain_stock_impl = @import("../tools/market/quote_onchain_stock.zig");
@@ -66,7 +65,7 @@ const web_search_description =
 const terminal_description =
     "Each terminal call accepts one action object, never an array. Emit independent actions as separate tool calls together. Set unused fields null. Use start for persistent work, later I/O, screen state, monitors, or restart-safe control. Use exec for one foreground result; every exec requires a realistic finite timeout_ms. exec/start default profile=user; clean skips startup files; start.shell replaces profile. Send one write payload to an existing persistent session; fx acquires and releases agent control around that write. Then wait for a completion marker and read only unread output. Avoid extra verification commands when the marker reports success. Timeouts stop the process group and tracked descendants with a recoverable failure; fully detached descendant cleanup is best effort on macOS. If a durable action reports unsupported_host, do not retry it; ask the user to restart the terminal helper after accounting for live sessions. Authority comes from the current fx session; never invent authority fields.";
 const terminal_exec_only_description =
-    "This tool allows you to run one command with a finite timeout_ms and return its captured output. On timeout, it stops the process group and tracked descendants; cleanup of fully detached descendants is best effort on macOS.";
+    "This tool allows you to run one command with a finite timeout_ms and return its captured output. Use output_filter to return matching JSON records directly from full stdout. On timeout, it stops the process group and tracked descendants; cleanup of fully detached descendants is best effort on macOS.";
 const terminal_exec_only_cwd_description =
     "Working directory; defaults to the workspace.";
 const terminal_exec_only_command_description =
@@ -173,7 +172,17 @@ const terminal_write_schema = model_tool_schema.ObjectSchema{
     .additional_properties = false,
 };
 
+const terminal_output_filter_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "json_pointer", .json_type = .string, .bounds = &.{ .max_length = 512 }, .description = "JSON Pointer to an array of records or dictionary; empty string selects the root." },
+        .{ .name = "contains", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 32 }, .shape = &.{ .array_values = .{ .json_type = .string } }, .description = "Keep records whose keys or values contain any keyword, case-insensitively. Matches are candidates, not verified identities." },
+    },
+    .required = &.{ "json_pointer", "contains" },
+    .additional_properties = false,
+};
+
 const terminal_properties = [_]model_tool_schema.Property{
+    .{ .name = "output_filter", .json_type = .object, .shape = &.{ .object = &terminal_output_filter_schema }, .description = "Optional exec-only JSON record filter applied to complete stdout. Preserves the response envelope and original captured output. Check filter errors, matched count, and truncation before concluding absence." },
     .{ .name = "session_id", .json_type = .string, .description = "Required for session-targeted actions. Set null for start and list; owner-catalog authority is private." },
     .{ .name = "cwd", .json_type = .string, .description = "Working directory for exec or start; defaults to the workspace." },
     .{ .name = "command", .json_type = .string, .bounds = &.{ .max_length = terminal_contracts.max_command_bytes }, .description = "Command for exec, or optional command for start; omit on start for an interactive shell." },
@@ -379,6 +388,8 @@ fn terminalExecOnlyProperty(comptime name: []const u8) model_tool_schema.Propert
         terminal_exec_only_profile_description
     else if (std.mem.eql(u8, name, "timeout_ms"))
         terminal_exec_only_timeout_description
+    else if (std.mem.eql(u8, name, "output_filter"))
+        property.description
     else
         @compileError("terminal exec field is missing focused model guidance: " ++ name);
     return if (std.mem.eql(u8, name, "timeout_ms"))
@@ -572,9 +583,6 @@ const subagent_command_schema = model_tool_schema.ObjectSchema{
 };
 const vision_description =
     "Inspect authorized images attached by the user or local image paths supplied in the conversation, and return structured factual evidence. Pass exactly one source: image_ids for attached images, or paths for local images. When to use: read visible text, UI state, objects, layout, or other visual details needed for the task. When NOT to use: inspect paths the user did not supply, infer details not visible in an image, or repeat evidence already available in the conversation.";
-const read_tool_result_description =
-    "This tool allows you to read retained tool output by its handle, using a bounded byte range or literal text search. Use it to inspect output beyond a preview. It only accesses results from the active session or process, not arbitrary files.";
-
 pub const glob_files = ToolSpec{
     .name = "glob_files",
     .description = glob_files_description,
@@ -1218,37 +1226,6 @@ pub const vision = ToolSpec{
     .irreversible_fn = vision_impl.isIrreversible,
 };
 
-pub const read_tool_result = ToolSpec{
-    .name = "read_tool_result",
-    .description = read_tool_result_description,
-    .model_schema = .{
-        .name = "read_tool_result",
-        .description = read_tool_result_description,
-        .input_schema = .{
-            .properties = &.{
-                .{ .name = "handle", .json_type = .string, .description = "Opaque handle from a prior tool-result preview or captured command output." },
-                .{ .name = "start_byte", .json_type = .integer, .description = "Optional 1-based byte offset for range reads. Defaults to 1." },
-                .{ .name = "byte_count", .json_type = .integer, .description = "Optional positive byte count for range reads. Bounded by the tool." },
-                .{ .name = "query", .json_type = .string, .description = "Optional literal line query. When set, range fields are ignored." },
-            },
-            .required = &.{"handle"},
-        },
-    },
-    .executor_kind = .read_tool_result,
-    .activity_kind = .read,
-    .requires_approval = false,
-    .action_label = "Reading",
-    .completed_action_label = "Read",
-    .label_arg_kind = .path,
-    .label_arg_default = "tool result",
-    .permission_target_kind = .none,
-    .decode = read_tool_result_impl.decode,
-    .validate = read_tool_result_impl.validate,
-    .call = read_tool_result_impl.call,
-    .reads_only_fn = read_tool_result_impl.readsOnly,
-    .irreversible_fn = read_tool_result_impl.isIrreversible,
-};
-
 const market_result_market_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
         .{ .name = "venue", .json_type = .string },
@@ -1476,7 +1453,6 @@ pub const all = [_]tool_dispatch.Tool{
     mcp_features,
     ask_user_question,
     vision,
-    read_tool_result,
     calculate_venue_costs,
     quote_onchain_stock,
     finalize_market_result,
@@ -1512,7 +1488,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "73be834988c2e876ef83492072cd0260d73cad8851135637532e57de1b12eb77",
+        "7c8b035c6e800edfa8604ea2d22c4d2ce76a9a2642cf6dfbcf1f2b2ee5a32eed",
         &actual_hex,
     );
 }
@@ -1751,7 +1727,7 @@ test "terminal exec-only schema reuses exec structure with focused descriptions"
     try std.testing.expect(std.mem.find(
         u8,
         spec.description,
-        "fully detached descendant cleanup is best effort on macOS",
+        "cleanup of fully detached descendants is best effort on macOS",
     ) != null);
     try std.testing.expectEqual(
         terminal_exec_contract.allowed.len,
@@ -1785,6 +1761,7 @@ test "terminal exec-only schema reuses exec structure with focused descriptions"
     try std.testing.expectEqual(@as(?u64, terminal_impl.exec_timeout_min_ms), timeout.bounds.?.minimum);
     try std.testing.expectEqual(@as(?u64, terminal_impl.exec_timeout_max_ms), timeout.bounds.?.maximum);
     try std.testing.expect(timeout.nullable == null);
+    try std.testing.expect(schemaProperty(input_schema, "output_filter").?.nullable != null);
 }
 
 test "terminal gateway advertisement projects a provider-compatible object schema" {
@@ -2217,7 +2194,6 @@ test "built-in tools register exact active local order" {
         "mcp_features",
         "ask_user_question",
         "vision",
-        "read_tool_result",
         "calculate_venue_costs",
         "quote_onchain_stock",
         "finalize_market_result",
@@ -2892,34 +2868,6 @@ test "built-in vision dispatch uses supplied runtime provider" {
     try std.testing.expect(fixture.called);
     try std.testing.expectEqual(@as(usize, 2), fixture.image_count);
     try std.testing.expect(fixture.focus_matches);
-}
-
-test "built-in read_tool_result owns product metadata schema and callbacks" {
-    const schema_json = try tool_specs.toolGatewaySchemaJson(std.testing.allocator, read_tool_result);
-    defer std.testing.allocator.free(schema_json);
-
-    try std.testing.expectEqualStrings("read_tool_result", read_tool_result.name);
-    try std.testing.expect(std.mem.find(u8, read_tool_result.description, "opaque handle from the active session or process") != null);
-    try std.testing.expect(std.mem.find(u8, read_tool_result.description, "bounded byte range or literal query") != null);
-    try std.testing.expect(std.mem.find(u8, read_tool_result.description, "inspect results from another session or process") != null);
-    try std.testing.expect(std.mem.find(u8, schema_json, "\"handle\":{\"type\":\"string\"") != null);
-    try std.testing.expect(std.mem.find(u8, schema_json, "\"start_byte\":{\"type\":\"integer\"") != null);
-    try std.testing.expect(std.mem.find(u8, schema_json, "\"byte_count\":{\"type\":\"integer\"") != null);
-    try std.testing.expect(std.mem.find(u8, schema_json, "\"query\":{\"type\":\"string\"") != null);
-    try std.testing.expect(std.mem.find(u8, schema_json, "\"required\":[\"handle\"]") != null);
-    try std.testing.expectEqual(tool_dispatch.ExecutorKind.read_tool_result, read_tool_result.executor_kind);
-    try std.testing.expectEqual(types.ToolActivityKind.read, read_tool_result.activity_kind);
-    try std.testing.expect(!read_tool_result.requires_approval);
-    try std.testing.expectEqualStrings("Reading", read_tool_result.action_label);
-    try std.testing.expectEqualStrings("Read", read_tool_result.completed_action_label);
-    try std.testing.expectEqual(tool_dispatch.LabelArgKind.path, read_tool_result.label_arg_kind);
-    try std.testing.expectEqualStrings("tool result", read_tool_result.label_arg_default);
-    try std.testing.expectEqual(tool_dispatch.PermissionTargetKind.none, read_tool_result.permission_target_kind);
-    try std.testing.expect(read_tool_result.decode == read_tool_result_impl.decode);
-    try std.testing.expect(read_tool_result.validate.? == read_tool_result_impl.validate);
-    try std.testing.expect(read_tool_result.call == read_tool_result_impl.call);
-    try std.testing.expect(read_tool_result.reads_only_fn == read_tool_result_impl.readsOnly);
-    try std.testing.expect(read_tool_result.irreversible_fn == read_tool_result_impl.isIrreversible);
 }
 
 test "built-in write and edit tools register canonical mutation input ownership" {

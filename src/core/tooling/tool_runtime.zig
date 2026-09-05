@@ -1,3 +1,4 @@
+const command_output_filter = @import("command_output_filter.zig");
 const std = @import("std");
 const builtin = @import("builtin");
 const agent_stream_provider = @import("../agent/stream_provider.zig");
@@ -791,7 +792,7 @@ fn executeRunCommandBackend(
             return .{ .failure = try dispatch_ctx.allocator.dupe(u8, "") };
         },
     };
-    const execution = toolRunCommand(
+    var execution = toolRunCommand(
         state.runtime,
         dispatch_ctx.allocator,
         request,
@@ -800,11 +801,43 @@ fn executeRunCommandBackend(
         state.execution_error = err;
         return .{ .failure = try dispatch_ctx.allocator.dupe(u8, "") };
     };
+    errdefer if (execution.command_replay_capture) |capture| capture.discard(dispatch_ctx.allocator);
+    if (request.output_filter) |filter| {
+        if (execution.status == .success and !execution.cancelled) {
+            execution.model_output = try project_command_output(dispatch_ctx.allocator, execution, filter, state.runtime.max_tool_result_bytes);
+        }
+    }
     state.completion = execution;
     return switch (execution.status) {
         .success => .{ .success = @constCast(execution.model_output) },
         .failure => .{ .failure = @constCast(execution.model_output) },
     };
+}
+
+fn project_command_output(alloc: Allocator, execution: ToolExecutionResult, filter: command_output_filter.Filter, max_bytes: usize) ![]const u8 {
+    var scratch_state = std.heap.ArenaAllocator.init(alloc);
+    defer scratch_state.deinit();
+    const scratch = scratch_state.allocator();
+    const capture = execution.command_replay_capture orelse return filter_failure(alloc, "ReplayUnavailable", execution.model_output);
+    const streams = capture.read_for_filter(alloc, command_output_filter.max_input_bytes) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return filter_failure(alloc, @errorName(err), execution.model_output),
+    };
+    defer alloc.free(streams.stdout);
+    defer alloc.free(streams.stderr);
+    // Leave space for stderr, sanitization and the authoritative replay handle.
+    const budget = @min(16 * 1024, (max_bytes -| command_replay_store.model_handle_notice_reserve_bytes) / 2);
+    const projected = command_output_filter.project(scratch, streams.stdout, filter, budget) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return filter_failure(alloc, @errorName(err), execution.model_output),
+    };
+    if (streams.stderr.len == 0) return alloc.dupe(u8, projected);
+    const stderr_view = try tool_result_limits.prepareModelOutput(scratch, "terminal stderr", streams.stderr, budget);
+    return std.fmt.allocPrint(alloc, "{s}\n<stderr>\n{s}\n</stderr>", .{ projected, stderr_view });
+}
+
+fn filter_failure(alloc: Allocator, reason: []const u8, original: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(alloc, "output_filter incomplete: {s}. No conclusion about matching records can be drawn. Original command preview follows:\n{s}", .{ reason, original });
 }
 
 fn toolExecutionResultFromDispatch(result: tool_dispatch.DispatchResult) ToolExecutionResult {
@@ -2125,7 +2158,6 @@ const test_tool_registry = tool_dispatch.Registry{ .tools = &.{
     test_builtin_tools.mcp_search_tools,
     test_builtin_tools.mcp_select_tool,
     test_builtin_tools.ask_user_question,
-    test_builtin_tools.read_tool_result,
 } };
 
 fn matchesTestRunCommandCompatibility(command: []const u8) bool {
@@ -3806,7 +3838,6 @@ test "read-only local runtime tools are registered in built-in registry" {
         .{ .name = "glob_files", .kind = .glob_files },
         .{ .name = "grep_files", .kind = .grep_files },
         .{ .name = "read_file", .kind = .read_file },
-        .{ .name = "read_tool_result", .kind = .read_tool_result },
     };
 
     var rt = TestRuntime{};
@@ -5907,70 +5938,10 @@ test "saved noninteractive terminal exec captures replay by capability" {
     );
 }
 
-test "registered read_tool_result restores an omitted stored-result suffix" {
-    const result_store = @import("../session/result_store.zig");
-    const alloc = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDir(
-        io_mod.getIo(),
-        "session",
-        std.Io.File.Permissions.fromMode(0o700),
-    );
-    var session_dir = try tmp.dir.openDir(io_mod.getIo(), "session", .{
-        .iterate = true,
-        .follow_symlinks = false,
-    });
-    defer session_dir.close(io_mod.getIo());
-    const session_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "session");
-    defer alloc.free(session_path);
-    var capability = try session_child_store.SessionChildCapability.initForTesting(
-        alloc,
-        session_dir,
-        session_path,
-        .writable,
-        .{},
-    );
-    defer capability.deinit();
-
-    const handle = try result_store.storeLargeResultManaged(
-        alloc,
-        &capability,
-        "integration-call",
-        "web_fetch",
-        "integration suffix needle",
-    );
-    defer alloc.free(handle);
-    try std.testing.expect(std.mem.endsWith(u8, handle, ".txt"));
-    const suffixless_handle = handle[0 .. handle.len - ".txt".len];
-
-    var rt = TestRuntime{ .session_child_capability = &capability };
-    defer rt.deinit(alloc);
-    var arena_state = std.heap.ArenaAllocator.init(alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const arguments_json = try std.fmt.allocPrint(
-        arena,
-        "{{\"handle\":\"{s}\",\"query\":\"suffix needle\"}}",
-        .{suffixless_handle},
-    );
-
-    const result = try executeToolCall(rt.context(), arena, .{
-        .id = "suffixless-result-read",
-        .name = "read_tool_result",
-        .arguments_json = arguments_json,
-    });
-
-    try std.testing.expectEqual(tool_contracts.ToolExecutionStatus.success, result.status);
-    try expectContains(result.model_output, "integration suffix needle");
-    try expectContains(result.model_output, handle);
-}
-
 test "no-save terminal exec publishes one readable ephemeral replay" {
     if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
 
     const runtime_execution_memory = @import("../agent/runtime/execution_memory.zig");
-    const read_tool_result = @import("../../tools/session/read_tool_result.zig");
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -6026,27 +5997,8 @@ test "no-save terminal exec publishes one readable ephemeral replay" {
         .unavailable => return error.TestExpectedReplay,
     };
     try std.testing.expect(std.mem.find(u8, prepared.model_output, descriptor.handle) != null);
-    const read_arguments = try std.fmt.allocPrint(
-        arena,
-        "{{\"handle\":\"{s}\",\"start_byte\":1,\"byte_count\":4096}}",
-        .{descriptor.handle},
-    );
-    const read_ctx = tool_dispatch.DispatchContext{
-        .allocator = arena,
-        .ephemeral_command_replay = &store,
-    };
-    const decoded = try read_tool_result.decode(read_ctx, read_arguments);
-    const read_input = switch (decoded) {
-        .input => |value| value,
-        .failure => return error.TestUnexpectedDecodeFailure,
-    };
-    defer read_input.deinit(arena);
-    const read_result = try read_tool_result.call(read_ctx, read_input);
-    defer read_result.deinit(arena);
-    switch (read_result) {
-        .success => |page| try expectContains(page, "ephemeral-needle"),
-        .failure => return error.TestExpectedReplay,
-    }
+    const page = try command_replay_store.readAgentPageEphemeral(arena, &store, descriptor.handle, 1, 4096);
+    try expectContains(page, "ephemeral-needle");
     capture.releaseRetained(arena);
     handed_off = true;
 

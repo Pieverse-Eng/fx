@@ -173,6 +173,7 @@ pub const RunCommandRequest = struct {
     resolved_cwd: []const u8,
     environment: command_environment.Environment,
     timeout_ms: u64,
+    output_filter: ?@import("command_output_filter.zig").Filter = null,
 };
 
 pub const RunCommandBackendFn = *const fn (
@@ -371,7 +372,6 @@ pub const ExecutorKind = enum {
     glob_files,
     grep_files,
     read_file,
-    read_tool_result,
     calculate_venue_costs,
     quote_onchain_stock,
     finalize_market_result,

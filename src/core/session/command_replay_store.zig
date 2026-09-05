@@ -22,7 +22,7 @@ pub const CapturePolicy = enum {
 };
 const model_handle_prefix = "\n<command_output_handle>";
 const model_handle_suffix = "</command_output_handle>\n" ++
-    "Full captured command output is available through read_tool_result with this handle.";
+    "Full command output is retained for provenance. For large JSON catalogs, use terminal exec output_filter to request matching records directly.";
 pub const model_handle_notice_reserve_bytes = model_handle_prefix.len +
     max_public_handle_bytes +
     model_handle_suffix.len;
@@ -651,6 +651,30 @@ pub const Capture = struct {
             .streaming => unreachable,
             .consumed => null,
         };
+    }
+
+    /// Internal full-stream reader for deterministic output projection. Never
+    /// expose these raw bytes to the model without the normal sanitization path.
+    pub fn read_for_filter(self: *Capture, alloc: Allocator, max_bytes: usize) !struct { stdout: []u8, stderr: []u8 } {
+        const descriptor = (try self.retainRequired(alloc)) orelse return .{
+            .stdout = try alloc.dupe(u8, ""),
+            .stderr = try alloc.dupe(u8, ""),
+        };
+        var reader = try Reader.openBacking(alloc, self.backing orelse return error.ReplayStoreUnavailable, descriptor);
+        defer reader.deinit();
+        var stdout: std.ArrayList(u8) = .empty;
+        errdefer stdout.deinit(alloc);
+        var stderr: std.ArrayList(u8) = .empty;
+        errdefer stderr.deinit(alloc);
+        while (try reader.next(alloc)) |frame| {
+            defer alloc.free(frame.payload);
+            if (frame.payload.len > max_bytes -| (stdout.items.len + stderr.items.len)) return error.InputLimit;
+            const target = if (frame.stream == .stdout) &stdout else &stderr;
+            try target.appendSlice(alloc, frame.payload);
+        }
+        const owned_stdout = try stdout.toOwnedSlice(alloc);
+        errdefer alloc.free(owned_stdout);
+        return .{ .stdout = owned_stdout, .stderr = try stderr.toOwnedSlice(alloc) };
     }
 
     fn materializeInline(

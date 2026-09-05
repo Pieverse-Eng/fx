@@ -117,7 +117,25 @@ fx ask "explain the changes in this repository"
 
 With `--json`, `output` contains accumulated assistant Markdown across the request, while `final_output` contains only a completed final assistant response and is `""` for interrupted, failed, background, or otherwise absent final responses.
 
-Foreground terminal commands run with an explicit finite deadline. fx uses durable terminal sessions for services, watchers, GUI applications, and other long-lived work, and keeps captured foreground output available through an opaque bounded-read handle for the active session or `--no-save` process.
+Foreground terminal commands run with an explicit finite deadline. fx uses durable terminal sessions for services, watchers, GUI applications, and other long-lived work, and retains captured foreground output for provenance in the active session or `--no-save` process.
+
+For large JSON command responses, the agent can filter records in the same terminal call:
+
+```json
+{
+  "action": "exec",
+  "command": "bgc market --action instruments --category SPOT",
+  "timeout_ms": 15000,
+  "output_filter": {
+    "json_pointer": "/data",
+    "contains": ["IREN", "APLD", "HUT"]
+  }
+}
+```
+
+`json_pointer` selects the response's record array or dictionary (`""` selects the root). `contains` matches any keyword against record keys and values with ASCII case-insensitive substring matching. The filtered `output` preserves the response envelope, dictionary keys, and complete matching records. `filter.matched` counts all matches; `filter.returned` and `filter.truncated` describe the bounded view (at most 50 records). Matching does not verify an asset's identity or an API's success: inspect the preserved API status and product metadata.
+
+Filtering reads complete captured stdout, including records beyond the initial preview, with a 16 MiB input limit. Invalid JSON, missing paths, or exceeded limits return an explicit incomplete-filter diagnostic with the ordinary command preview. Stderr and command failures remain visible. Omit `output_filter` (or set it to null) for ordinary command output. The separate `read_tool_result` tool has been removed; request bounded data directly, and refine only unresolved queries when a filter is incomplete. Internal replay storage remains available to result finalization and diagnostics.
 
 fx starts in `auto` permission mode. Routine understood development actions run directly. Each unresolved action receives one narrow safety review based on the current user request and the exact pending action. A clear result authorizes only that action. A caution or unavailable review holds the action and returns advice to the agent without opening a permission prompt or ending the turn. See [Permissions](https://fx.sh/docs/configure-fx/permissions) for other modes and persistent rules.
 
