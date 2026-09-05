@@ -66,7 +66,7 @@ const web_search_description =
 const terminal_description =
     "Each terminal call accepts one action object, never an array. Emit independent actions as separate tool calls together. Set unused fields null. Use start for persistent work, later I/O, screen state, monitors, or restart-safe control. Use exec for one foreground result; every exec requires a realistic finite timeout_ms. exec/start default profile=user; clean skips startup files; start.shell replaces profile. Send one write payload to an existing persistent session; fx acquires and releases agent control around that write. Then wait for a completion marker and read only unread output. Avoid extra verification commands when the marker reports success. Timeouts stop the process group and tracked descendants with a recoverable failure; fully detached descendant cleanup is best effort on macOS. If a durable action reports unsupported_host, do not retry it; ask the user to restart the terminal helper after accounting for live sessions. Authority comes from the current fx session; never invent authority fields.";
 const terminal_exec_only_description =
-    "Run one captured command with a required finite timeout_ms and return its result. Timeout cleanup covers the process group and tracked descendants; fully detached descendant cleanup is best effort on macOS.";
+    "This tool allows you to run one command with a finite timeout_ms and return its captured output. On timeout, it stops the process group and tracked descendants; cleanup of fully detached descendants is best effort on macOS.";
 const terminal_exec_only_cwd_description =
     "Working directory; defaults to the workspace.";
 const terminal_exec_only_command_description =
@@ -573,7 +573,7 @@ const subagent_command_schema = model_tool_schema.ObjectSchema{
 const vision_description =
     "Inspect authorized images attached by the user or local image paths supplied in the conversation, and return structured factual evidence. Pass exactly one source: image_ids for attached images, or paths for local images. When to use: read visible text, UI state, objects, layout, or other visual details needed for the task. When NOT to use: inspect paths the user did not supply, infer details not visible in an image, or repeat evidence already available in the conversation.";
 const read_tool_result_description =
-    "Read a stored tool result or captured command output by opaque handle from the active session or process, using a bounded byte range or literal query. When to use: inspect more after a tool-result preview or command-output handle says retained output is available. When NOT to use: read arbitrary files, search the workspace, recover secrets, or inspect results from another session or process.";
+    "This tool allows you to read retained tool output by its handle, using a bounded byte range or literal text search. Use it to inspect output beyond a preview. It only accesses results from the active session or process, not arbitrary files.";
 
 pub const glob_files = ToolSpec{
     .name = "glob_files",
@@ -1285,7 +1285,7 @@ const venue_cost_candidate_schema = model_tool_schema.ObjectSchema{
 };
 
 const calculate_venue_costs_description =
-    "Deterministically rank two or more verified, identity-equivalent venue listings for one market/taker order, including listings with different quote currencies. It converts the reference notional into each venue quote, normalizes venue-native order-book sizes to base-asset depth, walks that depth, and combines side spread, depth slippage, public taker fee, and an authoritative additional fee. Candidates whose supplied depth cannot fill the notional are excluded. Supply only real order-book levels, verified current quote conversion rates, verified base-denominated size multipliers, and verified fees; exclude inverse or quote-denominated size units and never estimate or invent inputs. It performs arithmetic only and does not decide whether listings are comparable.";
+    "This tool allows you to compare execution costs across two or more comparable venues for a market/taker order, accounting for spread, slippage, fees, and quote-currency conversion. Supply verified order books, size multipliers, conversion rates, and fees. Routes with insufficient depth are excluded. It calculates costs; you must verify that the listings represent comparable exposure.";
 
 pub const calculate_venue_costs = ToolSpec{
     .name = "calculate_venue_costs",
@@ -1322,7 +1322,7 @@ pub const calculate_venue_costs = ToolSpec{
 };
 
 const quote_onchain_stock_description =
-    "Discover and quote verified onchain representations of one stock for an exact user-supplied buy notional. The tool resolves issuer-authoritative bStocks, xStocks, and Robinhood Stock Token deployments on supported chains, requests public exact-input swap quotes including DFlow for Solana xStocks, includes externally paid gas, normalizes issuer multipliers to underlying-share exposure, and ranks executable routes deterministically. It never uses token-search results as identity evidence, accesses a wallet, or prepares or submits a transaction.";
+    "This tool allows you to find and compare onchain stock-buy routes for one ticker and an exact supplied amount. It verifies issuer-backed tokens and ranks available quotes by cost per underlying share, including gas. It only supports spot buys on supported chains and does not access wallets or prepare or submit transactions.";
 
 pub const quote_onchain_stock = ToolSpec{
     .name = "quote_onchain_stock",
@@ -1419,7 +1419,7 @@ const market_result_onchain_route_source_schema = model_tool_schema.ObjectSchema
 };
 
 const finalize_market_result_description =
-    "Finalize one verified market-search result from prior terminal candle outputs. Reference each ordinary terminal result by its zero-based sourceToolCall index in the most recent tool-call batch; for a terminal batch, reuse its index and provide each child resultId. Supply one shared JSON Pointer mapping for the selected venue response shape. The tool normalizes, sorts, deduplicates, and limits candles, then returns the complete market-search JSON as the final answer. Call it once after selecting a market; do not copy candle rows into arguments.";
+    "This tool allows you to finalize one market result using references to prior terminal candle outputs and a shared JSON Pointer mapping. It normalizes, sorts, deduplicates, and limits candles, then returns the final JSON and ends the turn. Reference source outputs instead of copying candle rows.";
 
 pub const finalize_market_result = ToolSpec{
     .name = "finalize_market_result",
@@ -1512,7 +1512,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "c0e0f103e755730c51ef9f851f2177199aa77727991e6efe625c8f9d36f2a44c",
+        "73be834988c2e876ef83492072cd0260d73cad8851135637532e57de1b12eb77",
         &actual_hex,
     );
 }
