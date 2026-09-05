@@ -5441,7 +5441,10 @@ fn processQueuedPromptLoop(
                 !context_delta and
                 (root_action_permission_mode == .auto or root_action_permission_mode == .yolo) and
                 deps.live_tool_authority == null)
-                runtime_parallel_execution.parallelReadOnlyPrefixLen(deps.tool_registry, effective_tool_calls[tool_call_index..])
+                (if (deps.parallel_command_execution)
+                    try runtime_parallel_execution.parallel_candidate_prefix_len(arena, deps.tool_registry, effective_tool_calls[tool_call_index..])
+                else
+                    runtime_parallel_execution.parallelReadOnlyPrefixLen(deps.tool_registry, effective_tool_calls[tool_call_index..]))
             else
                 0;
             const parallel_len = if (parallel_candidate_len > 1) parallel: {
@@ -5554,6 +5557,8 @@ fn processQueuedPromptLoop(
 
                 var executable_calls: std.ArrayList(ToolCall) = .empty;
                 defer mem_utils.deinitList(arena, &executable_calls);
+                var executable_authorities: std.ArrayList(command_admission.ToolExecutionAuthority) = .empty;
+                defer executable_authorities.deinit(arena);
                 var executable_classification_complete: std.ArrayList(bool) = .empty;
                 defer mem_utils.deinitList(arena, &executable_classification_complete);
                 for (parallel_calls, precomputed_results, 0..) |parallel_call, precomputed, group_index| {
@@ -5591,7 +5596,11 @@ fn processQueuedPromptLoop(
                         pending_assistant,
                         parallel_call.id,
                     );
-                    const maybe_parallel_permission: ?command_admission.PermissionOutcome = runtime_tool_admission.requestToolPermissionTraced(deps, arena, parallel_call, parallel_review_context, root_action_permission_mode, local_grants.items, null, null, advertised_dynamic_tool_names, config.workspace_root, step_ctx) catch |err| blk: {
+                    const cached_parallel_caution = if (root_action_permission_mode == .auto)
+                        turn_review_cache.cachedCaution(parallel_call)
+                    else
+                        null;
+                    const maybe_parallel_permission: ?command_admission.PermissionOutcome = if (cached_parallel_caution) |outcome| outcome else runtime_tool_admission.requestToolPermissionTraced(deps, arena, parallel_call, parallel_review_context, root_action_permission_mode, local_grants.items, null, null, advertised_dynamic_tool_names, config.workspace_root, step_ctx) catch |err| blk: {
                         if (err != error.Cancelled or !config.cancel_flag.load(.seq_cst)) return err;
                         break :blk null;
                     };
@@ -5629,7 +5638,16 @@ fn processQueuedPromptLoop(
                     if (decision.isDenied()) {
                         const reason = permission_outcome.denial_reason orelse
                             decision.denialReason() orelse .user_denied;
-                        const denied_output = try tool_result_errors.toolPermissionDeniedJson(arena, parallel_call.name, reason);
+                        try turn_review_cache.rememberCaution(arena, parallel_call, permission_outcome);
+                        const denied_output = switch (reason) {
+                            .review_caution, .review_unavailable => try tool_result_errors.toolReviewHeldJson(
+                                arena,
+                                parallel_call.name,
+                                reason,
+                                if (permission_outcome.auto_review_result) |result| result.rationale else null,
+                            ),
+                            else => try tool_result_errors.toolPermissionDeniedJson(arena, parallel_call.name, reason),
+                        };
                         parallel_status_terminalized[group_index] = try stream_ctx.provisional_statuses.finishDeniedCall(
                             deps,
                             stream_ctx.alloc,
@@ -5644,6 +5662,9 @@ fn processQueuedPromptLoop(
                         tool_dispatch.traceDeniedWebSearch(step_ctx, parallel_call, reason);
                         debug_trace.eventf("tool", "execution_result", step_ctx, "call_id={s} name={s} result_kind=permission_denied reason={s} model_output_bytes={d}", .{ parallel_call.id, parallel_call.name, @tagName(reason), denied_output.len });
                         precomputed_results[group_index] = .{ .status = .failure, .model_output = denied_output };
+                        if (permission_outcome.feedback) |feedback| {
+                            try appendPermissionFeedbackAfterToolResult(deps, arena, &step_batch, parallel_call.id, &.{feedback});
+                        }
                         continue;
                     }
 
@@ -5657,10 +5678,11 @@ fn processQueuedPromptLoop(
                     }
                     const parallel_authority = permission_outcome.execution_authority orelse
                         return error.MissingToolExecutionAuthority;
-                    if (parallel_authority != .ordinary) {
+                    if (parallel_authority != .ordinary and parallel_authority != .run_command) {
                         return error.UnexpectedCommandExecutionAuthority;
                     }
                     try executable_calls.append(arena, parallel_call);
+                    try executable_authorities.append(arena, parallel_authority);
                     const classification_complete = if (preparation_batch.preparations[tool_call_index + group_index]) |preparation|
                         switch (preparation) {
                             .candidate => |candidate| preparedCandidateClassificationComplete(candidate),
@@ -5731,7 +5753,7 @@ fn processQueuedPromptLoop(
                             };
                         }
                     }
-                    debug_trace.eventf("tool", "parallel_read_only_start", step_ctx, "count={d}", .{executable_calls.items.len});
+                    debug_trace.eventf("tool", "parallel_tools_start", step_ctx, "count={d}", .{executable_calls.items.len});
                     const parallel_execution_root_user_context = try buildToolExecutionRootUserContext(
                         arena,
                         root_user_intent_context,
@@ -5748,6 +5770,8 @@ fn processQueuedPromptLoop(
                         .advertised_dynamic_tool_names = advertised_dynamic_tool_names,
                         .max_tool_result_bytes = config.max_tool_result_bytes,
                         .classification_complete = executable_classification_complete.items,
+                        .authorities = executable_authorities.items,
+                        .config = &config,
                     };
                     if (comptime host_target.is_wasm) {
                         parallel_run = try runtime_parallel_execution.runSequentialReadOnlyCalls(arena, executable_calls.items, .{
@@ -5806,7 +5830,7 @@ fn processQueuedPromptLoop(
                 );
                 debug_trace.eventf(
                     "tool",
-                    "parallel_read_only_finish",
+                    "parallel_tools_finish",
                     step_ctx,
                     "count={d}",
                     .{if (parallel_run) |run| run.attempts.len else 0},

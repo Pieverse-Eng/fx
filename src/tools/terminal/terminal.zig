@@ -1,3 +1,4 @@
+const output_filter = @import("../../core/tooling/command_output_filter.zig");
 const std = @import("std");
 const contracts = @import("../../core/terminal/contracts.zig");
 const client = @import("../../core/terminal/client.zig");
@@ -64,6 +65,7 @@ const NotifyKind = enum {
 const LifetimeKind = enum { until_match, until_session_end, duration };
 const MonitorOperationKind = enum { add, update, pause, @"resume", remove };
 const composite_argument_fields = [_][]const u8{
+    "output_filter",
     "shell",
     "return_when",
     "dimensions",
@@ -144,6 +146,7 @@ pub const Input = struct {
     command: ?[]const u8 = null,
     profile: ?command_environment.Profile = null,
     timeout_ms: ?u64 = null,
+    output_filter: ?output_filter.Filter = null,
     shell: ?ShellInput = null,
     backend: ?contracts.Backend = null,
     return_when: ?ReturnInput = null,
@@ -185,7 +188,7 @@ pub const ActionFieldContract = struct {
 pub fn actionFieldContract(action: Action) ActionFieldContract {
     return switch (action) {
         .exec => .{
-            .allowed = &.{ "action", "command", "cwd", "profile", "timeout_ms" },
+            .allowed = &.{ "action", "command", "cwd", "profile", "timeout_ms", "output_filter" },
             .required = &.{ "action", "command", "timeout_ms" },
         },
         .start => .{
@@ -513,6 +516,9 @@ pub fn validate(
         };
         if (timeout_ms < exec_timeout_min_ms or timeout_ms > exec_timeout_max_ms) {
             return try ctx.allocator.dupe(u8, "terminal exec arguments are invalid: InvalidTimeout");
+        }
+        if (input.output_filter) |filter| {
+            filter.validate() catch |err| return try std.fmt.allocPrint(ctx.allocator, "terminal output_filter is invalid: {s}", .{@errorName(err)});
         }
         _ = resolveCwd(arena, ctx, input.cwd) catch |err| {
             return try std.fmt.allocPrint(
@@ -875,6 +881,7 @@ fn callExec(
         .resolved_cwd = cwd,
         .environment = environment_value,
         .timeout_ms = timeout_ms,
+        .output_filter = input.output_filter,
     });
 }
 
@@ -1822,7 +1829,7 @@ test "terminal action field ownership is exact for every public action" {
         required: []const []const u8,
         conflicts: []const tool_result_errors.TerminalActionFieldConflict = &.{},
     }{
-        .{ .action = .exec, .fields = &.{ "action", "command", "cwd", "profile", "timeout_ms" }, .required = &.{ "action", "command", "timeout_ms" } },
+        .{ .action = .exec, .fields = &.{ "action", "command", "cwd", "profile", "timeout_ms", "output_filter" }, .required = &.{ "action", "command", "timeout_ms" } },
         .{ .action = .start, .fields = &.{ "action", "cwd", "command", "profile", "shell", "backend", "return_when", "wait_ceiling_ms", "dimensions", "initial_monitors" }, .required = &.{"action"}, .conflicts = &.{.{ "profile", "shell" }} },
         .{ .action = .read, .fields = &.{ "action", "session_id", "cursor_segment", "cursor_offset" }, .required = &.{ "action", "session_id", "cursor_segment" } },
         .{ .action = .screen, .fields = &.{ "action", "session_id" }, .required = &.{ "action", "session_id" } },

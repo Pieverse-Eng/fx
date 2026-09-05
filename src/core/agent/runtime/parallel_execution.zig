@@ -3,6 +3,10 @@ const types = @import("../../shared/types.zig");
 const tool_dispatch = @import("../../tooling/tool_dispatch.zig");
 const io_mod = @import("../../shared/io.zig");
 
+const command_admission = @import("../../permissions/command_admission.zig");
+const runtime_config = @import("config.zig");
+const execution_memory = @import("execution_memory.zig");
+
 const runtime_deps = @import("deps.zig");
 const runtime_tool_contracts = @import("tool_contracts.zig");
 
@@ -20,7 +24,6 @@ pub fn isReadOnlyCall(registry: tool_dispatch.Registry, call: ToolCall) bool {
     return switch (tool.executor_kind) {
         .glob_files => tool.activity_kind == .list,
         .read_file,
-        .read_tool_result,
         .grep_files,
         .skill,
         .web_fetch,
@@ -36,6 +39,37 @@ pub fn parallelReadOnlyPrefixLen(registry: tool_dispatch.Registry, calls: []cons
     var len: usize = 0;
     while (len < calls.len and isReadOnlyCall(registry, calls[len])) : (len += 1) {}
     return len;
+}
+
+pub const max_parallel_commands: usize = 8;
+
+/// Command concurrency is a scheduling contract, not a read-only classification.
+/// Dependent exec commands belong in separate model rounds (or one command).
+fn is_parallel_exec(alloc: Allocator, registry: tool_dispatch.Registry, call: ToolCall) !bool {
+    if (call.provider_result != null) return false;
+    const tool = registry.lookup(call.name) orelse return false;
+    if (tool.executor_kind != .terminal) return false;
+    var parsed = std.json.parseFromSlice(std.json.Value, alloc, call.arguments_json, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return false,
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) return false;
+    const request = parsed.value.object.get("request") orelse parsed.value;
+    if (request != .object) return false;
+    const action = request.object.get("action") orelse return false;
+    return action == .string and std.mem.eql(u8, action.string, "exec");
+}
+
+pub fn parallel_candidate_prefix_len(alloc: Allocator, registry: tool_dispatch.Registry, calls: []const ToolCall) !usize {
+    const reads = parallelReadOnlyPrefixLen(registry, calls);
+    if (reads != 0) return reads;
+    var count: usize = 0;
+    for (calls[0..@min(calls.len, max_parallel_commands)]) |call| {
+        if (!try is_parallel_exec(alloc, registry, call)) break;
+        count += 1;
+    }
+    return count;
 }
 
 pub const ParallelToolResult = struct {
@@ -75,6 +109,8 @@ pub const ParallelHookExecContext = struct {
     advertised_dynamic_tool_names: []const []const u8,
     max_tool_result_bytes: usize,
     classification_complete: []const bool = &.{},
+    authorities: []const command_admission.ToolExecutionAuthority = &.{},
+    config: ?*const runtime_config.Config = null,
 };
 
 const ParallelExecuteFn = *const fn (*anyopaque, Allocator, ToolCall, usize) anyerror!ToolExecutionResult;
@@ -248,11 +284,12 @@ fn cancelRequested(cancel_flag: ?*std.atomic.Value(bool)) bool {
 
 pub fn parallelHookExecute(ctx: *anyopaque, alloc: Allocator, call: ToolCall, index: usize) !ToolExecutionResult {
     const exec_ctx: *ParallelHookExecContext = @ptrCast(@alignCast(ctx));
-    return exec_ctx.hooks.execute_tool_call(exec_ctx.hooks.ctx, .{
+    const authority = if (index < exec_ctx.authorities.len) exec_ctx.authorities[index] else .ordinary;
+    var execution = try exec_ctx.hooks.execute_tool_call(exec_ctx.hooks.ctx, .{
         .call_allocator = alloc,
         .result_allocator = alloc,
         .call = call,
-        .authority = .ordinary,
+        .authority = authority,
         .permission_mode = exec_ctx.permission_mode,
         .root_user_intent_context = exec_ctx.root_user_intent_context,
         .current_turn_messages = exec_ctx.current_turn_messages,
@@ -263,6 +300,23 @@ pub fn parallelHookExecute(ctx: *anyopaque, alloc: Allocator, call: ToolCall, in
             exec_ctx.classification_complete[index],
         .lifecycle_id = .{ .turn_id = exec_ctx.turn_id, .call_id = call.id },
     });
+    // Finalize captured command output while its worker arena still owns the
+    // capture. The fan-in copies the prepared view and replay descriptor before
+    // destroying that arena, so finalizers can still read the full command data.
+    if (authority == .run_command) {
+        const config = exec_ctx.config orelse return error.MissingParallelCommandConfig;
+        var replay_transferred = execution.command_replay_capture == null;
+        defer if (!replay_transferred) execution.command_replay_capture.?.discard(alloc);
+        var prepared = try execution_memory.prepareCapturedToolModelOutput(alloc, config.*, call, execution.model_output, execution.command_replay_capture);
+        execution_memory.applyToolResultMemory(&prepared.memory, execution.tool_result_memory);
+        try execution_memory.finalizeCommandReplay(alloc, call, &prepared, config.session_child_capability, execution.command_replay_capture);
+        execution.prepared_result_memory = try duplicateToolResultMemory(alloc, prepared.memory);
+        execution.model_output = prepared.model_output;
+        if (execution.command_replay_capture) |capture| capture.releaseRetained(alloc);
+        execution.command_replay_capture = null;
+        replay_transferred = true;
+    }
+    return execution;
 }
 
 pub fn parallelHookFormatError(ctx: *anyopaque, alloc: Allocator, tool_name: []const u8, err: anyerror) ![]const u8 {
@@ -281,7 +335,7 @@ fn duplicateParallelToolResult(alloc: Allocator, call: ToolCall, execution: Tool
         execution.finish_turn or
         execution.selected_dynamic_tool_name != null or
         execution.selected_dynamic_tool_schema_json != null or
-        execution.prepared_result_memory != null or
+        (execution.prepared_result_memory != null and execution.command_result_json == null) or
         execution.committed_file_handoff != null or
         execution.deferred_tool_completion != null)
     {
@@ -296,6 +350,7 @@ fn duplicateParallelToolResult(alloc: Allocator, call: ToolCall, execution: Tool
     }
     var duplicated_execution: ToolExecutionResult = .{
         .status = execution.status,
+        .cancelled = execution.cancelled,
         .model_output = try alloc.dupe(u8, execution.model_output),
         .web_search_completion = execution.web_search_completion,
         .web_fetch_completion = execution.web_fetch_completion,
@@ -318,6 +373,7 @@ fn duplicateParallelToolResult(alloc: Allocator, call: ToolCall, execution: Tool
     if (execution.command_result_json) |json| {
         duplicated_execution.command_result_json = try alloc.dupe(u8, json);
     }
+    duplicated_execution.prepared_result_memory = try duplicateToolResultMemory(alloc, execution.prepared_result_memory);
     duplicated_execution.tool_result_memory = try duplicateToolResultMemory(
         alloc,
         execution.tool_result_memory,
@@ -330,7 +386,7 @@ fn duplicateParallelToolResult(alloc: Allocator, call: ToolCall, execution: Tool
     };
 }
 
-fn duplicateToolResultMemory(
+pub fn duplicateToolResultMemory(
     alloc: Allocator,
     source: ?types.ToolResultMemory,
 ) Allocator.Error!?types.ToolResultMemory {
@@ -384,6 +440,11 @@ fn freeOwnedToolExecutionResult(alloc: Allocator, result: ToolExecutionResult) v
     if (result.interactive_notice) |notice| types.freeSemanticNotice(alloc, notice);
     freeContextNotices(alloc, result.context_notices);
     if (result.command_result_json) |value| alloc.free(value);
+    if (result.prepared_result_memory) |memory| {
+        if (memory.output_handle) |value| alloc.free(value);
+        if (memory.preview) |value| alloc.free(value);
+        if (memory.command_output_replay) |replay| types.freeCommandOutputReplay(alloc, replay);
+    }
     if (result.tool_result_memory) |memory| {
         if (memory.output_handle) |value| alloc.free(value);
         if (memory.preview) |value| alloc.free(value);
@@ -719,6 +780,14 @@ fn checkParallelResultDuplicationAllocationFailures(alloc: Allocator) !void {
         },
         .context_notices = &.{ "first context notice", "second context notice" },
         .command_result_json = "{}",
+        .prepared_result_memory = .{
+            .output_handle = "prepared-handle",
+            .preview = "prepared-preview",
+            .command_output_replay = .{ .available = .{
+                .handle = "command-replay.bin",
+                .framed_bytes = 123,
+            } },
+        },
         .tool_result_memory = .{
             .output_handle = "result-handle",
             .preview = "preview",
@@ -734,6 +803,9 @@ fn checkParallelResultDuplicationAllocationFailures(alloc: Allocator) !void {
     );
     defer freeParallelToolResult(alloc, duplicated);
     try std.testing.expectEqualStrings("notice", duplicated.execution.system_notice.?);
+    const prepared = duplicated.execution.prepared_result_memory.?;
+    try std.testing.expectEqualStrings("prepared-handle", prepared.output_handle.?);
+    try std.testing.expectEqualStrings("command-replay.bin", prepared.command_output_replay.?.available.handle);
     const interactive_notice = duplicated.execution.interactive_notice.?;
     try std.testing.expectEqualStrings("background", interactive_notice.topic);
     try std.testing.expectEqual(types.NoticeTone.information, interactive_notice.tone);
@@ -749,4 +821,19 @@ test "parallel result duplication cleans up every allocation failure" {
         checkParallelResultDuplicationAllocationFailures,
         .{},
     );
+}
+
+test "parallel command groups require exec and have a fixed concurrency bound" {
+    const builtin_tools = @import("../../../builtins/tools.zig");
+    const registry = tool_dispatch.Registry{ .tools = &.{ builtin_tools.terminal, builtin_tools.write_file } };
+    var calls: [10]ToolCall = undefined;
+    for (&calls) |*call| call.* = toolCall("exec", "terminal", "{\"action\":\"exec\",\"command\":\"printf ok\",\"timeout_ms\":1000}");
+    try std.testing.expectEqual(@as(usize, 8), try parallel_candidate_prefix_len(std.testing.allocator, registry, &calls));
+    try std.testing.expect(!isReadOnlyCall(registry, calls[0]));
+    calls[1] = toolCall("start", "terminal", "{\"request\":{\"action\":\"start\"}}");
+    try std.testing.expectEqual(@as(usize, 1), try parallel_candidate_prefix_len(std.testing.allocator, registry, &calls));
+    calls[1] = toolCall("nested_exec", "terminal", "{\"request\":{\"action\":\"exec\"}}");
+    try std.testing.expectEqual(@as(usize, 8), try parallel_candidate_prefix_len(std.testing.allocator, registry, &calls));
+    calls[0] = toolCall("write", "write_file", "{\"path\":\"file\",\"content\":\"data\"}");
+    try std.testing.expectEqual(@as(usize, 0), try parallel_candidate_prefix_len(std.testing.allocator, registry, &calls));
 }
