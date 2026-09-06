@@ -1093,6 +1093,16 @@
     "source": "okx_future",
     "data": [
       {
+        "instId": "JP225-USDT-SWAP",
+        "instType": "SWAP",
+        "instFamily": "",
+        "baseCcy": "",
+        "quoteCcy": "",
+        "ctValCcy": "",
+        "settleCcy": "",
+        "state": "preopen"
+      },
+      {
         "baseCcy": "",
         "category": "1",
         "ctType": "linear",

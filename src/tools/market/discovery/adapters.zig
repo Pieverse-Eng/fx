@@ -260,6 +260,8 @@ fn lighter(ctx: *Context, data: t.Value) !void {
 }
 fn okx(ctx: *Context, data: t.Value) !void {
     for (try t.array(data)) |r| {
+        // Preopen entries can omit product fields; they are not available markets.
+        if (!t.eq(try required(r, "state"), "live")) continue;
         const kind = try required(r, "instType");
         if (!t.eq(kind, "SPOT") and !t.eq(kind, "SWAP")) return error.UnexpectedProduct;
         const spot = t.eq(kind, "SPOT");
