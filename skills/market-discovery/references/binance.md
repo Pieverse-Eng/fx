@@ -18,4 +18,6 @@ The script uses existing `binance-cli` and `jq`. It fetches independent catalogs
 
 Read `markets`, preserving symbol, product, quote, status, and `representation`. Tokenized stock Spot is not ordinary shares; perpetuals are derivatives. `sources` and `queriedAt` describe the catalog snapshot, not a price quote. Only currently `TRADING` markets are returned.
 
+Both Spot and perpetual discovery match the complete input ticker and candidates prefixed with `1000`, `1000000`, or `1M` against actual catalog base assets. For example, PEPE can return 1000PEPE contracts, and BABYDOGE can return 1MBABYDOGE Spot or contracts. Input prefixes are never stripped; 1INCH and 0G remain complete tickers. Preserve the returned `baseAsset` and symbol: denomination-prefixed markets must not be treated as one unit of the unprefixed asset, and quantity or price conversions require the actual product specifications. These are supported naming candidates, not a general asset-alias resolver.
+
 Check `errors` before claiming absence: a failed catalog leaves that coverage unresolved even when other markets were found. Nonzero exit may still include partial results. An empty successful result means no matching active market within these products and any supplied quote filter. The script does not check balances, account eligibility, quotes, or execution costs.

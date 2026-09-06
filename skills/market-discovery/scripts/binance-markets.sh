@@ -56,6 +56,8 @@ done
 jq -n --arg ticker "$ticker" --arg quote "$quote" --arg product "$product" \
   --arg queriedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson errors "$errors" \
   --slurpfile spot "$scratch/spot.json" --slurpfile futures "$scratch/futures.json" --slurpfile assets "$scratch/assets.json" '
+  # Preserve the complete input; only add recognized denomination-prefix candidates.
+  [$ticker, ("1000"+$ticker), ("1000000"+$ticker), ("1M"+$ticker)] as $bases |
   [$assets[0].data[] | select(.uq == $ticker and ((.tags // []) | index("bStocks")) != null
     and .trading == true and .delisted == false and (.test == 0 or .test == "0")) | .assetCode] as $bstocks |
   {venue:"binance",ticker:$ticker,quoteAsset:(if $quote == "" then null else $quote end),product:$product,queriedAt:$queriedAt,
@@ -64,12 +66,12 @@ jq -n --arg ticker "$ticker" --arg quote "$quote" --arg product "$product" \
    markets: ([
      $spot[0].symbols[] | . as $m |
      select(.status == "TRADING" and .isSpotTradingAllowed == true and ($quote == "" or .quoteAsset == $quote)) |
-     select(.baseAsset == $ticker or ($bstocks | index($m.baseAsset)) != null) |
+     select(($bases | index($m.baseAsset)) != null or ($bstocks | index($m.baseAsset)) != null) |
      {symbol,baseAsset,quoteAsset,status,product:"spot",
        representation:(if ($bstocks | index($m.baseAsset)) != null then "tokenized_stock" else "spot_asset" end)}
    ] + [
-     $futures[0].symbols[] |
-     select(.baseAsset == $ticker and .status == "TRADING" and ($quote == "" or .quoteAsset == $quote)
+     $futures[0].symbols[] | . as $m |
+     select(($bases | index($m.baseAsset)) != null and .status == "TRADING" and ($quote == "" or .quoteAsset == $quote)
        and (.contractType == "PERPETUAL" or .contractType == "TRADIFI_PERPETUAL")) |
      {symbol,baseAsset,quoteAsset,marginAsset,status,contractType,product:"perpetual",representation:"derivative"}
    ] | sort_by(.product,.symbol)),errors:$errors}'
