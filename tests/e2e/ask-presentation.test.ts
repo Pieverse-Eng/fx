@@ -186,6 +186,7 @@ describe("fx ask presentation", () => {
       fakeGatewayToolCall("discovery-invalid", "discover_markets", {
         tickers: ["BTC;touch discovery-injected"],
         product: "all",
+        quote: null,
       }),
       fakeGatewayFinalText("Invalid ticker rejected.\n"),
     ]);
@@ -205,6 +206,7 @@ describe("fx ask presentation", () => {
     const tool = request.tools.find((t: { name: string }) => t.name === "discover_markets");
     expect(tool.inputSchema.properties.product.enum).toEqual(["spot", "future", "all"]);
     expect(tool.inputSchema.properties.tickers.maxItems).toBe(8);
+    expect([...tool.inputSchema.required].sort()).toEqual(Object.keys(tool.inputSchema.properties).sort());
     expect(tool.inputSchema.additionalProperties).toBe(false);
   }, TIMEOUT);
 

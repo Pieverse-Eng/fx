@@ -1276,7 +1276,7 @@ pub const discover_markets = ToolSpec{
                 .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "future", "all" } } },
                 .{ .name = "quote", .json_type = .string, .nullable = &.{ .description = "Optional quote-currency filter; null searches all supported quotes." }, .bounds = &.{ .min_length = 1, .max_length = 16 } },
             },
-            .required = &.{ "tickers", "product" },
+            .required = &.{ "tickers", "product", "quote" },
             .additional_properties = false,
         },
     },
@@ -1524,7 +1524,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "57ba4c5dafc1d4233e51dc5e73ce01e90903c06df39bcd6e842159d1c64fd354",
+        "e6d59a50d19bf46e1f72824b465803f1ab286f1c41f3e006beeae18e60e5b9f4",
         &actual_hex,
     );
 }
