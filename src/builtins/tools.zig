@@ -24,6 +24,7 @@ const grep_files_impl = @import("../tools/filesystem/grep_files.zig");
 const read_file_impl = @import("../tools/filesystem/read_file.zig");
 const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
+const discover_markets_impl = @import("../tools/market/discover_markets.zig");
 const shell_impl = @import("../tools/shell/shell.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -830,6 +831,35 @@ pub const read_tool_result = ToolSpec{
     .irreversible_fn = read_tool_result_impl.isIrreversible,
 };
 
+const discover_markets_description =
+    "This tool allows you to find available spot and perpetual markets across Aster, Binance, Bitget, Gate, Hyperliquid, Kraken, Lighter, and OKX CEX in one parallel query. Always checks all eight. Pass related base tickers together, resolving asset names first. Returns results grouped by ticker with exact venue symbols, product types, required routing identifiers, and restrictions; errors records unresolved coverage. Use these public venue results directly. An empty match applies only to the searched products and currencies. Does not place orders or compare execution costs.";
+
+pub const discover_markets = ToolSpec{
+    .name = "discover_markets",
+    .description = discover_markets_description,
+    .model_schema = .{
+        .name = "discover_markets",
+        .description = discover_markets_description,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 64 }, .description = "Base tickers, case-insensitive, e.g. [IREN, APLD, HUT]. Not company names or trading pairs. Aster requires its exact base ticker (e.g. 1000PEPE)." },
+                .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp", "all" } }, .description = "Optional product filter; defaults to all. Includes stock tokens and stock-linked perpetuals. Excludes dated futures. Aster supports perpetuals only." },
+                .{ .name = "quote", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Use only for a requested currency, or ALL for all quotes. Omit for defaults: USDT at Binance/Bitget/Gate/OKX, USDC at Hyperliquid/Lighter, USD at Kraken, all at Aster. For perps: Hyperliquid filters collateral, Lighter settlement, Kraken price denomination." },
+            },
+            .required = &.{"tickers"},
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .discover_markets,
+    .activity_kind = .read,
+    .action_label = "Finding markets",
+    .completed_action_label = "Found markets",
+    .decode = discover_markets_impl.decode,
+    .call = discover_markets_impl.call,
+    .reads_only_fn = discover_markets_impl.readsOnly,
+    .irreversible_fn = discover_markets_impl.isIrreversible,
+};
+
 pub const all = [_]tool_dispatch.Tool{
     glob_files,
     grep_files,
@@ -848,11 +878,13 @@ pub const all = [_]tool_dispatch.Tool{
     ask_user_question,
     vision,
     read_tool_result,
+    discover_markets,
 };
 
 pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
 
 pub const advertisement_order = [_][]const u8{
+    "discover_markets",
     "read_file",
     "glob_files",
     "grep_files",
@@ -871,6 +903,7 @@ pub const advertisement_order = [_][]const u8{
 };
 
 pub const read_only_tool_names = [_][]const u8{
+    "discover_markets",
     "read_file",
     "glob_files",
     "grep_files",
@@ -1010,6 +1043,7 @@ test "built-in tools register exact active local order" {
         "ask_user_question",
         "vision",
         "read_tool_result",
+        "discover_markets",
     };
 
     try std.testing.expectEqual(expected_names.len, all.len);
@@ -1777,6 +1811,7 @@ fn expectRegisteredNames(names: []const []const u8) !void {
 
 test "built-in read-only tool set matches plan inspection tools" {
     const expected_names = [_][]const u8{
+        "discover_markets",
         "read_file",
         "glob_files",
         "grep_files",

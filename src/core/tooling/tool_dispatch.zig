@@ -429,6 +429,7 @@ pub const LabelArgKind = enum {
 pub const PermissionTargetKind = core_permissions.PermissionTargetKind;
 
 pub const ExecutorKind = enum {
+    discover_markets,
     glob_files,
     grep_files,
     read_file,

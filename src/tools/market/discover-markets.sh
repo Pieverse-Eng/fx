@@ -2,15 +2,14 @@
 # Public market discovery. Bash 4+, jq, GNU timeout, and the selected venue CLIs.
 set -euo pipefail
 usage() {
-  echo 'Usage: discover-markets.sh TICKER [TICKER ...] [--venues aster,binance,bitget,gate,hyperliquid,kraken,lighter,okx-cex] [--product spot|perpetual|all] [--quote CURRENCY|ALL]' >&2
+  echo 'Usage: discover-markets.sh TICKER [TICKER ...] [--product spot|perpetual|all] [--quote CURRENCY|ALL]' >&2
   exit 2
 }
-tickers=(); venues=(); product=all; quote_override=''; quote_set=0
-venue_arg=aster,binance,bitget,gate,hyperliquid,kraken,lighter,okx-cex
-declare -A seen_tickers=() seen_venues=()
+tickers=(); product=all; quote_override=''; quote_set=0
+venues=(aster binance bitget gate hyperliquid kraken lighter okx-cex)
+declare -A seen_tickers=()
 while (( $# )); do
   case "$1" in
-    --venues) [[ $# -ge 2 ]] || usage; venue_arg=${2,,}; shift 2 ;;
     --product) [[ $# -ge 2 ]] || usage; product=$2; shift 2 ;;
     --quote) [[ $# -ge 2 ]] || usage; quote_override=${2^^}; quote_set=1; shift 2 ;;
     --*) usage ;;
@@ -25,13 +24,6 @@ if (( quote_set )); then
   [[ $quote_override =~ ^[A-Z0-9]+$ ]] || usage
   [[ $quote_override != ALL ]] || quote_override=''
 fi
-[[ -n $venue_arg && $venue_arg != ,* && $venue_arg != *, && $venue_arg != *,,* ]] || usage
-IFS=, read -r -a requested_venues <<<"$venue_arg"
-for venue in "${requested_venues[@]}"; do
-  [[ $venue != okx ]] || venue=okx-cex
-  case "$venue" in aster|binance|bitget|gate|hyperliquid|kraken|lighter|okx-cex) ;; *) usage ;; esac
-  if [[ -z ${seen_venues[$venue]:-} ]]; then venues+=("$venue"); seen_venues[$venue]=1; fi
-done
 for dependency in jq timeout; do
   command -v "$dependency" >/dev/null || { echo "Missing dependency: $dependency" >&2; exit 2; }
 done

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-script="$repo_root/skills/market-discovery/scripts/discover-markets.sh"
+script="$repo_root/src/tools/market/discover-markets.sh"
 fixture_dir=$(mktemp -d)
 trap 'rm -rf -- "$fixture_dir"' EXIT
 export FIXTURE_DIR="$fixture_dir"
@@ -149,6 +149,10 @@ jq -n '{symbols:[
  {symbol:"OLDUSDT",baseAsset:"OLD",quoteAsset:"USDT",marginAsset:"USDT",status:"PENDING_TRADING",contractType:""},
  {symbol:"BTCUSDC",baseAsset:"BTC",quoteAsset:"USDC",marginAsset:"USDC",status:"TRADING",contractType:"PERPETUAL"}
 ]}' >"$fixture_dir/aster.json"
+if [[ $# == 1 ]]; then
+  python3 "$repo_root/tests/market-discovery/test_tool_runtime.py" "$1" "$fixture_dir"
+  exit
+fi
 run() { bash "$script" "$@"; }
 WAIT_FOR_ALL=1 run BTC CRCL PEPE ETH >"$fixture_dir/result.json"
 jq -e '(keys==["errors","results"]) and .errors==[] and (.results|map(.ticker))==["BTC","CRCL","PEPE","ETH"]' "$fixture_dir/result.json" >/dev/null
@@ -174,34 +178,36 @@ jq -e '
 jq -e 'any(.results[]|select(.ticker=="PEPE")|.markets[];.venue=="lighter" and .symbol=="1000PEPE") and any(.results[]|select(.ticker=="PEPE")|.markets[];.venue=="hyperliquid" and .symbol=="kPEPE")' "$fixture_dir/result.json" >/dev/null
 # Dedup inputs, validate filters, and keep currency overrides literal.
 : >"$fixture_dir/calls"
-run btc BTC CRCL --venues bitget,bitget >"$fixture_dir/result.json"
-jq -e 'all(.results[].markets[];.venue=="bitget") and (.results|map(.ticker))==["BTC","CRCL"]' "$fixture_dir/result.json" >/dev/null
-[[ $(wc -l <"$fixture_dir/calls") == 2 ]]
-run BTC --venues bitget --quote USDC | jq -e '(.results[0].markets|length)==2 and any(.results[0].markets[];.symbol=="BTCPERP")' >/dev/null
-run BTC --venues kraken --quote USDT | jq -e '(.results[0].markets|length)==1 and .results[0].markets[0].symbol=="XBTUSDT"' >/dev/null
-run BTC --venues hyperliquid --quote ALL | jq -e '(.results[0].markets|length)==4 and any(.results[0].markets[];.symbol=="late:BTC" and .assetId==120000)' >/dev/null
-run BTC --venues okx --quote ALL | jq -e '(.results[0].markets|length)==3' >/dev/null
-run ETH --venues lighter --quote USDT | jq -e '(.results[0].markets|length)==1 and .results[0].markets[0].symbol=="ETH/USDT"' >/dev/null
+run btc BTC CRCL >"$fixture_dir/result.json"
+jq -e '(.results|map(.ticker))==["BTC","CRCL"]' "$fixture_dir/result.json" >/dev/null
+[[ $(wc -l <"$fixture_dir/calls") == 19 ]]
+# Some venues cannot cover a requested currency; retain the other results.
+partial() { run "$@" || [[ $? == 1 ]]; }
+partial BTC --quote USDC | jq -e '[.results[0].markets[]|select(.venue=="bitget")]|length==2 and any(.[];.symbol=="BTCPERP")' >/dev/null
+partial BTC --quote USDT | jq -e '[.results[0].markets[]|select(.venue=="kraken")]|length==1 and .[0].symbol=="XBTUSDT"' >/dev/null
+run BTC --quote ALL | jq -e '[.results[0].markets[]|select(.venue=="hyperliquid")]|length==4 and any(.[];.symbol=="late:BTC" and .assetId==120000)' >/dev/null
+run BTC --quote ALL | jq -e '[.results[0].markets[]|select(.venue=="okx-cex")]|length==3' >/dev/null
+partial ETH --quote USDT | jq -e '[.results[0].markets[]|select(.venue=="lighter")]|length==1 and .[0].symbol=="ETH/USDT"' >/dev/null
 run BTC --product spot | jq -e '.errors==[] and all(.results[0].markets[];.product=="spot")' >/dev/null
 run BTC --product perpetual | jq -e '.errors==[] and all(.results[0].markets[];.product=="perp")' >/dev/null
-run CLOSE BUY SELL DOGE STOP OLD INCH UNKNOWN --venues bitget,gate,kraken >"$fixture_dir/result.json"
+run CLOSE BUY SELL DOGE STOP OLD INCH UNKNOWN >"$fixture_dir/result.json"
 jq -e 'any(.results[]|select(.ticker=="CLOSE")|.markets[];.restrictions==["Opening restricted"]) and
  any(.results[]|select(.ticker=="BUY")|.markets[];.restrictions==["Buy only"]) and
  any(.results[]|select(.ticker=="SELL")|.markets[];.restrictions==["Sell only"]) and
  any(.results[]|select(.ticker=="DOGE")|.markets[];.symbol=="XDGUSD") and
  all(.results[]|select(.ticker=="STOP" or .ticker=="OLD" or .ticker=="INCH" or .ticker=="UNKNOWN");.markets==[])' "$fixture_dir/result.json" >/dev/null
-run 1INCH --venues bitget,kraken,lighter | jq -e '(.results[0].markets|length)==4' >/dev/null
+run 1INCH | jq -e '(.results[0].markets|length)==4' >/dev/null
 # Partial failures remain venue-specific, without suppressing healthy venues/products.
 touch "$fixture_dir/binance-assets.fail"
 if run CRCL >"$fixture_dir/error.json"; then echo 'Expected partial error'; exit 1; fi
 jq -e 'any(.errors[];.venue=="binance" and .query=="assets") and any(.results[0].markets[];.venue=="binance" and .product=="perp") and any(.results[0].markets[];.venue=="kraken")' "$fixture_dir/error.json" >/dev/null
 rm "$fixture_dir/binance-assets.fail"
-if run BTC --venues gate,bitget --quote EUR >"$fixture_dir/error.json"; then exit 1; fi
+if run BTC --quote EUR >"$fixture_dir/error.json"; then exit 1; fi
 jq -e '(.errors|length)==2 and ([.errors[].venue]|sort)==["bitget","gate"]' "$fixture_dir/error.json" >/dev/null
 cp "$fixture_dir/kraken-tickers.json" "$fixture_dir/kraken-tickers.backup"
 echo '{"result":"success","tickers":[]}' >"$fixture_dir/kraken-tickers.json"
-if run BTC --venues kraken >"$fixture_dir/error.json"; then exit 1; fi
-jq -e '(.errors|length)>0 and (.results[0].markets|length)==1' "$fixture_dir/error.json" >/dev/null
+if run BTC >"$fixture_dir/error.json"; then exit 1; fi
+jq -e '(.errors|length)>0 and ([.results[0].markets[]|select(.venue=="kraken")]|length)==1' "$fixture_dir/error.json" >/dev/null
 mv "$fixture_dir/kraken-tickers.backup" "$fixture_dir/kraken-tickers.json"
 for key in aster binance-spot bitget-spot gate-spot kraken-spot okx-spot hl-metas lighter; do
   cp "$fixture_dir/$key.json" "$fixture_dir/backup.json"
@@ -210,7 +216,7 @@ for key in aster binance-spot bitget-spot gate-spot kraken-spot okx-spot hl-meta
   jq -e '(.errors|length)>0 and (.results[0].markets|length)>0' "$fixture_dir/error.json" >/dev/null
   mv "$fixture_dir/backup.json" "$fixture_dir/$key.json"
 done
-for args in '--venues unknown' '--venues gate,' '--product invalid' '--quote' ''; do
+for args in 'BTC --venues binance' '--venues gate,' '--product invalid' '--quote' ''; do
   # Intentional word splitting exercises malformed argument lists.
   if run $args >/dev/null 2>&1; then echo 'Expected input rejection'; exit 1; fi
 done
