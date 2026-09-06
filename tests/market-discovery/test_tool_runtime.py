@@ -91,23 +91,24 @@ def exercise(kind, tool_name="discover_markets"):
                         continue
                     try:
                         candidate, _ = decoder.raw_decode(content[offset:])
-                        if isinstance(candidate, dict) and set(candidate) == ({"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
+                        if isinstance(candidate, dict) and set(candidate) == ({"bestRoute", "gaps"} if tool_name == "compare_trade_routes" else {"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
                             payload = candidate
                             break
                     except ValueError:
                         pass
                 assert payload is not None, content
-                assert [entry["ticker"] for entry in payload["results"]] == (["BTC"] if tool_name == "compare_trade_routes" else ["BTC", "CRCL"])
+                if tool_name != "compare_trade_routes":
+                    assert [entry["ticker"] for entry in payload["results"]] == ["BTC", "CRCL"]
                 if tool_name == "discover_markets":
                     assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
                     assert "lighter" in calls
                     assert bool(payload["errors"]) == (kind == "partial"), payload
                 elif tool_name == "compare_trade_routes":
-                    entry = payload["results"][0]
-                    assert entry["selected"] and len(entry["routes"]) >= 2, payload
-                    assert all("chain" not in r for r in entry["routes"]), payload
+                    route = payload["bestRoute"]
+                    assert route["venue"] and route["symbol"] and route["product"] == "perp", payload
+                    assert set(route) <= {"venue", "symbol", "product", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset"}, payload
+                    assert isinstance(payload["gaps"], list) and all(isinstance(gap, str) for gap in payload["gaps"]), payload
                     assert not any(c in calls for c in ("route-no-asset", "route-rh", "route-networks")), calls
-                    assert all(r["fees"] >= 0 and r["expectedQuantity"] > 0 for r in entry["routes"])
                 else:
                     for entry in payload["results"]:
                         assert "source" not in entry and "markets" not in entry

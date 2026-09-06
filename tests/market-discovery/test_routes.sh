@@ -3,6 +3,17 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 math=$(cat "$root/src/tools/market/route_math.jq")
 jq -ne "$math"'
+  {venue:"bitget",symbol:"RCRCLUSDT",product:"spot",category:"SPOT",effectivePrice:100,fees:1,quotedAt:"fixture",id:"venue"} as $venue |
+  {issuer:"bstocks",chain:"bnb",symbol:"CRCLB",contract:"0x1",provider:"fixture",inputContract:"0x2",gas:1,effectivePrice:101} as $chain |
+  (comparison_result([$venue,$chain];[]) == {bestRoute:{venue:"bitget",symbol:"RCRCLUSDT",product:"spot",category:"SPOT"},gaps:[]}) and
+  (comparison_result([$chain,$venue];[]).bestRoute == {issuer:"bstocks",chain:"bnb",symbol:"CRCLB",contract:"0x1"}) and
+  (comparison_result([$venue+{venue:"hyperliquid",assetId:110109,dex:"xyz"},$chain];[]).bestRoute.assetId == 110109) and
+  (comparison_result([$venue,$chain];[{venue:"kraken",symbol:"CRCLxUSD",message:"Unavailable book"}]).gaps == ["kraken / CRCLxUSD: Unavailable book"]) and
+  (comparison_result([];[]) == {bestRoute:null,gaps:["No eligible route with a valid quote"]}) and
+  (comparison_result([$venue];[]).gaps == ["Only one eligible route; comparative minimum not established"])
+' >/dev/null
+echo 'Compact route selection, chain symbols, routing identifiers and comparison gaps passed.'
+jq -ne "$math"'
   def near($x): (. - $x)|fabs<1e-8;
   {id:"a",venue:"binance",symbol:"BTCUSDT",product:"spot",quote:"USDT",quotedAt:"2026-09-07T00:00:00Z",
    step:0,minQuantity:0,minValue:0,fee:0.01,extraFee:0,feeAsset:"base",feeSource:"fixture",

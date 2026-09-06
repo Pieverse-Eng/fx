@@ -42,7 +42,7 @@ fn validInput(value: std.json.Value) bool {
 pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.DispatchError!dispatch.ToolResult {
     const cmd = command(ctx.allocator, ctx.workspace_root, erased.as(Input)) catch return error.OutOfMemory;
     defer ctx.allocator.free(cmd);
-    return public_command.execute(ctx, cmd);
+    return public_command.execute(ctx, cmd, .markets);
 }
 
 fn command(alloc: std.mem.Allocator, workspace: []const u8, input: *Input) ![]u8 {

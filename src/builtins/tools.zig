@@ -888,7 +888,7 @@ pub const get_market_candles = ToolSpec{
 };
 
 const compare_trade_routes_description =
-    "This tool allows you to compare taker execution costs across eight venues for one asset and amount. Stock spot buys also check BNB, Solana and Robinhood Chain. Returns ranked indicative routes, fees and exclusions; does not place orders.";
+    "This tool allows you to find the lowest-cost available taker route for an asset and amount across eight venues, including BNB, Solana and Robinhood Chain for stock spot buys. Returns the selected route's identifiers and any comparison gaps. Does not place orders.";
 
 pub const compare_trade_routes = ToolSpec{
     .name = "compare_trade_routes",

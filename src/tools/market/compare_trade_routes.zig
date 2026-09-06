@@ -69,7 +69,7 @@ pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.
     public_command.prefix(ctx.allocator, &cmd.writer, ctx.workspace_root) catch return error.OutOfMemory;
     public_command.writeQuoted(&cmd.writer, program.written()) catch return error.OutOfMemory;
     cmd.writer.print(" compare-trade-routes {s} --quote ALL --product {s}", .{ a.get("ticker").?.string, if (std.mem.eql(u8, a.get("product").?.string, "perp")) "perpetual" else "spot" }) catch return error.OutOfMemory;
-    return public_command.execute(ctx, cmd.written());
+    return public_command.execute(ctx, cmd.written(), .comparison);
 }
 pub fn readsOnly(_: dispatch.ToolInput) bool {
     return true;

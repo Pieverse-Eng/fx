@@ -21,6 +21,15 @@ def walk_quantity($levels;$quantity):
       .remaining-=$q | .quantity+=$q | .value+=($q*$l.price) else . end);
 def round_down($x;$step): if $step>0 then (($x/$step)|floor)*$step else $x end;
 def route_identity: {id,venue,symbol,product,quote,quotedAt} + (.routing // {});
+def comparison_result($routes;$errors):
+  {bestRoute: (if ($routes|length)==0 then null else $routes[0] |
+    if .chain!=null then {issuer,chain,symbol,contract}
+    else {venue,symbol,product,category,assetId,pairId,dex,marketId,assetClass,settlementAsset}
+      | with_entries(select(.value!=null)) end end),
+   gaps: ([$errors[] | ([.venue,.chain,.issuer,.symbol,.query] | map(select(.!=null and .!="")) | join(" / ")) as $context |
+     (if $context=="" then .message else $context+": "+.message end)] +
+     (if ($routes|length)==0 then ["No eligible route with a valid quote"]
+      elif ($routes|length)==1 then ["Only one eligible route; comparative minimum not established"] else [] end) | unique)};
 def spot($c;$budget):
   # Quote fees reduce spendable funds; base fees reduce received quantity.
   (if $c.feeAsset=="base" then $budget else $budget/(1+$c.fee+$c.extraFee) end) as $bookBudget |

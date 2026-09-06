@@ -85,7 +85,7 @@ pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.
     public_command.prefix(ctx.allocator, &prefix.writer, ctx.workspace_root) catch return error.OutOfMemory;
     // command() already quotes the program; replace only the fixed executable prefix.
     prefix.writer.writeAll(args["exec bash --noprofile --norc -c ".len..]) catch return error.OutOfMemory;
-    return public_command.execute(ctx, prefix.written());
+    return public_command.execute(ctx, prefix.written(), .markets);
 }
 
 pub fn readsOnly(_: dispatch.ToolInput) bool {

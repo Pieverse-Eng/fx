@@ -190,13 +190,5 @@ run_routes() {
        catch {error:{venue:$candidate.venue,symbol:$candidate.symbol,message:.}}] as $computed |
     ([$computed[]|select(.error==null)] + $chains[0].routes | sort_by(.effectivePrice) |
       if $input.direction=="short" then reverse else . end) as $routes |
-    {results:[{ticker:($input.ticker|ascii_upcase),product:$input.product,direction:($input.direction//"buy"),amount:$input.amount,
-      currency:($input.currency//"USDT"),amountBasis:(if $input.product=="spot" then "total_budget" else "position_notional" end),
-      selected:($routes[0].id//null),routes:$routes,
-      comparisonQuantity:$quantity,
-      assumptions:(["Indicative public/default-tier taker quotes; excludes fee promotions and discounts; refresh before execution",
-       "Funds already at each route; excludes transfers, conversions into funding assets, and account-specific discounts",
-       "No account readiness check; Hyperliquid/Lighter include the Pieverse 0.05% execution fee"]+
-       (if $input.product=="perp" then ["Opening cost only; funding, margin and closing fees excluded; common quantity rounded to venue lot steps"] else [] end))}],
-     errors:($coverage[0]+$errors[0]+[$computed[]|select(.error!=null)|.error]+$chains[0].errors)}'
+    comparison_result($routes; $coverage[0]+$errors[0]+[$computed[]|select(.error!=null)|.error]+$chains[0].errors)'
 }

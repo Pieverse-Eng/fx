@@ -34,7 +34,7 @@ const Capture = struct {
     }
 };
 
-pub fn execute(ctx: dispatch.DispatchContext, cmd: []const u8) dispatch.DispatchError!dispatch.ToolResult {
+pub fn execute(ctx: dispatch.DispatchContext, cmd: []const u8, shape: enum { markets, comparison }) dispatch.DispatchError!dispatch.ToolResult {
     if (comptime !std.process.can_spawn or builtin.os.tag == .windows) {
         return .{ .failure = try ctx.allocator.dupe(u8, "Public market tools require a native host with Bash 4+, jq, GNU timeout, curl, and the venue CLIs.") };
     } else {
@@ -63,7 +63,19 @@ pub fn execute(ctx: dispatch.DispatchContext, cmd: []const u8) dispatch.Dispatch
         const parsed = std.json.parseFromSlice(std.json.Value, alloc, text, .{}) catch {
             return .{ .failure = try ctx.allocator.dupe(u8, "Public market query returned incomplete or invalid JSON; coverage is unresolved.") };
         };
-        if (parsed.value != .object or parsed.value.object.get("results") == null or parsed.value.object.get("errors") == null) return .{ .failure = try ctx.allocator.dupe(u8, "Public market query returned an invalid result shape.") };
+        const valid_shape = valid: {
+            if (parsed.value != .object) break :valid false;
+            const object = parsed.value.object;
+            switch (shape) {
+                .markets => break :valid object.get("results") != null and object.get("errors") != null,
+                .comparison => {
+                    const route = object.get("bestRoute") orelse break :valid false;
+                    const gaps = object.get("gaps") orelse break :valid false;
+                    break :valid object.count() == 2 and (route == .object or route == .null) and gaps == .array;
+                },
+            }
+        };
+        if (!valid_shape) return .{ .failure = try ctx.allocator.dupe(u8, "Public market query returned an invalid result shape.") };
         // Exit 1 preserves useful results alongside per-venue coverage errors.
         return .{ .success = try ctx.allocator.dupe(u8, text) };
     }
