@@ -101,7 +101,7 @@ Query only the data needed for the request. Retrieve candles when requested or n
 
 ## Kraken
 
-- Products: Spot, xStocks Spot, and Futures. Verify ordinary Spot with `kraken pairs --pair <BASE><QUOTE> -o json`; require exactly one online pair, use `altname` as symbol, and verify `wsname`. Kraken may map BTC to XBT.
+- Products: Spot, xStocks Spot, and Futures. Verify ordinary Spot with `kraken pairs --pair <BASE><QUOTE> -o json`; require exactly one matching pair, use `altname` as symbol, check `wsname`, and preserve its status. Kraken may map BTC to XBT.
 - xStocks: run `kraken assets --asset-class tokenized_asset -o json` with `terminal.output_filter` covering all requested tickers. Match the underlying ticker using the venue's lowercase `x` suffix and enabled `tokenized_asset` metadata. Then query `kraken pairs --pair <TICKER>x/USD --asset-class tokenized_asset -o json`, requiring one matching tokenized-asset pair. Return its `altname`, check `wsname`, and report its actual `status`, including post-only restrictions. Do not require separate issuer evidence.
 - Spot candles: run `date -u +%s` once, calculate literal since values by subtracting 19800, 79200, and 316800 seconds, then run `kraken ohlc <PAIR> --interval <15|60|240> --since <EPOCH> -o json`; add `--asset-class tokenized_asset` for xStocks.
 - Futures: use the URL-fetch tool, not terminal or curl, to discover official charts symbols from `https://futures.kraken.com/api/charts/v1/trade`. Prefer linear `PF_` to inverse `PI_`; verify with `kraken futures ticker <SYMBOL> -o json`. Fetch candles from `https://futures.kraken.com/api/charts/v1/trade/<SYMBOL>/<15m|1h|4h>?count=21`; return at most 20.
@@ -123,7 +123,7 @@ Query only the data needed for the request. Retrieve candles when requested or n
 # Venue discovery and selection
 
 - For a market-data inquiry, query the requested information from a suitable source. Respect any explicitly specified venue; do not expand the request into venue comparison.
-- For an availability inquiry, check supported venues that could offer the requested assets and products. Report matching markets for each asset without preparing a trade.
+- For an availability inquiry, report matching markets on supported venues. Include `post_only` as available with restrictions: resting limit orders only, no immediate execution. Do not mark it unresolved solely for this status.
 - For lowest-cost venue selection, discover comparable markets across the supported venues within the caller's constraints. Verify each candidate or record why it could not be included.
 - Verify the underlying asset, venue-specific symbol, product, and quote currency. Do not silently change the requested exposure or product.
 - Handle each asset or strategy leg separately while preserving the relationships and constraints of the complete request. Report unresolved assets explicitly.
@@ -132,6 +132,7 @@ Query only the data needed for the request. Retrieve candles when requested or n
 # Venue cost comparison
 
 - Compare execution costs when requested or needed for venue selection.
+- Exclude `post_only` markets from market/taker cost rankings; keep them in the availability results.
 - The current cost model supports market/taker orders and requires an execution side, positive notional, and reference currency. If required inputs are missing or the order type is unsupported, report that limitation and return any useful verified findings. Do not invent parameters or substitute candle research.
 - Compare each asset or strategy leg separately. Include only listings with equivalent underlying exposure and comparable products that satisfy the caller's constraints.
 - Obtain current order-book depth, applicable fees, verified size multipliers, and quote-currency conversion rates. Embedded default fees are references; confirm their applicability before using them in a ranking.
