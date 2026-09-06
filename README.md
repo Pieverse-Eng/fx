@@ -201,6 +201,8 @@ an explicit notice.
 
 Skills are advertised in a stable catalog sized to the selected model's context window. The default budget is approximately 2% of context, or 8,000 characters when the context size is unknown, with up to 1,024 characters per description. Explicit byte overrides take precedence. When space is limited, fx shortens descriptions before omitting skill identities; `capability_search` can find skills outside that catalog.
 
+This fork includes a [market-discovery skill](skills/market-discovery/SKILL.md) for Aster perpetual symbols. Its Python 3 helper fetches and filters the public contract catalog in one invocation, accepting multiple base tickers and an optional quote asset. fx discovers it when running in this checkout; for another workspace, copy the complete `skills/market-discovery` directory into that workspace's `skills/` directory. It is not embedded in the fx binary.
+
 Explicit `$skill-name` mentions load the selected instructions before the model starts work. The `skill` tool accepts an advertised `location` and an optional relative `resource`, returning the complete document or a visible failure. Omitting `resource` or passing an empty string reads `SKILL.md`. File and tool-result limits still apply, and an explicit `skill_chunk_bytes` limit blocks a complete read that would exceed it. Existing named, offset-based calls remain supported.
 
 In the interactive shell, explicitly requested skills show a named load summary before the assistant replies. Full failure details are available in Ctrl+O. These automatic loads are not counted as tool calls; a loaded status confirms prepared instructions, not that the model followed them.

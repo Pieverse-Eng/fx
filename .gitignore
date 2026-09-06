@@ -13,7 +13,10 @@ zig-pkg/
 sdk/dist/
 
 # Workspace-local runtime state
-/skills/
+/skills/*
+!/skills/market-discovery/
+__pycache__/
+*.pyc
 
 # Local environment files
 .env
