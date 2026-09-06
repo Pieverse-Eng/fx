@@ -2973,7 +2973,7 @@ fn expectDefaultPromptDoesNotContain(needle: []const u8) !void {
 
 test "gateway_system_prompt: compact ordered sections" {
     const sections = [_][]const u8{
-        "# Identity and context",
+        "# Identity",
         "# Workspace behavior",
         "# Source routing",
         "# Interaction",
@@ -2991,12 +2991,12 @@ test "gateway_system_prompt: compact ordered sections" {
     try std.testing.expect(gateway_system_prompt.len < 8 * 1024);
 }
 
-test "gateway_system_prompt: local workspace authority" {
-    try expectDefaultPromptContains("You are fx, a local coding CLI assistant with tool access.");
-    try expectDefaultPromptContains("real local workspace");
-    try expectDefaultPromptContains("source of truth for code, docs, commands, and verification");
-    try expectDefaultPromptContains("Treat it as current for the turn; inspect the workspace when it is missing or stale.");
-    try expectDefaultPromptContains("Never claim you cannot access local files or run commands when the relevant tools are available.");
+test "gateway_system_prompt: market research identity" {
+    try expectDefaultPromptContains("You are Pieverse's Market Research Agent.");
+    try expectDefaultPromptContains("News-derived requests:");
+    try expectDefaultPromptContains("Trading strategies:");
+    try expectDefaultPromptContains("Market inquiries:");
+    try expectDefaultPromptDoesNotContain("You are fx, a local coding CLI assistant");
 }
 
 test "gateway_system_prompt: evidence-led scoped execution" {
