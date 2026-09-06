@@ -294,7 +294,7 @@ describe("fx ask presentation", () => {
     };
     const terminalTool = firstRequest.tools.find(({ name }) => name === "terminal");
     expect(terminalTool?.description).toBe(
-      "This tool allows you to run one command with a finite timeout_ms and return its captured output. On timeout, it stops the process group and tracked descendants; cleanup of fully detached descendants is best effort on macOS.",
+      "This tool allows you to run one command with a finite timeout_ms and return its captured output. Use output_filter to return matching JSON records directly from full stdout. On timeout, it stops the process group and tracked descendants; cleanup of fully detached descendants is best effort on macOS.",
     );
     const terminalSchema = terminalTool?.inputSchema;
     expect(terminalSchema?.properties?.action?.enum).toEqual(["exec"]);
@@ -304,6 +304,7 @@ describe("fx ask presentation", () => {
       "cwd",
       "profile",
       "timeout_ms",
+      "output_filter",
     ]);
     expect(terminalSchema?.required).toEqual([
       "action",
@@ -311,6 +312,7 @@ describe("fx ask presentation", () => {
       "cwd",
       "profile",
       "timeout_ms",
+      "output_filter",
     ]);
     expect(terminalSchema?.additionalProperties).toBe(false);
     expect(terminalSchema?.properties?.command?.description).toBe(
