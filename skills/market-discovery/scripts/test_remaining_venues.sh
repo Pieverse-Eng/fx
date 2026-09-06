@@ -26,14 +26,14 @@ MOCK
 chmod +x "$fixture_dir/cli"
 for cli in bgc gate-cli kraken; do ln -s cli "$fixture_dir/$cli"; done
 export PATH="$fixture_dir:$PATH"
-jq -n '{data:(["BTC","PEPE","1INCH"]|map({symbol:(.+"USDT"),baseCoin:.,quoteCoin:"USDT",category:"SPOT",status:"online"}))+[
+jq -n '{data:((["BTC","PEPE","1INCH"]|map({symbol:(.+"USDT"),baseCoin:.,quoteCoin:"USDT",category:"SPOT",status:"online"}))+[
  {symbol:"BTCUSDC",baseCoin:"BTC",quoteCoin:"USDC",category:"SPOT",status:"online"},
  {symbol:"RCRCLUSDT",baseCoin:"rCRCL",quoteCoin:"USDT",category:"SPOT",status:"online",symbolType:"stock"},
  {symbol:"RPEPEUSDT",baseCoin:"rPEPE",quoteCoin:"USDT",category:"SPOT",status:"online",symbolType:"crypto"},
- {symbol:"OLDUSDT",baseCoin:"OLD",quoteCoin:"USDT",category:"SPOT",status:"offline"}]}' >"$fixture_dir/bitget-spot.json"
-jq -n '{data:(["BTC","CRCL","1000PEPE","1INCH"]|map({symbol:(.+"USDT"),baseCoin:.,quoteCoin:"USDT",category:"USDT-FUTURES",status:"online",type:"perpetual"}))+[
+ {symbol:"OLDUSDT",baseCoin:"OLD",quoteCoin:"USDT",category:"SPOT",status:"offline"}])}' >"$fixture_dir/bitget-spot.json"
+jq -n '{data:((["BTC","CRCL","1000PEPE","1INCH"]|map({symbol:(.+"USDT"),baseCoin:.,quoteCoin:"USDT",category:"USDT-FUTURES",status:"online",type:"perpetual"}))+[
  {symbol:"BTCUSDT_261225",baseCoin:"BTC",quoteCoin:"USDT",category:"USDT-FUTURES",status:"online",type:"delivery"},
- {symbol:"CLOSEUSDT",baseCoin:"CLOSE",quoteCoin:"USDT",category:"USDT-FUTURES",status:"limit_open",type:"perpetual"}]}' >"$fixture_dir/bitget-usdt.json"
+ {symbol:"CLOSEUSDT",baseCoin:"CLOSE",quoteCoin:"USDT",category:"USDT-FUTURES",status:"limit_open",type:"perpetual"}])}' >"$fixture_dir/bitget-usdt.json"
 echo '{"data":[{"symbol":"BTCPERP","baseCoin":"BTC","quoteCoin":"USDC","category":"USDC-FUTURES","status":"online","type":"perpetual"}]}' >"$fixture_dir/bitget-usdc.json"
 jq -n '[{id:"BTC_USDT",base:"BTC",quote:"USDT",trade_status:"tradable"},
  {id:"BTC_USDC",base:"BTC",quote:"USDC",trade_status:"tradable"},
