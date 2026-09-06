@@ -54,6 +54,10 @@ jobs:
         if: runner.os == 'Linux'
         run: bash skills/market-discovery/scripts/test_binance.sh
 
+      - name: Test OKX discovery skill (Linux runtime)
+        if: runner.os == 'Linux'
+        run: bash skills/market-discovery/scripts/test_okx.sh
+
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 
