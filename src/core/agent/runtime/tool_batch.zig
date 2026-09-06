@@ -46,13 +46,13 @@ pub fn appendAssistantToolCallStep(
     within_turn_suffix: *std.ArrayList(ChatMessage),
     content: ?[]const u8,
     tool_calls: []const ToolCall,
-    provider_state_json: ?[]const u8,
+    provider_replay: ?types.ProviderReplay,
 ) !void {
     try within_turn_suffix.append(arena, .{
         .role = .assistant,
         .content = content,
         .tool_calls = tool_calls,
-        .provider_state_json = provider_state_json,
+        .provider_replay = provider_replay,
     });
 }
 
@@ -164,11 +164,12 @@ pub fn assembleParallelToolResults(
                 },
             }
         };
-        var prepared = try runtime_execution_memory.prepareToolModelOutput(arena, config, original_call, execution.model_output);
+        var prepared = try runtime_execution_memory.prepareToolExecutionOutput(arena, config, original_call, execution, null);
         runtime_execution_memory.applyToolResultMemory(
             &prepared.memory,
             execution.tool_result_memory,
         );
+        try runtime_execution_memory.retainToolImages(arena, config, original_call, &prepared);
         const safe_tool_output = prepared.model_output;
         if (precomputed == null) {
             runtime_parallel_execution.reportInnerToolUsage(hooks, original_call.name, execution);
@@ -207,7 +208,7 @@ pub fn assembleParallelToolResults(
                     );
                 };
             }
-        } else if (original_call.argument_integrity == .malformed_json) {
+        } else if (original_call.argument_integrity != .valid) {
             try provisional_statuses.finishMalformedToolArguments(
                 hooks,
                 arena,
@@ -218,8 +219,8 @@ pub fn assembleParallelToolResults(
                 "tool",
                 "argument_integrity_rejected",
                 step_ctx,
-                "call_id={s} name={s} failure=malformed_json provenance=fx_local",
-                .{ original_call.id, original_call.name },
+                "call_id={s} name={s} failure={s} provenance=fx_local",
+                .{ original_call.id, original_call.name, @tagName(original_call.argument_integrity) },
             );
             try runtime_tool_admission.recordRejectedToolCall(
                 hooks,
@@ -279,6 +280,8 @@ pub fn processCommittedFileResult(
     tool_call: ToolCall,
     execution_call: ToolCall,
     execution: ToolExecutionResult,
+    model_output: []const u8,
+    result_memory: types.ToolResultMemory,
     committed_file_tool_name: []u8,
     status_started: bool,
     display_target: ?[]const u8,
@@ -311,23 +314,23 @@ pub fn processCommittedFileResult(
     }
     const committed_contract_degraded =
         execution.status != .success or
-        execution.prepared_result_memory == null or
+        !execution.tool_result_memory_prepared or
+        execution.tool_result_memory == null or
         execution.diff_entry != null or
-        execution.display_output != null or
         execution.finish_turn;
     if (committed_contract_degraded) {
         debug_trace.eventf(
             "tool",
             "committed_result_contract_degraded",
             step_ctx,
-            "call_id={s} name={s} status={s} memory={s} diff={s} display={s} finish_turn={s}",
+            "call_id={s} name={s} status={s} memory={s} diff={s} finish_turn={s}",
             .{
                 tool_call.id,
                 tool_call.name,
                 @tagName(execution.status),
-                if (execution.prepared_result_memory != null) "true" else "false",
+                if (execution.tool_result_memory_prepared and
+                    execution.tool_result_memory != null) "true" else "false",
                 if (execution.diff_entry != null) "true" else "false",
-                if (execution.display_output != null) "true" else "false",
                 if (execution.finish_turn) "true" else "false",
             },
         );
@@ -336,11 +339,7 @@ pub fn processCommittedFileResult(
         }
     }
 
-    var prepared_memory = execution.prepared_result_memory orelse
-        types.ToolResultMemory{
-            .output_bytes = execution.model_output.len,
-            .stored_output_bytes = execution.model_output.len,
-        };
+    var prepared_memory = result_memory;
     prepared_memory.committed_file_presentation = runtime_execution_memory.captureCommittedFilePresentation(
         history_allocator,
         handoff,
@@ -354,12 +353,12 @@ pub fn processCommittedFileResult(
     };
     within_turn_suffix.appendAssumeCapacity(.{
         .role = .tool,
-        .content = execution.model_output,
+        .content = model_output,
         .tool_call_id = tool_call.id,
         .tool_name = tool_call.name,
         .tool_result_status = runtime_execution_memory.persistedStatusForCurrentFxLocalResult(
             execution.status,
-            execution.model_output,
+            model_output,
         ),
         .tool_result_memory = prepared_memory,
     });
@@ -368,7 +367,7 @@ pub fn processCommittedFileResult(
         "committed_result_appended",
         step_ctx,
         "call_id={s} name={s} model_output_bytes={d}",
-        .{ tool_call.id, tool_call.name, execution.model_output.len },
+        .{ tool_call.id, tool_call.name, model_output.len },
     );
 
     const publication = hooks.publish_committed_file_handoff(
@@ -453,14 +452,14 @@ pub fn processCommittedFileResult(
         "after_tool_execution",
         step_ctx,
         "call_id={s} name={s} result_kind=committed_file model_output_bytes={d}",
-        .{ tool_call.id, tool_call.name, execution.model_output.len },
+        .{ tool_call.id, tool_call.name, model_output.len },
     );
     debug_trace.eventf(
         "tool",
         "execution_result",
         step_ctx,
         "call_id={s} name={s} result_kind=committed_file model_output_bytes={d}",
-        .{ tool_call.id, tool_call.name, execution.model_output.len },
+        .{ tool_call.id, tool_call.name, model_output.len },
     );
     batch.step_total_count += 1;
     batch.step_had_writes = true;

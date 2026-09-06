@@ -51,14 +51,12 @@ pub const Set = struct {
     gateway: Bundle,
     codex: Bundle,
     grok: Bundle,
-    pieverse: Bundle,
 
     pub fn select(self: Set, provider: model_provider.ProviderId) Bundle {
         return switch (provider) {
             .gateway => self.gateway,
             .codex => self.codex,
             .grok => self.grok,
-            .pieverse => self.pieverse,
         };
     }
 
@@ -67,7 +65,6 @@ pub const Set = struct {
             .gateway = self.gateway.deferred_usage,
             .codex = self.codex.deferred_usage,
             .grok = self.grok.deferred_usage,
-            .pieverse = self.pieverse.deferred_usage,
         };
     }
 };
@@ -77,7 +74,6 @@ pub fn gateway_only(gateway: Bundle) Set {
         .gateway = gateway,
         .codex = .{},
         .grok = .{},
-        .pieverse = .{},
     };
 }
 
@@ -113,7 +109,7 @@ test "provider set selects each provider's complete route" {
             _: auto_classifier.ProviderInput,
             _: auto_classifier.ReviewRequest,
         ) anyerror!auto_classifier.ParseOutcome {
-            return .invalid;
+            return .{ .invalid = .provider_failed };
         }
     };
 
@@ -148,7 +144,7 @@ test "provider set selects each provider's complete route" {
         .model_catalog = .{ .context = &grok_tag, .fetch_fn = Fake.model_catalog_fetch },
         .permission_reviewer = .{ .context = &grok_tag, .review_fn = Fake.review },
     };
-    var providers = Set{ .gateway = gateway, .codex = codex, .grok = grok, .pieverse = .{} };
+    var providers = Set{ .gateway = gateway, .codex = codex, .grok = grok };
 
     try std.testing.expect(providers.select(.gateway).agent_stream.?.context.? == @as(*anyopaque, @ptrCast(&gateway_tag)));
     try std.testing.expect(providers.select(.gateway).capabilities.fx_search);

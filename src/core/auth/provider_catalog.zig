@@ -1,5 +1,6 @@
 const std = @import("std");
 const model_provider = @import("../config/model_provider.zig");
+const types = @import("../shared/types.zig");
 
 pub const Entry = struct {
     id: model_provider.ProviderId,
@@ -9,6 +10,7 @@ pub const Entry = struct {
     route_name: []const u8,
     description: []const u8,
     subscription: bool,
+    login_source: types.CredentialSource,
 };
 
 pub const entries = [_]Entry{
@@ -20,6 +22,7 @@ pub const entries = [_]Entry{
         .route_name = "Vercel AI Gateway",
         .description = "Vercel account or AI Gateway billing",
         .subscription = false,
+        .login_source = .fx_login,
     },
     .{
         .id = .codex,
@@ -28,6 +31,7 @@ pub const entries = [_]Entry{
         .route_name = "Codex subscription",
         .description = "ChatGPT Plus, Pro, Business, Enterprise, or Edu subscription",
         .subscription = true,
+        .login_source = .chatgpt_subscription,
     },
     .{
         .id = .grok,
@@ -36,14 +40,7 @@ pub const entries = [_]Entry{
         .route_name = "Grok subscription",
         .description = "SuperGrok or X Premium subscription",
         .subscription = true,
-    },
-    .{
-        .id = .pieverse,
-        .slug = "pieverse",
-        .name = "Pieverse AI Gateway",
-        .route_name = "Pieverse AI Gateway",
-        .description = "Pieverse tenant model routing and billing",
-        .subscription = false,
+        .login_source = .grok_subscription,
     },
 };
 
@@ -69,7 +66,6 @@ test "auth provider catalog uses the model provider identity and explicit aliase
     try std.testing.expectEqual(model_provider.ProviderId.gateway, parse("gateway").?);
     try std.testing.expectEqual(model_provider.ProviderId.codex, parse("codex").?);
     try std.testing.expectEqual(model_provider.ProviderId.grok, parse("grok").?);
-    try std.testing.expectEqual(model_provider.ProviderId.pieverse, parse("pieverse").?);
     try std.testing.expect(parse("openai-codex") == null);
     try std.testing.expect(parse("chatgpt") == null);
     try std.testing.expect(parse("unknown") == null);
