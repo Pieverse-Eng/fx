@@ -11,15 +11,33 @@ def usd($rates;$ccy):
 def depth($levels;$size;$exposure;$rate;$descending):
   [$levels[] | {price:((.[0]|pos)*$rate/$exposure),quantity:((.[1]|pos)*$size*$exposure)}] |
   sort_by(.price) | if $descending then reverse else . end;
+# Compensated sums keep deep fills from accumulating enough error to lose a lot.
+def add_fill($quantity;$value):
+  ($quantity-.quantityCorrection) as $q | (.quantity+$q) as $qt |
+  .quantityCorrection=(($qt-.quantity)-$q) | .quantity=$qt |
+  ($value-.valueCorrection) as $v | (.value+$v) as $vt |
+  .valueCorrection=(($vt-.value)-$v) | .value=$vt;
 def walk_budget($levels;$budget):
-  reduce $levels[] as $l ({remaining:$budget,quantity:0,value:0};
+  reduce $levels[] as $l ({remaining:$budget,quantity:0,value:0,quantityCorrection:0,valueCorrection:0};
     if .remaining>0 then ([.remaining,($l.price*$l.quantity)]|min) as $spend |
-      .remaining-= $spend | .quantity+=($spend/$l.price) | .value+=$spend else . end);
+      add_fill($spend/$l.price;$spend) | .remaining=([$budget-.value,0]|max) else . end)
+  | del(.quantityCorrection,.valueCorrection);
 def walk_quantity($levels;$quantity):
-  reduce $levels[] as $l ({remaining:$quantity,quantity:0,value:0};
+  reduce $levels[] as $l ({remaining:$quantity,quantity:0,value:0,quantityCorrection:0,valueCorrection:0};
     if .remaining>0 then ([.remaining,$l.quantity]|min) as $q |
-      .remaining-=$q | .quantity+=$q | .value+=($q*$l.price) else . end);
-def round_down($x;$step): if $step>0 then (($x/$step)|floor)*$step else $x end;
+      add_fill($q;$q*$l.price) | .remaining=([$quantity-.quantity,0]|max) else . end)
+  | del(.quantityCorrection,.valueCorrection);
+def round_down($x;$step):
+  if $step>0 then
+    ($x/$step) as $lots |
+    # Division can put an exact lot count just below its integer (0.043/0.001).
+    # Snap only within binary64 rounding error, not a fixed quantity epsilon.
+    (4*2.220446049250313e-16*($lots|fabs)) as $tolerance |
+    if $tolerance>=0.5 then error("Lot count exceeds safe floating-point precision") else
+      ($lots|round) as $nearest |
+      (if (($lots-$nearest)|fabs)<=$tolerance then $nearest else ($lots|floor) end)*$step
+    end
+  else $x end;
 def route_identity: {id,venue,symbol,product,quote,quotedAt} + (.routing // {});
 def comparison_result($routes;$errors):
   {bestRoute: (if ($routes|length)==0 then null else $routes[0] |

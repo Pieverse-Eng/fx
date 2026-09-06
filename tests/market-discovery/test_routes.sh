@@ -14,6 +14,35 @@ jq -ne "$math"'
 ' >/dev/null
 echo 'Compact route selection, chain symbols, routing identifiers and comparison gaps passed.'
 jq -ne "$math"'
+  def close($expected): (. - $expected)|fabs <= 1e-12*($expected|fabs);
+  {id:"precise",venue:"binance",symbol:"BTCUSDT",product:"perp",quote:"USDT",quotedAt:"fixture",
+   step:0.001,minQuantity:0,minValue:0,fee:0,extraFee:0,feeAsset:"quote",feeSource:"fixture",
+   asks:[{price:100,quantity:10}],bids:[{price:99,quantity:10}]} as $c |
+  (round_down(0.3;0.1)|close(0.3)) and
+  (round_down(0.043;0.001)|close(0.043)) and
+  (round_down(0.29;0.01)|close(0.29)) and
+  (round_down(0.58;0.02)|close(0.58)) and
+  (round_down(0.0429;0.001)|close(0.042)) and
+  (round_down(0.042999999;0.001)|close(0.042)) and
+  (round_down(0.3;0)|close(0.3)) and
+  (all([0.00000001,0.000001,0.001,0.01,0.05,0.1,1,1000][];
+    . as $step | all(range(1;1000); . as $lots |
+      (round_down($lots*$step;$step)|close($lots*$step)) and
+      (round_down(($lots+0.25)*$step;$step)|close($lots*$step)) and
+      (round_down(round_down($lots*$step;$step);$step)|close($lots*$step))))) and
+  (perpetual($c;0.043;"long").expectedQuantity|close(0.043)) and
+  (perpetual($c;0.043;"short").expectedQuantity|close(0.043)) and
+  (spot($c;4.3).expectedQuantity|close(0.043)) and
+  (spot($c;4.2999999).expectedQuantity|close(0.042)) and
+  (all(range(1;200); . as $lot |
+    [range(100)|{price:1,quantity:($lot/1000)}] as $levels |
+    (spot($c+{asks:$levels};$lot/10).expectedQuantity|close($lot/10)) and
+    (walk_quantity($levels;$lot/10).quantity|close($lot/10)))) and
+  ((try perpetual($c;0.0435;"long") catch .)|startswith("Lot step")) and
+  ((try round_down(1e16;0.001) catch .)=="Lot count exceeds safe floating-point precision")
+' >/dev/null
+echo 'Lot rounding boundaries, scales, idempotence and spot/perp regressions passed.'
+jq -ne "$math"'
   def near($x): (. - $x)|fabs<1e-8;
   {id:"a",venue:"binance",symbol:"BTCUSDT",product:"spot",quote:"USDT",quotedAt:"2026-09-07T00:00:00Z",
    step:0,minQuantity:0,minValue:0,fee:0.01,extraFee:0,feeAsset:"base",feeSource:"fixture",
