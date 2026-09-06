@@ -22,27 +22,25 @@ pub fn parseRequest(alloc: t.Allocator, json: []const u8) !t.Request {
     const parsed = try std.json.parseFromSlice(t.Value, alloc, json, .{ .allocate = .alloc_always });
     const root = parsed.value;
     if (root != .object) return error.InvalidInput;
-    for (root.object.keys()) |key| if (!std.mem.eql(u8, key, "tickers") and !std.mem.eql(u8, key, "product") and !std.mem.eql(u8, key, "quote")) return error.UnknownArgument;
+    for (root.object.keys()) |key| if (!std.mem.eql(u8, key, "tickers") and !std.mem.eql(u8, key, "product")) return error.UnknownArgument;
     const values = try t.records(root, "tickers");
     if (values.len == 0 or values.len > 8) return error.InvalidTickerCount;
-    var tickers: std.ArrayList([]const u8) = .empty;
+    var pairs: std.ArrayList(t.Pair) = .empty;
     for (values) |v| {
         if (v != .string) return error.InvalidTicker;
-        const ticker = try canonical(alloc, v.string);
-        for (tickers.items) |old| {
-            if (t.eq(old, ticker)) break;
-        } else try tickers.append(alloc, ticker);
+        var parts = std.mem.splitScalar(u8, v.string, '/');
+        const ticker = try canonical(alloc, parts.first());
+        const quote = if (parts.next()) |part| try canonical(alloc, part) else "USDT";
+        if (parts.next() != null) return error.InvalidPair;
+        for (pairs.items) |old| {
+            if (t.eq(old.ticker, ticker) and t.eq(old.quote, quote)) break;
+        } else try pairs.append(alloc, .{ .ticker = ticker, .quote = quote });
     }
     const product = if (t.field(root, "product")) |v| blk: {
         if (v != .string) return error.InvalidProduct;
         break :blk std.meta.stringToEnum(t.Product, v.string) orelse return error.InvalidProduct;
     } else .all;
-    const quote = if (t.field(root, "quote")) |v| switch (v) {
-        .null => null,
-        .string => try canonical(alloc, v.string),
-        else => return error.InvalidQuote,
-    } else null;
-    return .{ .tickers = try tickers.toOwnedSlice(alloc), .product = product, .quote = quote };
+    return .{ .pairs = try pairs.toOwnedSlice(alloc), .product = product };
 }
 pub fn decode(ctx: dispatch.DispatchContext, json: []const u8) dispatch.DispatchError!dispatch.DecodeResult {
     const input = try ctx.allocator.create(Input);
@@ -50,7 +48,7 @@ pub fn decode(ctx: dispatch.DispatchContext, json: []const u8) dispatch.Dispatch
     input.request = parseRequest(input.arena.allocator(), json) catch |err| {
         input.arena.deinit();
         ctx.allocator.destroy(input);
-        return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "discover_markets: {s}. Supply 1-8 base tickers, product spot/future/all, and an optional quote currency.", .{@errorName(err)}) };
+        return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "discover_markets: {s}. Supply 1-8 base tickers or BASE/QUOTE pairs (a bare ticker means BASE/USDT), and product spot/future/all.", .{@errorName(err)}) };
     };
     return .{ .input = .{ .ptr = input, .deinit_fn = deinitInput } };
 }
@@ -71,7 +69,7 @@ pub fn isIrreversible(_: dispatch.ToolInput) bool {
 pub fn call(ctx: dispatch.DispatchContext, input: dispatch.ToolInput) dispatch.DispatchError!dispatch.ToolResult {
     const result = discover(ctx, input.as(Input).request) catch |err| {
         if (err == error.Cancelled or err == error.Canceled) return error.Cancelled;
-        return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "discover_markets failed: {s}. No absence conclusion can be drawn. For ResultTooLarge, narrow the tickers, product, or quote.", .{@errorName(err)}) };
+        return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "discover_markets failed: {s}. No absence conclusion can be drawn. For ResultTooLarge, request fewer pairs or narrow the product.", .{@errorName(err)}) };
     };
     return .{ .success = result };
 }
@@ -119,11 +117,11 @@ pub fn aggregate(alloc: t.Allocator, request: t.Request, catalogs: []const t.Cat
         try coverage.append(alloc, .{ .venue = t.venue(catalog.source), .source = catalog.source, .status = if (failure == null) .complete else .@"error", .detail = failure });
         if (failure) |reason| try ctx.gaps.append(alloc, .{ .venue = t.venue(catalog.source), .reason = try std.fmt.allocPrint(alloc, "{s}: {s}; this source was not fully checked.", .{ @tagName(catalog.source), reason }) });
     }
-    for (request.tickers) |ticker| {
+    for (request.pairs) |pair| {
         for (ctx.markets.items) |market| {
-            if (t.eq(market.ticker, ticker)) break;
+            if (t.eq(market.ticker, pair.ticker) and t.eq(market.quote orelse "", pair.quote)) break;
         } else {
-            try ctx.gaps.append(alloc, .{ .ticker = ticker, .reason = "No available matching listing in completed catalogs; consult coverage for incomplete sources and supported products." });
+            try ctx.gaps.append(alloc, .{ .ticker = pair.ticker, .quote = pair.quote, .reason = "No available matching pair in completed catalogs; consult coverage for incomplete sources and supported products." });
         }
     }
     std.mem.sort(t.Market, ctx.markets.items, {}, less);
@@ -140,14 +138,48 @@ test "discover_markets rejects executable input and normalizes a basket" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const req = try parseRequest(a, "{\"tickers\":[\" nvda \",\"NVDA\",\"BRK.B\"],\"product\":\"all\",\"quote\":\"usdt\"}");
-    try std.testing.expectEqual(@as(usize, 2), req.tickers.len);
-    try std.testing.expectEqualStrings("NVDA", req.tickers[0]);
-    try std.testing.expectEqualStrings("USDT", req.quote.?);
+    const req = try parseRequest(a, "{\"tickers\":[\" nvda \",\"NVDA/usdt\",\"NVDA / usdc\",\"BRK.B\"],\"product\":\"all\"}");
+    try std.testing.expectEqual(@as(usize, 3), req.pairs.len);
+    try std.testing.expectEqualStrings("NVDA", req.pairs[0].ticker);
+    try std.testing.expectEqualStrings("USDT", req.pairs[0].quote);
+    try std.testing.expectEqualStrings("NVDA", req.pairs[1].ticker);
+    try std.testing.expectEqualStrings("USDC", req.pairs[1].quote);
+    try std.testing.expectEqualStrings("BRK.B", req.pairs[2].ticker);
     try std.testing.expectError(error.InvalidTicker, parseRequest(a, "{\"tickers\":[\"BTC;env\"]}"));
     try std.testing.expectError(error.UnknownArgument, parseRequest(a, "{\"tickers\":[\"BTC\"],\"command\":\"env\"}"));
     try std.testing.expectError(error.InvalidTickerCount, parseRequest(a, "{\"tickers\":[]}"));
     try std.testing.expectError(error.InvalidProduct, parseRequest(a, "{\"tickers\":[\"BTC\"],\"product\":\"options\"}"));
+    for ([_][]const u8{ "BTC/", "/USDC", "BTC/USDC;env" }) |invalid| {
+        const json = try std.fmt.allocPrint(a, "{{\"tickers\":[\"{s}\"]}}", .{invalid});
+        try std.testing.expectError(error.InvalidTicker, parseRequest(a, json));
+    }
+    try std.testing.expectError(error.InvalidPair, parseRequest(a, "{\"tickers\":[\"BTC/USDC/USD\"]}"));
+    try std.testing.expectError(error.UnknownArgument, parseRequest(a, "{\"tickers\":[\"BTC\"],\"quote\":\"USDC\"}"));
+}
+
+test "discover_markets filters each requested pair without mixing quotes or hiding missing pairs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const catalog = try std.json.parseFromSlice(t.Value, a,
+        \\{"symbols":[
+        \\{"symbol":"BTCUSDT","baseAsset":"BTC","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":true},
+        \\{"symbol":"BTCUSDC","baseAsset":"BTC","quoteAsset":"USDC","status":"TRADING","isSpotTradingAllowed":true},
+        \\{"symbol":"ETHUSDT","baseAsset":"ETH","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":true},
+        \\{"symbol":"ETHUSDC","baseAsset":"ETH","quoteAsset":"USDC","status":"TRADING","isSpotTradingAllowed":true}]}
+    , .{});
+    const request = try parseRequest(a, "{\"tickers\":[\"btc\",\"eth/usdc\",\"btc/eur\"],\"product\":\"spot\"}");
+    const output = try aggregate(a, request, &.{.{ .source = .binance_spot, .data = catalog.value }}, 1);
+    try std.testing.expectEqual(@as(usize, 2), output.markets.len);
+    try std.testing.expectEqualStrings("BTCUSDT", output.markets[0].symbol);
+    try std.testing.expectEqualStrings("ETHUSDC", output.markets[1].symbol);
+    try std.testing.expectEqual(@as(usize, 1), output.unresolved.len);
+    try std.testing.expectEqualStrings("BTC", output.unresolved[0].ticker.?);
+    try std.testing.expectEqualStrings("EUR", output.unresolved[0].quote.?);
+    const both = try parseRequest(a, "{\"tickers\":[\"BTC\",\"BTC/USDC\"]}");
+    const both_output = try aggregate(a, both, &.{.{ .source = .binance_spot, .data = catalog.value }}, 1);
+    try std.testing.expectEqual(@as(usize, 2), both_output.markets.len);
+    try std.testing.expectEqual(@as(usize, 0), both_output.unresolved.len);
 }
 
 test "discover_markets real stock catalogs preserve exact symbols and all Gate variants" {
@@ -155,7 +187,8 @@ test "discover_markets real stock catalogs preserve exact symbols and all Gate v
     defer arena.deinit();
     const a = arena.allocator();
     const fixture = try std.json.parseFromSlice([]t.Catalog, a, @embedFile("discovery/fixtures/stocks.json"), .{});
-    const output = try aggregate(a, .{ .tickers = &.{ "NVDA", "TSLA", "AAPL" }, .product = .all }, fixture.value, 1);
+    const request = try parseRequest(a, "{\"tickers\":[\"NVDA\",\"NVDA/USD\",\"TSLA\",\"TSLA/USD\",\"AAPL\",\"AAPL/USD\"]}");
+    const output = try aggregate(a, request, fixture.value, 1);
     for (output.coverage) |c| try std.testing.expectEqual(.complete, c.status);
     for ([_][]const u8{ "NVDAxUSD", "RNVDAUSDT", "NVDABUSDT", "NVDAX_USDT", "NVDA_USDT", "NVDAG_USDT", "NVDAON_USDT", "XNVDA-USDT", "PF_NVDAXUSD" }) |symbol| {
         for (output.markets) |market| {
@@ -170,13 +203,10 @@ test "discover_markets real stock catalogs preserve exact symbols and all Gate v
         try std.testing.expect(std.mem.find(u8, market.symbol, "AINVDA") == null);
         if (market.venue == .kraken and market.product == .spot) kraken_spot += 1;
         if (std.mem.eql(u8, market.symbol, "NVDA3L_USDT")) try std.testing.expectEqualStrings("leveraged_token", market.exposure);
-        if (market.venue == .lighter) {
-            try std.testing.expect(market.marketId != null);
-            try std.testing.expectEqual(@as(?[]const u8, null), market.quote);
-        }
+        try std.testing.expect(market.quote != null);
     }
     try std.testing.expectEqual(@as(usize, 3), kraken_spot);
-    const spot = try aggregate(a, .{ .tickers = &.{"NVDA"}, .product = .spot, .quote = "usdt" }, fixture.value, 1);
+    const spot = try aggregate(a, .{ .pairs = &.{.{ .ticker = "NVDA" }}, .product = .spot }, fixture.value, 1);
     for (spot.markets) |market| {
         try std.testing.expectEqual(.spot, market.product);
         try std.testing.expect(t.eq("USDT", market.quote.?));
@@ -185,7 +215,7 @@ test "discover_markets real stock catalogs preserve exact symbols and all Gate v
     for (fixture.value) |catalog| if (catalog.source == .bitget_spot or catalog.source == .okx_spot) {
         try independent.append(a, catalog);
     };
-    const local_metadata = try aggregate(a, .{ .tickers = &.{"NVDA"}, .product = .spot }, independent.items, 1);
+    const local_metadata = try aggregate(a, .{ .pairs = &.{.{ .ticker = "NVDA" }}, .product = .spot }, independent.items, 1);
     // A venue's own stock classification works without another venue's issuer catalog.
     try std.testing.expectEqual(@as(usize, 2), local_metadata.markets.len);
 }
@@ -197,7 +227,7 @@ test "discover_markets partial coverage retains restricted pairs without false a
     const pairs = try std.json.parseFromSlice(t.Value, a,
         \\{"XETHZUSD":{"base":"XETH","quote":"ZUSD","altname":"ETHUSD","wsname":"ETH/USD","status":"post_only"}}
     , .{});
-    const output = try aggregate(a, .{ .tickers = &.{"ETH"}, .product = .all }, &.{
+    const output = try aggregate(a, .{ .pairs = &.{.{ .ticker = "ETH", .quote = "USD" }}, .product = .all }, &.{
         .{ .source = .kraken_spot, .data = pairs.value },
         .{ .source = .gate_spot, .failure = "Timeout" },
         .{ .source = .okx_spot, .data = .{ .null = {} } },
@@ -220,7 +250,7 @@ test "discover_markets Hyperliquid joins all DEXs and spot IDs without search tr
         \\{"source":"hyper_spot","data":{"tokens":[{"name":"USDC","index":0},{"name":"UBTC","index":9}],"universe":[
         \\{"name":"@142","index":142,"tokens":[9,0]},{"name":"@143","index":143,"tokens":[9,0]},{"name":"@144","index":144,"tokens":[9,0]},{"name":"@145","index":145,"tokens":[9,0]},{"name":"@146","index":146,"tokens":[9,0]},{"name":"@147","index":147,"tokens":[9,0]},{"name":"@148","index":148,"tokens":[9,0]},{"name":"@149","index":149,"tokens":[9,0]},{"name":"@150","index":150,"tokens":[9,0]},{"name":"@151","index":151,"tokens":[9,0]},{"name":"@152","index":152,"tokens":[9,0]},{"name":"@153","index":153,"tokens":[9,0]}]}}]
     , .{});
-    const output = try aggregate(a, .{ .tickers = &.{"BTC"}, .product = .all }, data.value, 1);
+    const output = try aggregate(a, .{ .pairs = &.{.{ .ticker = "BTC", .quote = "USDC" }}, .product = .all }, data.value, 1);
     for (output.coverage) |c| try std.testing.expectEqual(.complete, c.status);
     // Distinct spot market IDs must not be lost even when token display names coincide.
     try std.testing.expectEqual(@as(usize, 14), output.markets.len);

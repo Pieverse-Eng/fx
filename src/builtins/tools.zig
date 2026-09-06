@@ -1272,11 +1272,10 @@ pub const discover_markets = ToolSpec{
         .strict_arguments = true,
         .input_schema = .{
             .properties = &.{
-                .{ .name = "tickers", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 8 }, .shape = &.{ .array_values = .{ .json_type = .string } }, .description = "Base tickers, case-insensitive. Preserve baskets in one call; do not supply company names or guessed venue symbols." },
+                .{ .name = "tickers", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 8 }, .shape = &.{ .array_values = .{ .json_type = .string } }, .description = "Base tickers or BASE/QUOTE pairs, case-insensitive. BTC means BTC/USDT; BTC/USDC selects USDC. Different pairs can use different quote assets in one call. Do not supply company names or guessed venue symbols." },
                 .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "future", "all" } } },
-                .{ .name = "quote", .json_type = .string, .nullable = &.{ .description = "Optional quote-currency filter; null searches all supported quotes." }, .bounds = &.{ .min_length = 1, .max_length = 16 } },
             },
-            .required = &.{ "tickers", "product", "quote" },
+            .required = &.{ "tickers", "product" },
             .additional_properties = false,
         },
     },
@@ -1524,7 +1523,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "e6d59a50d19bf46e1f72824b465803f1ab286f1c41f3e006beeae18e60e5b9f4",
+        "4b2b97a05d6ea205ecb30988c7ca3edc905667ac453a542e0691341a047ce144",
         &actual_hex,
     );
 }

@@ -18,7 +18,7 @@ Your research scope is the supported venues and routes documented below. Do not 
 
 # Venue discovery
 
-- Resolve supplied asset names to base tickers, then call `discover_markets` once for the basket. Use the requested product, or `all` when unspecified; do not invent a quote-currency constraint.
+- Resolve supplied asset names to base tickers, then call `discover_markets` once for the basket. Use the requested product, or `all` when unspecified. Pass requested pairs as `BASE/QUOTE`; a bare ticker defaults to `BASE/USDT`. Preserve each pair's quote asset and state the searched quotes when reporting availability.
 - The tool queries Aster, Binance, Bitget, Gate, Hyperliquid, Kraken, Lighter, and OKX concurrently within its reported scope. Reuse its exact symbols, products, market IDs, specifications, and trading restrictions. Keep the underlying ticker distinct from each venue's trading symbol.
 - Use returned markets directly for availability. Do not repeat completed catalog searches or add a separate issuer or backing check. Include restricted markets such as `post_only` with their restrictions.
 - Inspect `coverage` and `unresolved`; failed sources do not prove absence. Follow up only on material gaps using public venue information, and disclose gaps that remain.

@@ -62,21 +62,20 @@ pub const Context = struct {
     }
     fn add(self: *Context, base: []const u8, market: t.Market) !void {
         if (self.request.product != .all and self.request.product != market.product) return;
-        for (self.request.tickers) |ticker| {
+        for (self.request.pairs) |pair| {
+            const ticker = pair.ticker;
             const exposure = self.match(market, base, ticker) orelse continue;
-            if (self.request.quote) |quote| {
-                if (market.quote) |actual| {
-                    if (!t.eq(actual, quote)) continue;
-                } else {
-                    try self.gaps.append(self.alloc, .{ .ticker = ticker, .venue = market.venue, .symbol = market.symbol, .reason = "Listing quote currency unavailable; cannot apply quote filter." });
-                    continue;
-                }
+            if (market.quote) |actual| {
+                if (!t.eq(actual, pair.quote)) continue;
+            } else {
+                try self.gaps.append(self.alloc, .{ .ticker = ticker, .quote = pair.quote, .venue = market.venue, .symbol = market.symbol, .reason = "Listing quote currency unavailable; cannot match the requested pair." });
+                continue;
             }
             const available = for ([_][]const u8{ "TRADING", "online", "tradable", "active", "live", "post_only", "limit_only", "buyable", "sellable" }) |status| {
                 if (t.eq(market.status, status)) break true;
             } else false;
             if (!available) {
-                if (market.status.len == 0 or t.eq(market.status, "unknown")) try self.gaps.append(self.alloc, .{ .ticker = ticker, .venue = market.venue, .symbol = market.symbol, .reason = "Listing trading status is unavailable." });
+                if (market.status.len == 0 or t.eq(market.status, "unknown")) try self.gaps.append(self.alloc, .{ .ticker = ticker, .quote = pair.quote, .venue = market.venue, .symbol = market.symbol, .reason = "Listing trading status is unavailable." });
                 continue;
             }
             var value = market;

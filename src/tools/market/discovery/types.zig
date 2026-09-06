@@ -24,7 +24,8 @@ pub const Source = enum {
     hyper_perps,
     hyper_spot,
 };
-pub const Request = struct { tickers: []const []const u8, product: Product, quote: ?[]const u8 = null };
+pub const Pair = struct { ticker: []const u8, quote: []const u8 = "USDT" };
+pub const Request = struct { pairs: []const Pair, product: Product };
 pub const Market = struct {
     ticker: []const u8,
     venue: Venue,
@@ -41,7 +42,7 @@ pub const Market = struct {
     specifications: ?Value = null,
 };
 pub const Coverage = struct { venue: Venue, source: Source, status: enum { complete, @"error" }, detail: ?[]const u8 = null };
-pub const Gap = struct { ticker: ?[]const u8 = null, venue: ?Venue = null, symbol: ?[]const u8 = null, reason: []const u8 };
+pub const Gap = struct { ticker: ?[]const u8 = null, quote: ?[]const u8 = null, venue: ?Venue = null, symbol: ?[]const u8 = null, reason: []const u8 };
 pub const Catalog = struct { source: Source, data: ?Value = null, failure: ?[]const u8 = null };
 pub const Output = struct {
     markets: []const Market,

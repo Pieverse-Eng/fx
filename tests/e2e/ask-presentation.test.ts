@@ -186,7 +186,6 @@ describe("fx ask presentation", () => {
       fakeGatewayToolCall("discovery-invalid", "discover_markets", {
         tickers: ["BTC;touch discovery-injected"],
         product: "all",
-        quote: null,
       }),
       fakeGatewayFinalText("Invalid ticker rejected.\n"),
     ]);
@@ -269,7 +268,7 @@ describe("fx ask presentation", () => {
     const proxyUrl = `http://127.0.0.1:${address.port}`;
     const gateway = startFakeGateway([
       fakeGatewayToolCall("discovery-stocks", "discover_markets", {
-        tickers: ["nvda", "tsla", "aapl"], product: "all", quote: null,
+        tickers: ["nvda", "nvda/usd", "tsla/usdc", "aapl"], product: "all",
       }),
       fakeGatewayFinalText("Discovery returned exact markets with partial HTTP coverage.\n"),
     ]);
@@ -295,6 +294,8 @@ describe("fx ask presentation", () => {
       }
       expect(body).toContain("hyperliquid");
       expect(body).toContain("this source was not fully checked");
+      expect(body).not.toContain("RTSLAUSDT");
+      expect(body).not.toContain("TSLAxUSD");
       const active = new Set<string>();
       let peak = 0;
       for (const line of readFileSync(events, "utf8").trim().split("\n")) {
