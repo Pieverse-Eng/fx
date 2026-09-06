@@ -47,11 +47,22 @@ jobs:
       - name: Check formatting
         run: zig fmt --check src/
 
+      - name: Test unified market discovery (Linux runtime)
+        if: runner.os == 'Linux'
+        run: |
+          bash tests/market-discovery/test_discover_markets.sh
+          bash tests/market-discovery/test_candles.sh
+          bash tests/market-discovery/test_routes.sh
+
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 
       - name: Build
         run: zig build -Doptimize=${{ matrix.optimize }}
+
+      - name: Test registered market discovery (Linux runtime)
+        if: runner.os == 'Linux'
+        run: bash tests/market-discovery/test_discover_markets.sh ./zig-out/bin/fx
 
       - name: Run unit tests
         run: zig build test -Doptimize=${{ matrix.optimize }}

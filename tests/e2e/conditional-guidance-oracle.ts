@@ -1,4 +1,7 @@
 export const CANONICAL_BUILTIN_NAMES = [
+  "discover_markets",
+  "get_market_candles",
+  "compare_trade_routes",
   "read_file",
   "glob_files",
   "grep_files",
@@ -19,6 +22,9 @@ export const CANONICAL_BUILTIN_NAMES = [
 ] as const;
 
 export const READ_ONLY_SERIALIZED_TOOL_NAMES = [
+  "discover_markets",
+  "get_market_candles",
+  "compare_trade_routes",
   "read_file",
   "glob_files",
   "grep_files",

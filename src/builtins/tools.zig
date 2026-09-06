@@ -24,6 +24,9 @@ const grep_files_impl = @import("../tools/filesystem/grep_files.zig");
 const read_file_impl = @import("../tools/filesystem/read_file.zig");
 const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
+const compare_trade_routes_impl = @import("../tools/market/compare_trade_routes.zig");
+const get_market_candles_impl = @import("../tools/market/get_market_candles.zig");
+const discover_markets_impl = @import("../tools/market/discover_markets.zig");
 const shell_impl = @import("../tools/shell/shell.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -830,6 +833,92 @@ pub const read_tool_result = ToolSpec{
     .irreversible_fn = read_tool_result_impl.isIrreversible,
 };
 
+const discover_markets_description =
+    "This tool allows you to find available spot and perpetual markets for multiple base tickers across all eight supported venues in parallel. Returns exact trading symbols, product types, routing identifiers, restrictions, and query errors.";
+
+pub const discover_markets = ToolSpec{
+    .name = "discover_markets",
+    .description = discover_markets_description,
+    .model_schema = .{
+        .name = "discover_markets",
+        .description = discover_markets_description,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 64 }, .description = "Base tickers, case-insensitive, e.g. [IREN, APLD, HUT]. Not company names or trading pairs. Aster requires its exact base ticker (e.g. 1000PEPE)." },
+                .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp", "all" } }, .description = "Optional product filter; defaults to all. Includes stock tokens and stock-linked perpetuals. Excludes dated futures. Aster supports perpetuals only." },
+                .{ .name = "quote", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Use only for a requested currency, or ALL for all quotes. Omit for defaults: USDT at Binance/Bitget/Gate/OKX, USDC at Hyperliquid/Lighter, USD at Kraken, all at Aster. For perps: Hyperliquid filters collateral, Lighter settlement, Kraken price denomination." },
+            },
+            .required = &.{"tickers"},
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .discover_markets,
+    .activity_kind = .read,
+    .action_label = "Finding markets",
+    .completed_action_label = "Found markets",
+    .decode = discover_markets_impl.decode,
+    .call = discover_markets_impl.call,
+    .reads_only_fn = discover_markets_impl.readsOnly,
+    .irreversible_fn = discover_markets_impl.isIrreversible,
+};
+
+const get_market_candles_description =
+    "This tool allows you to retrieve 15m, 1h, and 4h OHLCV candles and the latest trade for multiple base tickers. Automatically selects a reference market by comparable 24h trading volume across the eight supported venues. Returns quote currency, timestamps, up to 50 closed candles and the current candle per timeframe, and query errors. Rows follow columns; timestamps are ISO 8601 UTC strings, prices are per underlying unit, and volume is underlying quantity or null. Current candles are unconfirmed. Does not generate trade recommendations.";
+
+pub const get_market_candles = ToolSpec{
+    .name = "get_market_candles",
+    .description = get_market_candles_description,
+    .model_schema = .{
+        .name = "get_market_candles",
+        .description = get_market_candles_description,
+        .input_schema = .{
+            .properties = &.{.{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 16 }, .description = "Case-insensitive base tickers, e.g. [IREN, APLD]. Resolve names first; pass related assets together." }},
+            .required = &.{"tickers"},
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .get_market_candles,
+    .activity_kind = .read,
+    .action_label = "Reading market candles",
+    .completed_action_label = "Read market candles",
+    .decode = get_market_candles_impl.decode,
+    .call = get_market_candles_impl.call,
+    .reads_only_fn = get_market_candles_impl.readsOnly,
+    .irreversible_fn = get_market_candles_impl.isIrreversible,
+};
+
+const compare_trade_routes_description =
+    "This tool allows you to find the lowest-cost available taker route across eight venues, including supported onchain routes for stock spot buys. Returns route identifiers and comparison gaps. Market discovery is included. Use the selected route directly; do not call discover_markets solely to supplement or recheck this comparison. Excludes funding conversions and transfers; does not place orders.";
+
+pub const compare_trade_routes = ToolSpec{
+    .name = "compare_trade_routes",
+    .description = compare_trade_routes_description,
+    .model_schema = .{
+        .name = "compare_trade_routes",
+        .description = compare_trade_routes_description,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "ticker", .json_type = .string, .description = "One base ticker; resolve names first." },
+                .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp" } }, .description = "Spot buys or perpetual opening positions." },
+                .{ .name = "amount", .json_type = .string, .description = "Positive decimal: total budget including fees/gas for spot, position notional (not margin) for perps." },
+                .{ .name = "currency", .json_type = .string, .shape = &.{ .enum_values = &.{ "USDT", "USDC", "USD" } }, .description = "Budget and comparison currency; defaults to USDT. Does not filter markets." },
+                .{ .name = "quote", .json_type = .string, .description = "Optional venue quote filter. Defaults to USDT, USDC on Hyperliquid/Lighter, USD on Kraken. Override only when requested; ALL searches all quotes. Onchain routes use their supported payment assets." },
+                .{ .name = "direction", .json_type = .string, .shape = &.{ .enum_values = &.{ "long", "short" } }, .description = "Required for perps; omit for spot buys." },
+            },
+            .required = &.{ "ticker", "product", "amount" },
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .compare_trade_routes,
+    .activity_kind = .read,
+    .action_label = "Comparing trade routes",
+    .completed_action_label = "Compared trade routes",
+    .decode = compare_trade_routes_impl.decode,
+    .call = compare_trade_routes_impl.call,
+    .reads_only_fn = compare_trade_routes_impl.readsOnly,
+    .irreversible_fn = compare_trade_routes_impl.isIrreversible,
+};
+
 pub const all = [_]tool_dispatch.Tool{
     glob_files,
     grep_files,
@@ -848,11 +937,17 @@ pub const all = [_]tool_dispatch.Tool{
     ask_user_question,
     vision,
     read_tool_result,
+    discover_markets,
+    get_market_candles,
+    compare_trade_routes,
 };
 
 pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
 
 pub const advertisement_order = [_][]const u8{
+    "discover_markets",
+    "get_market_candles",
+    "compare_trade_routes",
     "read_file",
     "glob_files",
     "grep_files",
@@ -871,6 +966,9 @@ pub const advertisement_order = [_][]const u8{
 };
 
 pub const read_only_tool_names = [_][]const u8{
+    "discover_markets",
+    "get_market_candles",
+    "compare_trade_routes",
     "read_file",
     "glob_files",
     "grep_files",
@@ -1010,6 +1108,9 @@ test "built-in tools register exact active local order" {
         "ask_user_question",
         "vision",
         "read_tool_result",
+        "discover_markets",
+        "get_market_candles",
+        "compare_trade_routes",
     };
 
     try std.testing.expectEqual(expected_names.len, all.len);
@@ -1777,6 +1878,9 @@ fn expectRegisteredNames(names: []const []const u8) !void {
 
 test "built-in read-only tool set matches plan inspection tools" {
     const expected_names = [_][]const u8{
+        "discover_markets",
+        "get_market_candles",
+        "compare_trade_routes",
         "read_file",
         "glob_files",
         "grep_files",

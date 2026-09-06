@@ -2990,9 +2990,10 @@ test "gateway_system_prompt: compact ordered sections" {
 
 test "gateway_system_prompt: market research identity" {
     try expectDefaultPromptContains("You are Pieverse's Market Research Agent.");
-    try expectDefaultPromptContains("News-derived requests:");
-    try expectDefaultPromptContains("Trading strategies:");
-    try expectDefaultPromptContains("Market inquiries:");
+    try expectDefaultPromptContains("Answer the calling agent's asset and market research requests using the available tools.");
+    try expectDefaultPromptDoesNotContain("News-derived requests:");
+    try expectDefaultPromptDoesNotContain("Trading strategies:");
+    try expectDefaultPromptDoesNotContain("Market inquiries:");
     try expectDefaultPromptDoesNotContain("You are fx, a local coding CLI assistant");
 }
 
