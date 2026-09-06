@@ -888,7 +888,7 @@ pub const get_market_candles = ToolSpec{
 };
 
 const compare_trade_routes_description =
-    "This tool allows you to find the lowest-cost available taker route across eight venues, including supported onchain routes for stock spot buys. Returns route identifiers and comparison gaps. Excludes funding conversions and transfers; does not place orders.";
+    "This tool allows you to find the lowest-cost available taker route across eight venues, including supported onchain routes for stock spot buys. Returns route identifiers and comparison gaps. Market discovery is included. Use the selected route directly; do not call discover_markets solely to supplement or recheck this comparison. Excludes funding conversions and transfers; does not place orders.";
 
 pub const compare_trade_routes = ToolSpec{
     .name = "compare_trade_routes",
