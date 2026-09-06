@@ -27,6 +27,9 @@ fi
 for dependency in jq timeout; do
   command -v "$dependency" >/dev/null || { echo "Missing dependency: $dependency" >&2; exit 2; }
 done
+umask 077
+cache_dir=${FX_MARKET_CACHE_DIR:-}
+[[ -z $cache_dir ]] || mkdir -p -- "$cache_dir"
 scratch_root=$(mktemp -d)
 workers=()
 trap 'rm -rf -- "$scratch_root"' EXIT
@@ -37,6 +40,17 @@ seed() { printf '%s\n' "$2" >"$scratch/$1.json"; }
 fetch() (
   name=$1; validation=$2; source=$3; shift 3
   printf '%s\n' "$source" >"$scratch/$name.source"
+  cache_file=''
+  if [[ -n $cache_dir ]]; then
+    cache_key=$(printf '%s\0' "$@" | sha256sum | cut -d' ' -f1)
+    cache_file="$cache_dir/$cache_key.json"
+    if [[ -f $cache_file ]] && jq -e --argjson now "$(date +%s)" '.storedAt <= $now and ($now-.storedAt)<60' "$cache_file" >/dev/null 2>&1; then
+      if jq '.data' "$cache_file" >"$scratch/$name.raw" && jq -e "$validation" "$scratch/$name.raw" >/dev/null 2>&1; then
+        mv "$scratch/$name.raw" "$scratch/$name.json"
+        return
+      fi
+    fi
+  fi
   timeout --kill-after=2s 25s "$@" >"$scratch/$name.raw" 2>"$scratch/$name.stderr" &
   child=$!
   trap 'kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; exit 130' INT TERM
@@ -46,6 +60,10 @@ fetch() (
     echo 'API error or malformed catalog; coverage unresolved' >"$scratch/$name.error"
   else
     mv "$scratch/$name.raw" "$scratch/$name.json"
+    if [[ -n $cache_file ]]; then
+      cache_tmp=$(mktemp "$cache_dir/.pending.XXXXXX")
+      if jq --argjson now "$(date +%s)" '{storedAt:$now,data:.}' "$scratch/$name.json" >"$cache_tmp"; then mv "$cache_tmp" "$cache_file"; else rm -f "$cache_tmp"; fi
+    fi
   fi
 )
 launch() { fetch "$@" & pids+=("$!"); }
@@ -203,6 +221,7 @@ if [[ $product != spot ]]; then
   launch tickers '.result=="success" and (.tickers|type=="array") and all(.tickers[];(.symbol|type=="string") and (.suspended|type=="boolean"))' 'https://futures.kraken.com/derivatives/api/v3/tickers' kraken futures tickers -o json
 fi
 wait_queries
+jq -s '.[0]+.[1]' "$scratch/spot.json" "$scratch/stocks.json" >"$scratch/pairs-original.json"
 for name in spot stocks; do jq '[.[]]' "$scratch/$name.json" >"$scratch/$name.tmp"; mv "$scratch/$name.tmp" "$scratch/$name.json"; done
 for name in perpetual tickers; do
   field=instruments; [[ $name != tickers ]] || field=tickers
@@ -443,6 +462,10 @@ for index in "${!workers[@]}"; do
   files+=("$scratch_root/$venue.json")
 done
 workers=()
+if [[ ${FX_MARKET_MODE:-discover} == candles ]]; then
+  run_candles "${files[@]}"
+  exit $?
+fi
 tickers_json=$(printf '%s\n' "${tickers[@]}" | jq -Rsc 'split("\n")[:-1]')
 jq -s --argjson tickers "$tickers_json" '
   # Discovery hands off exact order selectors, not a snapshot of order sizing rules.

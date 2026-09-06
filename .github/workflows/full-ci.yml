@@ -49,7 +49,9 @@ jobs:
 
       - name: Test unified market discovery (Linux runtime)
         if: runner.os == 'Linux'
-        run: bash tests/market-discovery/test_discover_markets.sh
+        run: |
+          bash tests/market-discovery/test_discover_markets.sh
+          bash tests/market-discovery/test_candles.sh
 
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh

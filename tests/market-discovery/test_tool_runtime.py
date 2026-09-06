@@ -12,13 +12,13 @@ binary = str(Path(sys.argv[1]).resolve())
 fixtures = Path(sys.argv[2]).resolve()
 
 
-def exercise(kind):
+def exercise(kind, tool_name="discover_markets"):
     with tempfile.TemporaryDirectory(prefix="fx-discovery-runtime-") as directory:
         home = Path(directory)
         (home / ".fx").mkdir()
         (home / ".fx.json").write_text(json.dumps({"context": True, "max_tool_result_bytes": 32768}))
         if kind == "denied":
-            (home / ".fx/settings.json").write_text(json.dumps({"permission": {"discover_markets": "deny"}}))
+            (home / ".fx/settings.json").write_text(json.dumps({"permission": {tool_name: "deny"}}))
         requests = []
         failures = []
         args = {"tickers": ["BTC", "CRCL"]}
@@ -40,10 +40,10 @@ def exercise(kind):
                     if len(requests) == 1:
                         tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
                         if kind != "denied":
-                            schema = tools["discover_markets"]["parameters"]
-                            assert set(schema["properties"]) == {"tickers", "product", "quote"}, schema
+                            schema = tools[tool_name]["parameters"]
+                            assert set(schema["properties"]) == ({"tickers", "product", "quote"} if tool_name == "discover_markets" else {"tickers"}), schema
                             assert schema["required"] == ["tickers"]
-                        delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "discovery-1", "type": "function", "function": {"name": "discover_markets", "arguments": json.dumps(args)}}]}
+                        delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "discovery-1", "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
                         reason = "tool_calls"
                     else:
                         delta = {"role": "assistant", "content": "DISCOVERY_TEST_OK"}
@@ -72,12 +72,13 @@ def exercise(kind):
             assert len(requests) == 2, requests
             output = json.loads(result.stdout)
             assert output["output"].strip() == "DISCOVERY_TEST_OK", output
-            assert [call["name"] for call in output["tool_calls"]] == ["discover_markets"], output
+            assert [call["name"] for call in output["tool_calls"]] == [tool_name], output
             calls = (fixtures / "calls").read_text().splitlines()
             if kind in ("invalid", "denied"):
                 assert not calls, calls
             else:
-                assert len(calls) == 19 and len(set(calls)) == 19, calls
+                if tool_name == "discover_markets":
+                    assert len(calls) == 19 and len(set(calls)) == 19, calls
                 messages = [message for message in requests[1]["messages"] if message.get("role") == "tool"]
                 # Tool result presentation may add an envelope; locate the JSON payload.
                 content = messages[-1]["content"]
@@ -88,17 +89,30 @@ def exercise(kind):
                         continue
                     try:
                         candidate, _ = decoder.raw_decode(content[offset:])
-                        if isinstance(candidate, dict) and set(candidate) == {"results", "errors"}:
+                        if isinstance(candidate, dict) and set(candidate) == ({"results", "errors"} if tool_name == "discover_markets" else {"columns", "results", "errors"}):
                             payload = candidate
                             break
                     except ValueError:
                         pass
                 assert payload is not None, content
                 assert [entry["ticker"] for entry in payload["results"]] == ["BTC", "CRCL"]
-                assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
-                assert "lighter" in calls  # Queried successfully; these fixture assets have no match.
-                assert bool(payload["errors"]) == (kind == "partial"), payload
-            print(f"Registered discover_markets: {kind} passed")
+                if tool_name == "discover_markets":
+                    assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
+                    assert "lighter" in calls
+                    assert bool(payload["errors"]) == (kind == "partial"), payload
+                else:
+                    for entry in payload["results"]:
+                        assert "source" not in entry and "markets" not in entry
+                        assert entry["quote"] == "USDT" and entry["lastTrade"]["price"] == 102, entry
+                        assert set(entry["timeframes"]) == {"15m", "1h", "4h"}
+                        for frame in entry["timeframes"].values():
+                            assert len(frame["closed"]) == 50 and len(frame["current"]) == 6, frame
+                    assert calls.count("binance-futures") == 1, calls
+                    assert calls.count("candles-15m") == 2, calls
+                    for ticker in ("BTC", "CRCL"):
+                        source = json.loads((home / f".fx/market-cache/v1/candle-source-{ticker}.jsonl").read_text().splitlines()[-1])
+                        assert source["venue"] == "binance" and source["volumeUSD"] == 990000, source
+            print(f"Registered {tool_name}: {kind} passed")
         finally:
             server.shutdown()
             server.server_close()
@@ -108,3 +122,6 @@ def exercise(kind):
 
 for case in ("success", "partial", "invalid", "denied"):
     exercise(case)
+
+for case in ("success", "partial", "invalid", "denied"):
+    exercise(case, "get_market_candles")

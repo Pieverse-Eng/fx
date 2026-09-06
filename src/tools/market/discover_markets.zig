@@ -1,12 +1,9 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const dispatch = @import("../../core/tooling/tool_dispatch.zig");
-const runner = @import("../../core/execution/command_runner.zig");
-const output_content = @import("../../core/tooling/command_output_content.zig");
-const types = @import("../../core/shared/types.zig");
+
+const public_command = @import("public_market_command.zig");
 
 const script = @embedFile("discover-markets.sh");
-const max_output_bytes = 1024 * 1024;
 
 const Input = struct {
     parsed: std.json.Parsed(std.json.Value),
@@ -80,51 +77,15 @@ fn command(alloc: std.mem.Allocator, input: *Input) ![]u8 {
     return out.toOwnedSlice();
 }
 
-const Capture = struct {
-    stdout: std.Io.Writer.Allocating,
-
-    fn append(ptr: *anyopaque, _: ?types.ToolLifecycleId, stream: output_content.Stream, chunk: []const u8) !void {
-        const self: *Capture = @ptrCast(@alignCast(ptr));
-        if (stream != .stdout) return;
-        if (self.stdout.written().len + chunk.len > max_output_bytes) return error.OutputTooLarge;
-        try self.stdout.writer.writeAll(chunk);
-    }
-};
-
 pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.DispatchError!dispatch.ToolResult {
-    if (comptime !std.process.can_spawn or builtin.os.tag == .windows) {
-        return .{ .failure = try ctx.allocator.dupe(u8, "discover_markets requires a native host with Bash 4+, jq, GNU timeout, curl, and the venue CLIs.") };
-    } else {
-        if (ctx.captured_command_host != .native) return .{ .failure = try ctx.allocator.dupe(u8, "discover_markets requires native venue CLI execution.") };
-        var arena = std.heap.ArenaAllocator.init(ctx.allocator);
-        defer arena.deinit();
-        const alloc = arena.allocator();
-        const cmd = command(alloc, erased.as(Input)) catch return error.OutOfMemory;
-        var capture = Capture{ .stdout = .init(alloc) };
-        // Reuse FX's finite timeout, cancellation and process-group cleanup.
-        const result = runner.executeCommandInEnvironment(.{
-            .max_command_output_bytes = 4096,
-            .timeout_ms = 90_000,
-            .cancel_flag = ctx.cancel_flag,
-            .callback_projection = .raw,
-            .output_chunk_ctx = &capture,
-            .on_output_chunk = Capture.append,
-        }, alloc, cmd, ctx.workspace_root, .{ .clean = "/bin/bash" }) catch |err| {
-            return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "Market discovery failed: {s}. Coverage is unresolved.", .{@errorName(err)}) };
-        };
-        if (result.cancelled) return error.Cancelled;
-        const status = result.command_result orelse return .{ .failure = try ctx.allocator.dupe(u8, "Market discovery returned no execution status.") };
-        if (status.timed_out or status.output_incomplete or status.termination_indeterminate or status.signal != null or status.exit_code == null or status.exit_code.? > 1) {
-            return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "Market discovery did not finish successfully; coverage is unresolved. {s}", .{result.output}) };
-        }
-        const text = std.mem.trim(u8, capture.stdout.written(), " \r\n\t");
-        const parsed = std.json.parseFromSlice(std.json.Value, alloc, text, .{}) catch {
-            return .{ .failure = try ctx.allocator.dupe(u8, "Market discovery returned incomplete or invalid JSON; coverage is unresolved.") };
-        };
-        if (parsed.value != .object or parsed.value.object.get("results") == null or parsed.value.object.get("errors") == null) return .{ .failure = try ctx.allocator.dupe(u8, "Market discovery returned an invalid result shape.") };
-        // Exit 1 preserves useful results alongside per-venue coverage errors.
-        return .{ .success = try ctx.allocator.dupe(u8, text) };
-    }
+    var prefix: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer prefix.deinit();
+    const args = command(ctx.allocator, erased.as(Input)) catch return error.OutOfMemory;
+    defer ctx.allocator.free(args);
+    public_command.prefix(ctx.allocator, &prefix.writer, ctx.workspace_root) catch return error.OutOfMemory;
+    // command() already quotes the program; replace only the fixed executable prefix.
+    prefix.writer.writeAll(args["exec bash --noprofile --norc -c ".len..]) catch return error.OutOfMemory;
+    return public_command.execute(ctx, prefix.written());
 }
 
 pub fn readsOnly(_: dispatch.ToolInput) bool {

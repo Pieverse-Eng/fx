@@ -24,6 +24,7 @@ const grep_files_impl = @import("../tools/filesystem/grep_files.zig");
 const read_file_impl = @import("../tools/filesystem/read_file.zig");
 const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
+const get_market_candles_impl = @import("../tools/market/get_market_candles.zig");
 const discover_markets_impl = @import("../tools/market/discover_markets.zig");
 const shell_impl = @import("../tools/shell/shell.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
@@ -832,7 +833,7 @@ pub const read_tool_result = ToolSpec{
 };
 
 const discover_markets_description =
-    "This tool allows you to find available spot and perpetual markets across Aster, Binance, Bitget, Gate, Hyperliquid, Kraken, Lighter, and OKX CEX in one parallel query. Always checks all eight. Pass related base tickers together, resolving asset names first. Returns results grouped by ticker with exact venue symbols, product types, required routing identifiers, and restrictions; errors records unresolved coverage. Use these public venue results directly. An empty match applies only to the searched products and currencies. Does not place orders or compare execution costs.";
+    "This tool allows you to find available spot and perpetual markets for multiple base tickers across all eight supported venues in parallel. Returns exact trading symbols, product types, routing identifiers, restrictions, and query errors.";
 
 pub const discover_markets = ToolSpec{
     .name = "discover_markets",
@@ -860,6 +861,31 @@ pub const discover_markets = ToolSpec{
     .irreversible_fn = discover_markets_impl.isIrreversible,
 };
 
+const get_market_candles_description =
+    "This tool allows you to retrieve 15m, 1h, and 4h OHLCV candles and the latest trade for multiple base tickers. Automatically selects a reference market by comparable 24h trading volume across the eight supported venues. Returns quote currency, timestamps, up to 50 closed candles and the current candle per timeframe, and query errors. Rows follow columns; timestamps are Unix milliseconds, prices are per underlying unit, and volume is underlying quantity or null. Current candles are unconfirmed. Does not generate trade recommendations.";
+
+pub const get_market_candles = ToolSpec{
+    .name = "get_market_candles",
+    .description = get_market_candles_description,
+    .model_schema = .{
+        .name = "get_market_candles",
+        .description = get_market_candles_description,
+        .input_schema = .{
+            .properties = &.{.{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 16 }, .description = "Case-insensitive base tickers, e.g. [IREN, APLD]. Resolve names first; pass related assets together." }},
+            .required = &.{"tickers"},
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .get_market_candles,
+    .activity_kind = .read,
+    .action_label = "Reading market candles",
+    .completed_action_label = "Read market candles",
+    .decode = get_market_candles_impl.decode,
+    .call = get_market_candles_impl.call,
+    .reads_only_fn = get_market_candles_impl.readsOnly,
+    .irreversible_fn = get_market_candles_impl.isIrreversible,
+};
+
 pub const all = [_]tool_dispatch.Tool{
     glob_files,
     grep_files,
@@ -879,12 +905,14 @@ pub const all = [_]tool_dispatch.Tool{
     vision,
     read_tool_result,
     discover_markets,
+    get_market_candles,
 };
 
 pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
 
 pub const advertisement_order = [_][]const u8{
     "discover_markets",
+    "get_market_candles",
     "read_file",
     "glob_files",
     "grep_files",
@@ -904,6 +932,7 @@ pub const advertisement_order = [_][]const u8{
 
 pub const read_only_tool_names = [_][]const u8{
     "discover_markets",
+    "get_market_candles",
     "read_file",
     "glob_files",
     "grep_files",
@@ -1044,6 +1073,7 @@ test "built-in tools register exact active local order" {
         "vision",
         "read_tool_result",
         "discover_markets",
+        "get_market_candles",
     };
 
     try std.testing.expectEqual(expected_names.len, all.len);
@@ -1812,6 +1842,7 @@ fn expectRegisteredNames(names: []const []const u8) !void {
 test "built-in read-only tool set matches plan inspection tools" {
     const expected_names = [_][]const u8{
         "discover_markets",
+        "get_market_candles",
         "read_file",
         "glob_files",
         "grep_files",

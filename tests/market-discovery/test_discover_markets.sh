@@ -9,6 +9,20 @@ cat >"$fixture_dir/cli" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}:$*" in
+ curl:*binance.com*klines*interval=15m*) venue=binance; key=candles-15m;;
+ curl:*binance.com*klines*interval=1h*) venue=binance; key=candles-1h;;
+ curl:*binance.com*klines*interval=4h*) venue=binance; key=candles-4h;;
+ curl:*binance.com*trades*) venue=binance; key=candle-trades;;
+ curl:*fapi.asterdex.com*ticker/24hr*) venue=aster; key=stats-empty;;
+ curl:*binance.com*api/v3/ticker/24hr*) venue=binance; key=stats-binance-spot;;
+ curl:*binance.com*fapi/v1/ticker/24hr*) venue=binance; key=stats-binance-perp;;
+ bgc:*'--action tickers'*) venue=bitget; key=stats-empty;;
+ gate-cli:*'market tickers'*) venue=gate; key=stats-empty;;
+ kraken:ticker*tokenized_asset*) venue=kraken; key=stats-empty;;
+ kraken:ticker*) venue=kraken; key=stats-kraken;;
+ okx:*'market tickers'*) venue=okx-cex; key=stats-empty;;
+ purr:'hyperliquid markets --kind perp'*) venue=hyperliquid; key=stats-empty;;
+ curl:*orderBookDetails*) venue=lighter; key=stats-empty;;
  curl:*fapi.asterdex.com*) venue=aster; key=aster;;
  binance-cli:spot*) venue=binance; key=binance-spot;;
  binance-cli:futures-usds*) venue=binance; key=binance-futures;;
@@ -150,6 +164,18 @@ jq -n '{symbols:[
  {symbol:"BTCUSDC",baseAsset:"BTC",quoteAsset:"USDC",marginAsset:"USDC",status:"TRADING",contractType:"PERPETUAL"}
 ]}' >"$fixture_dir/aster.json"
 if [[ $# == 1 ]]; then
+  echo '[]' >"$fixture_dir/stats-empty.json"
+  echo '[{"symbol":"BTCUSDT","quoteVolume":"10","lastPrice":"100"}]' >"$fixture_dir/stats-binance-spot.json"
+  echo '[{"symbol":"BTCUSDT","quoteVolume":"1000000","lastPrice":"100"},{"symbol":"CRCLUSDT","quoteVolume":"1000000","lastPrice":"100"}]' >"$fixture_dir/stats-binance-perp.json"
+  echo '{"USDTZUSD":{"c":["0.99"]},"USDCUSD":{"c":["1.001"]}}' >"$fixture_dir/stats-kraken.json"
+  jq '.+{USDTZUSD:{altname:"USDTUSD",wsname:"USDT/USD",base:"USDT",aclass_base:"currency",status:"online"},USDCUSD:{altname:"USDCUSD",wsname:"USDC/USD",base:"USDC",aclass_base:"currency",status:"online"}}' "$fixture_dir/kraken-spot.json" >"$fixture_dir/kraken-spot.tmp"
+  mv "$fixture_dir/kraken-spot.tmp" "$fixture_dir/kraken-spot.json"
+  now=$(date +%s%3N)
+  for tf in 15m 1h 4h; do
+    duration=900000; [[ $tf != 1h ]] || duration=3600000; [[ $tf != 4h ]] || duration=14400000
+    jq -n --argjson now "$now" --argjson duration "$duration" '[range(60;-1;-1)|[($now/$duration|floor)*$duration-.*$duration,100,103,98,102,12]]' >"$fixture_dir/candles-$tf.json"
+  done
+  jq -n --argjson now "$now" '[{price:"102",time:($now-1)}]' >"$fixture_dir/candle-trades.json"
   python3 "$repo_root/tests/market-discovery/test_tool_runtime.py" "$1" "$fixture_dir"
   exit
 fi
@@ -220,4 +246,19 @@ for args in 'BTC --venues binance' '--venues gate,' '--product invalid' '--quote
   # Intentional word splitting exercises malformed argument lists.
   if run $args >/dev/null 2>&1; then echo 'Expected input rejection'; exit 1; fi
 done
+# Only fresh, validated public catalogs are reused between tools in the same workspace.
+export FX_MARKET_CACHE_DIR="$fixture_dir/cache"
+: >"$fixture_dir/calls"
+run BTC CRCL >"$fixture_dir/cache-first.json"
+first_calls=$(wc -l <"$fixture_dir/calls")
+run BTC CRCL >"$fixture_dir/cache-second.json"
+[[ $(wc -l <"$fixture_dir/calls") == "$first_calls" ]]
+cmp "$fixture_dir/cache-first.json" "$fixture_dir/cache-second.json"
+# An expired entry forces a real read, not stale availability.
+for entry in "$FX_MARKET_CACHE_DIR"/*.json; do
+  jq '.storedAt=0' "$entry" >"$fixture_dir/expired.json"
+  mv "$fixture_dir/expired.json" "$entry"
+done
+run BTC CRCL >/dev/null
+[[ $(wc -l <"$fixture_dir/calls") -gt "$first_calls" ]]
 echo 'Unified discovery fixtures passed: all eight workers overlap, one fetch per catalog, multi-ticker results, filters, restrictions, and partial failures.'
