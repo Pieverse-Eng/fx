@@ -292,6 +292,10 @@ describe("fx ask presentation", () => {
         };
       }>;
     };
+    const toolNames = firstRequest.tools.map(({ name }) => name);
+    for (const removed of ["discover_markets", "calculate_venue_costs", "quote_onchain_stock", "finalize_market_result"]) {
+      expect(toolNames).not.toContain(removed);
+    }
     const terminalTool = firstRequest.tools.find(({ name }) => name === "terminal");
     expect(terminalTool?.description).toBe(
       "This tool allows you to run one command with a finite timeout_ms and return its captured output. Use output_filter to return matching JSON records directly from full stdout. On timeout, it stops the process group and tracked descendants; cleanup of fully detached descendants is best effort on macOS.",

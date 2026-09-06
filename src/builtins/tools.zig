@@ -23,9 +23,6 @@ const grep_files_impl = @import("../tools/filesystem/grep_files.zig");
 const read_file_impl = @import("../tools/filesystem/read_file.zig");
 const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const memory_impl = @import("../tools/memory/memory.zig");
-const finalize_market_result_impl = @import("../tools/market/finalize_market_result.zig");
-const calculate_venue_costs_impl = @import("../tools/market/calculate_venue_costs.zig");
-const quote_onchain_stock_impl = @import("../tools/market/quote_onchain_stock.zig");
 const terminal_impl = @import("../tools/terminal/terminal.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -1226,213 +1223,6 @@ pub const vision = ToolSpec{
     .irreversible_fn = vision_impl.isIrreversible,
 };
 
-const market_result_market_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "venue", .json_type = .string },
-        .{ .name = "symbol", .json_type = .string },
-        .{ .name = "product", .json_type = .string },
-        .{ .name = "quote", .json_type = .string },
-    },
-    .required = &.{ "venue", "symbol", "product", "quote" },
-    .additional_properties = false,
-};
-
-const venue_cost_level_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "price", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive decimal price from the verified order book." },
-        .{ .name = "size", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive raw venue-reported size available at this price." },
-    },
-    .required = &.{ "price", "size" },
-    .additional_properties = false,
-};
-
-const venue_cost_candidate_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "id", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 }, .description = "Stable identifier for the verified venue listing, such as binance:BTCUSDT." },
-        .{ .name = "quoteCurrency", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Exact quote currency of this candidate listing." },
-        .{ .name = "quoteToReferenceRate", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Verified current reference-currency value of one quote-currency unit. Use exactly 1 only when quoteCurrency equals referenceCurrency." },
-        .{ .name = "baseSizePerUnit", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Verified positive base-asset quantity represented by one raw order-book size unit. Use 1 only when venue sizes are already base-asset units. Exclude quote-denominated, inverse, or price-dependent size units." },
-        .{ .name = "bids", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 200 }, .shape = &.{ .array_objects = &venue_cost_level_schema }, .description = "Current bid levels in descending price order, with raw venue-reported sizes." },
-        .{ .name = "asks", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 200 }, .shape = &.{ .array_objects = &venue_cost_level_schema }, .description = "Current ask levels in ascending price order, with raw venue-reported sizes." },
-        .{ .name = "takerFeeBps", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Verified non-negative public base/default taker fee for this exact product, in basis points." },
-        .{ .name = "additionalFeeBps", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Authoritative additional execution fee in basis points, or zero when none applies." },
-    },
-    .required = &.{ "id", "quoteCurrency", "quoteToReferenceRate", "baseSizePerUnit", "bids", "asks", "takerFeeBps", "additionalFeeBps" },
-    .additional_properties = false,
-};
-
-const calculate_venue_costs_description =
-    "This tool allows you to compare execution costs across two or more comparable venues for a market/taker order, accounting for spread, slippage, fees, and quote-currency conversion. Supply verified order books, size multipliers, conversion rates, and fees. Routes with insufficient depth are excluded. It calculates costs; you must verify that the listings represent comparable exposure.";
-
-pub const calculate_venue_costs = ToolSpec{
-    .name = "calculate_venue_costs",
-    .description = calculate_venue_costs_description,
-    .model_schema = .{
-        .name = "calculate_venue_costs",
-        .description = calculate_venue_costs_description,
-        .strict_arguments = true,
-        .input_schema = .{
-            .properties = &.{
-                .{ .name = "side", .json_type = .string, .shape = &.{ .enum_values = &.{ "buy", "sell" } } },
-                .{ .name = "referenceNotional", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive user-supplied order notional in referenceCurrency." },
-                .{ .name = "referenceCurrency", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "User-supplied currency in which the notional and comparable costs are expressed." },
-                .{ .name = "candidates", .json_type = .array, .bounds = &.{ .min_items = 2, .max_items = 16 }, .shape = &.{ .array_objects = &venue_cost_candidate_schema } },
-            },
-            .required = &.{ "side", "referenceNotional", "referenceCurrency", "candidates" },
-            .additional_properties = false,
-        },
-    },
-    .executor_kind = .calculate_venue_costs,
-    .activity_kind = .read,
-    .requires_approval = false,
-    .action_label = "Comparing",
-    .completed_action_label = "Compared",
-    .label_arg_kind = .none,
-    .label_arg_default = "venue costs",
-    .permission_target_kind = .none,
-    .decode = calculate_venue_costs_impl.decode,
-    .validate = calculate_venue_costs_impl.validate,
-    .call = calculate_venue_costs_impl.call,
-    .result_disposition = .continue_model,
-    .reads_only_fn = calculate_venue_costs_impl.readsOnly,
-    .irreversible_fn = calculate_venue_costs_impl.isIrreversible,
-};
-
-const quote_onchain_stock_description =
-    "This tool allows you to find and compare onchain stock-buy routes for one ticker and an exact supplied amount. It verifies issuer-backed tokens and ranks available quotes by cost per underlying share, including gas. It only supports spot buys on supported chains and does not access wallets or prepare or submit transactions.";
-
-pub const quote_onchain_stock = ToolSpec{
-    .name = "quote_onchain_stock",
-    .description = quote_onchain_stock_description,
-    .model_schema = .{
-        .name = "quote_onchain_stock",
-        .description = quote_onchain_stock_description,
-        .strict_arguments = true,
-        .input_schema = .{
-            .properties = &.{
-                .{ .name = "ticker", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 16 }, .description = "Canonical underlying stock ticker already resolved and supported by primary identity evidence." },
-                .{ .name = "side", .json_type = .string, .shape = &.{ .enum_values = &.{"buy"} }, .description = "MVP supports exact-input spot buys only." },
-                .{ .name = "referenceNotional", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 64 }, .description = "Positive exact buy notional supplied by the caller." },
-                .{ .name = "referenceCurrency", .json_type = .string, .shape = &.{ .enum_values = &.{ "USD", "USDT", "USDC" } }, .description = "Currency of referenceNotional. Public USD stablecoin routes are compared on this reference basis." },
-            },
-            .required = &.{ "ticker", "side", "referenceNotional", "referenceCurrency" },
-            .additional_properties = false,
-        },
-    },
-    .executor_kind = .quote_onchain_stock,
-    .activity_kind = .read,
-    .requires_approval = false,
-    .action_label = "Quoting",
-    .completed_action_label = "Quoted",
-    .label_arg_kind = .none,
-    .label_arg_default = "onchain stock routes",
-    .permission_target_kind = .none,
-    .decode = quote_onchain_stock_impl.decode,
-    .validate = quote_onchain_stock_impl.validate,
-    .call = quote_onchain_stock_impl.call,
-    .result_disposition = .continue_model,
-    .reads_only_fn = quote_onchain_stock_impl.readsOnly,
-    .irreversible_fn = quote_onchain_stock_impl.isIrreversible,
-};
-
-const market_result_evidence_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "source", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 160 } },
-        .{ .name = "detail", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 500 } },
-    },
-    .required = &.{ "source", "detail" },
-    .additional_properties = false,
-};
-
-const market_result_source_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "sourceToolCall", .json_type = .integer, .bounds = &.{ .minimum = 0 }, .description = "Zero-based index in the most recent assistant tool-call batch containing the candle command." },
-        .{ .name = "resultId", .json_type = .string, .nullable = &.{ .description = "Child result ID for a terminal batch result; null for an ordinary terminal exec." } },
-    },
-    .required = &.{ "sourceToolCall", "resultId" },
-    .additional_properties = false,
-};
-
-const market_result_sources_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "15m", .json_type = .object, .nullable = &.{ .description = "Null when this timeframe is unavailable." }, .shape = &.{ .object = &market_result_source_schema } },
-        .{ .name = "1h", .json_type = .object, .nullable = &.{ .description = "Null when this timeframe is unavailable." }, .shape = &.{ .object = &market_result_source_schema } },
-        .{ .name = "4h", .json_type = .object, .nullable = &.{ .description = "Null when this timeframe is unavailable." }, .shape = &.{ .object = &market_result_source_schema } },
-    },
-    .required = &.{ "15m", "1h", "4h" },
-    .additional_properties = false,
-};
-
-const market_result_fields_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "time", .json_type = .string },
-        .{ .name = "open", .json_type = .string },
-        .{ .name = "high", .json_type = .string },
-        .{ .name = "low", .json_type = .string },
-        .{ .name = "close", .json_type = .string },
-        .{ .name = "volume", .json_type = .string, .nullable = &.{ .description = "Null when the venue field is not base-asset volume." } },
-    },
-    .required = &.{ "time", "open", "high", "low", "close", "volume" },
-    .additional_properties = false,
-};
-
-const market_result_candles_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "sources", .json_type = .object, .shape = &.{ .object = &market_result_sources_schema } },
-        .{ .name = "rows", .json_type = .string, .description = "JSON Pointer to the candle row array; use an empty string when the response root is the array." },
-        .{ .name = "fields", .json_type = .object, .shape = &.{ .object = &market_result_fields_schema } },
-        .{ .name = "timeUnit", .json_type = .string, .shape = &.{ .enum_values = &.{ "ms", "s" } } },
-    },
-    .required = &.{ "sources", "rows", "fields", "timeUnit" },
-    .additional_properties = false,
-};
-
-const market_result_onchain_route_source_schema = model_tool_schema.ObjectSchema{
-    .properties = &.{
-        .{ .name = "sourceToolCall", .json_type = .integer, .bounds = &.{ .minimum = 0 }, .description = "Zero-based index in the most recent assistant tool-call batch containing quote_onchain_stock." },
-    },
-    .required = &.{"sourceToolCall"},
-    .additional_properties = false,
-};
-
-const finalize_market_result_description =
-    "This tool allows you to finalize one market result using references to prior terminal candle outputs and a shared JSON Pointer mapping. It normalizes, sorts, deduplicates, and limits candles, then returns the final JSON and ends the turn. Reference source outputs instead of copying candle rows.";
-
-pub const finalize_market_result = ToolSpec{
-    .name = "finalize_market_result",
-    .description = finalize_market_result_description,
-    .model_schema = .{
-        .name = "finalize_market_result",
-        .description = finalize_market_result_description,
-        .strict_arguments = true,
-        .input_schema = .{
-            .properties = &.{
-                .{ .name = "market", .json_type = .object, .shape = &.{ .object = &market_result_market_schema } },
-                .{ .name = "summary", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 600 } },
-                .{ .name = "evidence", .json_type = .array, .bounds = &.{ .max_items = 8 }, .shape = &.{ .array_objects = &market_result_evidence_schema } },
-                .{ .name = "candles", .json_type = .object, .shape = &.{ .object = &market_result_candles_schema } },
-                .{ .name = "onchainRoute", .json_type = .object, .nullable = &.{ .description = "Reference to the successful quote_onchain_stock result when its selected route beats the comparable centralized Spot route; null otherwise." }, .shape = &.{ .object = &market_result_onchain_route_source_schema } },
-            },
-            .required = &.{ "market", "summary", "evidence", "candles", "onchainRoute" },
-            .additional_properties = false,
-        },
-    },
-    .executor_kind = .finalize_market_result,
-    .activity_kind = .read,
-    .requires_approval = false,
-    .action_label = "Finalizing",
-    .completed_action_label = "Finalized",
-    .label_arg_kind = .none,
-    .label_arg_default = "market result",
-    .permission_target_kind = .none,
-    .decode = finalize_market_result_impl.decode,
-    .validate = finalize_market_result_impl.validate,
-    .call = finalize_market_result_impl.call,
-    .result_disposition = .finish_turn,
-    .reads_only_fn = finalize_market_result_impl.readsOnly,
-    .irreversible_fn = finalize_market_result_impl.isIrreversible,
-};
-
 pub const all = [_]tool_dispatch.Tool{
     glob_files,
     grep_files,
@@ -1453,9 +1243,6 @@ pub const all = [_]tool_dispatch.Tool{
     mcp_features,
     ask_user_question,
     vision,
-    calculate_venue_costs,
-    quote_onchain_stock,
-    finalize_market_result,
 };
 
 pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
@@ -2128,9 +1915,6 @@ pub const advertisement_order = [_][]const u8{
     "ask_user_question",
     "web_fetch",
     "web_search",
-    "calculate_venue_costs",
-    "quote_onchain_stock",
-    "finalize_market_result",
 };
 
 pub const read_only_tool_names = [_][]const u8{
@@ -2194,9 +1978,6 @@ test "built-in tools register exact active local order" {
         "mcp_features",
         "ask_user_question",
         "vision",
-        "calculate_venue_costs",
-        "quote_onchain_stock",
-        "finalize_market_result",
     };
 
     try std.testing.expectEqual(expected_names.len, all.len);
@@ -2214,6 +1995,9 @@ test "built-in tools register exact active local order" {
         "create_folder",
         "semantic_search",
         "open_file",
+        "calculate_venue_costs",
+        "quote_onchain_stock",
+        "finalize_market_result",
     }) |removed| {
         try std.testing.expect(lookup(removed) == null);
     }
