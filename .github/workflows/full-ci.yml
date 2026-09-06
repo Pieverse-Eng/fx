@@ -47,28 +47,9 @@ jobs:
       - name: Check formatting
         run: zig fmt --check src/
 
-      - name: Test market discovery skill
-        run: python3 -m unittest discover -s skills/market-discovery/scripts -p 'test_*.py' -v
-
-      - name: Test Binance discovery skill (Linux runtime)
+      - name: Test unified market discovery (Linux runtime)
         if: runner.os == 'Linux'
-        run: bash skills/market-discovery/scripts/test_binance.sh
-
-      - name: Test OKX discovery skill (Linux runtime)
-        if: runner.os == 'Linux'
-        run: bash skills/market-discovery/scripts/test_okx.sh
-
-      - name: Test Hyperliquid discovery skill (Linux runtime)
-        if: runner.os == 'Linux'
-        run: bash skills/market-discovery/scripts/test_hyperliquid.sh
-
-      - name: Test Lighter discovery skill (Linux runtime)
-        if: runner.os == 'Linux'
-        run: bash skills/market-discovery/scripts/test_lighter.sh
-
-      - name: Test Bitget, Gate, and Kraken discovery skills (Linux runtime)
-        if: runner.os == 'Linux'
-        run: bash skills/market-discovery/scripts/test_remaining_venues.sh
+        run: bash tests/market-discovery/test_discover_markets.sh
 
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
