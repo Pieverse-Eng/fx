@@ -13,7 +13,7 @@
 
 - Resolve each requested asset from its name, ticker, or other supplied identifiers.
 - Verify that each returned market matches the requested underlying asset and any specified product constraints. Distinguish the underlying ticker from the venue-specific trading symbol.
-- Use product-appropriate identity evidence: verify the underlying stock mapping for tokenized stocks, and the referenced equity and contract type for stock perpetuals. Perpetuals do not require token issuer or backing evidence.
+- For market availability, match assets using official venue catalogs, product metadata, and documented naming conventions. Do not perform a separate token issuer or backing check, or exclude a matching listing because issuer metadata is absent. Exact ticker boundaries matter: substring matches alone are insufficient.
 - Treat guessed symbols as search candidates. A failed symbol lookup does not prove that the asset is unavailable; check the venue's supported discovery methods before concluding.
 - For multiple assets, preserve their individual identities, directions, and strategy relationships. Do not silently substitute assets or omit unresolved ones.
 - If identity remains ambiguous, report the ambiguity and what information is needed to resolve it. Do not guess or claim unavailability without sufficient evidence.
@@ -82,7 +82,7 @@ Query only the data needed for the request. Retrieve candles when requested or n
 ## Bitget
 
 - Products: Spot, USDT-FUTURES, and USDC-FUTURES. Discover a basket with `bgc market --action instruments --category <CATEGORY>` and a catalog filter for each compatible category. Require matching identity, `category`, `status`, `baseCoin`, and `quoteCoin` from `data`. Query `bgc market --action instruments --category <CATEGORY> --symbol <SYMBOL>` only when required listing metadata is missing; use `bgc market --action tickers --category <CATEGORY> --symbol <SYMBOL>` when current price is needed.
-- Stock Spot identity: an `r` prefix is only a candidate hint; verify the issuer identity from returned metadata.
+- Stock Spot matching: account for the venue's `r` prefix when matching the underlying ticker, then use the returned Spot instrument and trading status. No separate issuer verification is required.
 - Candles: `bgc market --action candles --category <CATEGORY> --symbol <SYMBOL> --interval <15m|1H|4H> --limit 20`.
 - Cost: `bgc market --action orderbook --category <CATEGORY> --symbol <SYMBOL> --limit 100`. Prefer the exact instrument's `takerFeeRate` multiplied by 10000; otherwise use 10 bps for Spot or 6 bps for futures. `additionalFeeBps` is 0. Use `baseSizePerUnit: 1` only when metadata proves base-asset book sizes; otherwise use a verified multiplier or exclude. Source: `https://www.bitget.com/support/articles/12560603892734`.
 
@@ -102,21 +102,21 @@ Query only the data needed for the request. Retrieve candles when requested or n
 ## Kraken
 
 - Products: Spot, xStocks Spot, and Futures. Verify ordinary Spot with `kraken pairs --pair <BASE><QUOTE> -o json`; require exactly one online pair, use `altname` as symbol, and verify `wsname`. Kraken may map BTC to XBT.
-- xStocks: run `kraken assets --asset-class tokenized_asset -o json` with `terminal.output_filter` covering all requested tickers. Require enabled `tokenized_asset` metadata and matching issuer; the lowercase `x` suffix is only a candidate rule. Asset metadata alone does not establish a trading pair. Then verify `kraken pairs --pair <TICKER>x/USD --asset-class tokenized_asset -o json`, requiring one matching tokenized-asset pair. Return its `altname`, verify `wsname`, and report its actual `status`, including post-only restrictions.
+- xStocks: run `kraken assets --asset-class tokenized_asset -o json` with `terminal.output_filter` covering all requested tickers. Match the underlying ticker using the venue's lowercase `x` suffix and enabled `tokenized_asset` metadata. Then query `kraken pairs --pair <TICKER>x/USD --asset-class tokenized_asset -o json`, requiring one matching tokenized-asset pair. Return its `altname`, check `wsname`, and report its actual `status`, including post-only restrictions. Do not require separate issuer evidence.
 - Spot candles: run `date -u +%s` once, calculate literal since values by subtracting 19800, 79200, and 316800 seconds, then run `kraken ohlc <PAIR> --interval <15|60|240> --since <EPOCH> -o json`; add `--asset-class tokenized_asset` for xStocks.
 - Futures: use the URL-fetch tool, not terminal or curl, to discover official charts symbols from `https://futures.kraken.com/api/charts/v1/trade`. Prefer linear `PF_` to inverse `PI_`; verify with `kraken futures ticker <SYMBOL> -o json`. Fetch candles from `https://futures.kraken.com/api/charts/v1/trade/<SYMBOL>/<15m|1h|4h>?count=21`; return at most 20.
 - Cost: Spot depth is `kraken orderbook <PAIR> --count 100 -o json`, adding the tokenized asset class for xStocks; take the first public taker tier from pair `fees` and multiply its percentage by 100. Futures requires `kraken futures instruments -o json` with `terminal.output_filter` for the requested contracts and verified `contractSize`, plus `kraken futures orderbook <SYMBOL> -o json`; use 5 bps. Spot sizes are base quantity; use Futures `contractSize` only after base and quote verification. `additionalFeeBps` is 0. Source: `https://www.kraken.com/features/fee-schedule`.
 
 ## Lighter
 
-- Products: Spot and perpetuals. Read `purr lighter markets --market-type <spot|perp>` with `terminal.output_filter` covering all requested tickers. Require exact identity, product, base, quote, market id, and status. Use `purr lighter market --market <SYMBOL> --market-type <spot|perp>` only to fill missing required fields. For stock Spot, issuer metadata must verify identity; ticker substrings are insufficient.
+- Products: Spot and perpetuals. Read `purr lighter markets --market-type <spot|perp>` with `terminal.output_filter` covering all requested tickers. Match the requested asset and product using the venue's symbol, name, base, quote, market id, and status. Use `purr lighter market --market <SYMBOL> --market-type <spot|perp>` only to fill missing required listing fields. Do not require separate issuer evidence for stock Spot.
 - Candles: `purr lighter candles --market <SYMBOL> --market-type <spot|perp> --resolution <15m|1h|4h> --start-at <RFC3339> --end-at <RFC3339> --count-back 20`.
 - Cost: `purr lighter order-book-depth --market <SYMBOL> --market-type <spot|perp> --limit 100`. Multiply the exact market's `taker_fee` by 10000; the public Standard tier is currently zero. `additionalFeeBps` is 5. Use base size 1 only when metadata proves base-asset units; otherwise use a verified multiplier or exclude. Source: `https://docs.lighter.xyz/trading/trading-fees`.
 
 ## OKX CEX
 
 - Products: Spot and linear USDT perpetual `SWAP`. For availability, run `okx market instruments --instType <SPOT|SWAP> --json` with a catalog filter for each compatible product. Verify identity, `instId`, `instType`, `baseCcy`/`ctValCcy`, `quoteCcy`/`settleCcy`, and `state: live`. Use `okx market instruments --instType <SPOT|SWAP> --instId <INST_ID> --json` only for missing listing metadata; query `okx market ticker <INST_ID> --json` only when current price is needed.
-- Stock Spot identity: an `X` prefix is only a candidate hint. Do not confuse Spot with `instCategory=3` stock-token perpetuals.
+- Stock Spot matching: account for the venue's `X` prefix when matching the underlying ticker, then use the returned instrument and trading status. Distinguish Spot from SWAP using `instType`, not `instCategory` alone. No separate issuer verification is required.
 - Candles: `okx market candles <INST_ID> --bar <15m|1H|4H> --limit 20 --json`; the venue returns newest first, so the finalizer must sort them.
 - Cost: `okx market orderbook <INST_ID> --sz 100 --json` plus the exact instrument metadata. Default taker fee is 10 bps for standard Spot or 5 bps for standard perpetuals; exclude special fee groups that cannot be verified. `additionalFeeBps` is 0. Spot sizes are base quantity; for swaps use `ctVal` only when `ctValCcy` confirms the base asset. Source: `https://www.okx.com/en-gb/help/trading-fee-rules-faq`.
 
