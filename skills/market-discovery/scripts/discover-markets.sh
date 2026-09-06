@@ -452,7 +452,7 @@ for index in "${!workers[@]}"; do
 done
 workers=()
 tickers_json=$(printf '%s\n' "${tickers[@]}" | jq -Rsc 'split("\n")[:-1]')
-jq -s --arg queriedAt "$queried_at" --argjson tickers "$tickers_json" '
+jq -s --argjson tickers "$tickers_json" '
   # Discovery hands off exact order selectors, not a snapshot of order sizing rules.
   def order_market($venue):
     . as $market |
@@ -466,9 +466,7 @@ jq -s --arg queriedAt "$queried_at" --argjson tickers "$tickers_json" '
       (if $market.onlyIsolated==true or $market.marginMode=="noCross" then ["isolated_only"] else [] end) |
       unique | if length>0 then {restrictions:.} else {} end);
   . as $venues |
-  {queriedAt:$queriedAt,
-   results:[$tickers[]|. as $ticker|{ticker:$ticker,markets:[$venues[]|.venue as $venue|.results[]|select(.ticker==$ticker)|.markets[]|order_market($venue)]}],
-   venues:[$venues[]|{venue,scope,status:(if (.errors|length)>0 then "incomplete" else "complete" end)}],
+  {results:[$tickers[]|. as $ticker|{ticker:$ticker,markets:[$venues[]|.venue as $venue|.results[]|select(.ticker==$ticker)|.markets[]|order_market($venue)]}],
    errors:[$venues[]|.venue as $venue|.errors[]|.+{venue:$venue}]}
 ' "${files[@]}" >"$scratch_root/result.json"
 cat "$scratch_root/result.json"

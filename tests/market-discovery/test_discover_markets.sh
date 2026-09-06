@@ -151,7 +151,7 @@ jq -n '{symbols:[
 ]}' >"$fixture_dir/aster.json"
 run() { bash "$script" "$@"; }
 WAIT_FOR_ALL=1 run BTC CRCL PEPE ETH >"$fixture_dir/result.json"
-jq -e '(.venues|length)==8 and .errors==[] and (.results|map(.ticker))==["BTC","CRCL","PEPE","ETH"]' "$fixture_dir/result.json" >/dev/null
+jq -e '(keys==["errors","results"]) and .errors==[] and (.results|map(.ticker))==["BTC","CRCL","PEPE","ETH"]' "$fixture_dir/result.json" >/dev/null
 # Every required catalog was fetched once despite four tickers.
 jq -Rsc 'split("\n")[:-1] | length==19 and (group_by(.)|all(.[];length==1))' "$fixture_dir/calls" | jq -e . >/dev/null
 jq -e '[.results[]|select(.ticker=="CRCL")|.markets[]] as $m |
@@ -169,13 +169,13 @@ jq -e '
  any(.results[].markets[];.venue=="gate" and .product=="perp" and .settlementAsset=="USDT") and
  all(.results[].markets[]|select(.venue=="lighter");(.marketId|type)=="number") and
  any(.results[].markets[];.venue=="hyperliquid" and .product=="spot" and .assetId==10142) and
- all(.venues[];(has("elapsedMs") or has("sources"))|not) and (has("elapsedMs")|not)
+ keys==["errors","results"]
 ' "$fixture_dir/result.json" >/dev/null
 jq -e 'any(.results[]|select(.ticker=="PEPE")|.markets[];.venue=="lighter" and .symbol=="1000PEPE") and any(.results[]|select(.ticker=="PEPE")|.markets[];.venue=="hyperliquid" and .symbol=="kPEPE")' "$fixture_dir/result.json" >/dev/null
 # Dedup inputs, validate filters, and keep currency overrides literal.
 : >"$fixture_dir/calls"
 run btc BTC CRCL --venues bitget,bitget >"$fixture_dir/result.json"
-jq -e '(.venues|length)==1 and (.results|map(.ticker))==["BTC","CRCL"]' "$fixture_dir/result.json" >/dev/null
+jq -e 'all(.results[].markets[];.venue=="bitget") and (.results|map(.ticker))==["BTC","CRCL"]' "$fixture_dir/result.json" >/dev/null
 [[ $(wc -l <"$fixture_dir/calls") == 2 ]]
 run BTC --venues bitget --quote USDC | jq -e '(.results[0].markets|length)==2 and any(.results[0].markets[];.symbol=="BTCPERP")' >/dev/null
 run BTC --venues kraken --quote USDT | jq -e '(.results[0].markets|length)==1 and .results[0].markets[0].symbol=="XBTUSDT"' >/dev/null
@@ -197,7 +197,7 @@ if run CRCL >"$fixture_dir/error.json"; then echo 'Expected partial error'; exit
 jq -e 'any(.errors[];.venue=="binance" and .query=="assets") and any(.results[0].markets[];.venue=="binance" and .product=="perp") and any(.results[0].markets[];.venue=="kraken")' "$fixture_dir/error.json" >/dev/null
 rm "$fixture_dir/binance-assets.fail"
 if run BTC --venues gate,bitget --quote EUR >"$fixture_dir/error.json"; then exit 1; fi
-jq -e '(.errors|length)==2 and all(.venues[];.status=="incomplete")' "$fixture_dir/error.json" >/dev/null
+jq -e '(.errors|length)==2 and ([.errors[].venue]|sort)==["bitget","gate"]' "$fixture_dir/error.json" >/dev/null
 cp "$fixture_dir/kraken-tickers.json" "$fixture_dir/kraken-tickers.backup"
 echo '{"result":"success","tickers":[]}' >"$fixture_dir/kraken-tickers.json"
 if run BTC --venues kraken >"$fixture_dir/error.json"; then exit 1; fi
@@ -207,7 +207,7 @@ for key in aster binance-spot bitget-spot gate-spot kraken-spot okx-spot hl-meta
   cp "$fixture_dir/$key.json" "$fixture_dir/backup.json"
   echo '{"error":"invalid"}' >"$fixture_dir/$key.json"
   if run BTC CRCL >"$fixture_dir/error.json"; then echo "Expected malformed $key error"; exit 1; fi
-  jq -e '(.errors|length)>0 and any(.venues[];.status=="complete")' "$fixture_dir/error.json" >/dev/null
+  jq -e '(.errors|length)>0 and (.results[0].markets|length)>0' "$fixture_dir/error.json" >/dev/null
   mv "$fixture_dir/backup.json" "$fixture_dir/$key.json"
 done
 for args in '--venues unknown' '--venues gate,' '--product invalid' '--quote' ''; do

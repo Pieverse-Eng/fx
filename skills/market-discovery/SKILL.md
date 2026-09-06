@@ -40,8 +40,9 @@ For Hyperliquid perpetuals the currency filter selects collateral; for Lighter p
 - `results`: one entry per input ticker. Every market returns `venue`, the exact `symbol`, and `product` (`spot` or `perp`). Preserve symbols, casing, and prefixes; never invent a BTCUSDC symbol for a venue that returns BTC.
 - Order routing fields appear only where needed: Bitget `category`; Gate perpetual `settlementAsset`; Hyperliquid `assetId` and applicable `dex`; Kraken xStocks `assetClass`; Lighter `marketId`. Pass `symbol` as OKX `instId`, Gate pair/contract, or the other venue's symbol. Use Hyperliquid `assetId` as `--asset` and Lighter `marketId` as `--market-id`.
 - `restrictions` appears only for restricted markets, including post-only, one-sided, and isolated-only trading.
-- `venues`: each venue's query scope and complete/incomplete status. A null scope currency means all currencies within that venue's supported products.
-- `errors`: query failures or unresolved coverage. Exit code 1 can accompany useful partial results. Report these gaps; an error is not evidence that a market is absent. Empty matches apply only to the reported scope.
+- `errors`: query failures or unresolved coverage, identified by venue. Exit code 1 can accompany useful partial results. Report these gaps; an error is not evidence that a market is absent. Empty matches without errors mean no match within the requested venues/products/currencies and the defaults above, not absence from every market.
+
+The response contains only `results` and `errors`; it does not repeat query scope, venue coverage records, or timestamps.
 
 Keep products and restrictions distinct. Resting limit orders only means post-only; it does not permit immediate execution. Gate leveraged tokens require their explicit base ticker.
 
