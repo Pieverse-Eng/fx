@@ -9,6 +9,17 @@ cat >"$fixture_dir/cli" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}:$*" in
+ curl:*api/v3/ticker/bookTicker*) venue=binance; key=route-rates;;
+ curl:*fapi.asterdex.com*/depth*) venue=aster; key=route-book;;
+ binance-cli:*depth*|binance-cli:*order-book*) venue=binance; key=route-book;;
+ bgc:*'--action orderbook'*) venue=bitget; key=route-bitget;;
+ gate-cli:*'market orderbook'*) venue=gate; key=route-gate;;
+ kraken:*orderbook*) venue=kraken; key=route-kraken;;
+ okx:*'market orderbook'*) venue=okx-cex; key=route-okx;;
+ purr:*'hyperliquid l2'*) venue=hyperliquid; key=route-hl;;
+ curl:*api.xstocks.fi*) venue=issuer; key=route-no-asset;;
+ curl:*api.robinhood.com*) venue=issuer; key=route-rh;;
+ curl:*getNetworkCoinAll*) venue=issuer; key=route-networks;;
  curl:*binance.com*klines*interval=15m*) venue=binance; key=candles-15m;;
  curl:*binance.com*klines*interval=1h*) venue=binance; key=candles-1h;;
  curl:*binance.com*klines*interval=4h*) venue=binance; key=candles-4h;;
@@ -164,8 +175,18 @@ jq -n '{symbols:[
  {symbol:"BTCUSDC",baseAsset:"BTC",quoteAsset:"USDC",marginAsset:"USDC",status:"TRADING",contractType:"PERPETUAL"}
 ]}' >"$fixture_dir/aster.json"
 if [[ $# == 1 ]]; then
+  echo '[{"symbol":"USDTUSD","bidPrice":"0.9999","askPrice":"1.0001","bidQty":"100","askQty":"100"},{"symbol":"USDCUSD","bidPrice":"0.9989","askPrice":"0.9991","bidQty":"100","askQty":"100"}]' >"$fixture_dir/route-rates.json"
+  echo '{"asks":[["100","20"]],"bids":[["99","20"]]}' >"$fixture_dir/route-book.json"
+  echo '{"data":{"a":[["100","20"]],"b":[["99","20"]]}}' >"$fixture_dir/route-bitget.json"
+  echo '{"asks":[{"p":"100","s":200000}],"bids":[{"p":"99","s":200000}]}' >"$fixture_dir/route-gate.json"
+  echo '{"result":"success","orderBook":{"asks":[["100","20"]],"bids":[["99","20"]]}}' >"$fixture_dir/route-kraken.json"
+  echo '[{"asks":[["100","2000"]],"bids":[["99","2000"]]}]' >"$fixture_dir/route-okx.json"
+  echo '{"levels":[[{"px":"99","sz":"20"}],[{"px":"100","sz":"20"}]]}' >"$fixture_dir/route-hl.json"
+  echo '{"error":"asset not found"}' >"$fixture_dir/route-no-asset.json"
+  echo '{"assets":[]}' >"$fixture_dir/route-rh.json"
+  echo '{"data":[]}' >"$fixture_dir/route-networks.json"
   echo '[]' >"$fixture_dir/stats-empty.json"
-  echo '[{"symbol":"BTCUSDT","quoteVolume":"10","lastPrice":"100"}]' >"$fixture_dir/stats-binance-spot.json"
+  jq -n --argjson now "$(date +%s%3N)" '[{symbol:"BTCUSDT",quoteVolume:"10",lastPrice:"100"},{symbol:"USDTUSD",count:100,closeTime:$now},{symbol:"USDCUSD",count:100,closeTime:$now}]' >"$fixture_dir/stats-binance-spot.json"
   echo '[{"symbol":"BTCUSDT","quoteVolume":"1000000","lastPrice":"100"},{"symbol":"CRCLUSDT","quoteVolume":"1000000","lastPrice":"100"}]' >"$fixture_dir/stats-binance-perp.json"
   echo '{"USDTZUSD":{"c":["0.99"]},"USDCUSD":{"c":["1.001"]}}' >"$fixture_dir/stats-kraken.json"
   jq '.+{USDTZUSD:{altname:"USDTUSD",wsname:"USDT/USD",base:"USDT",aclass_base:"currency",status:"online"},USDCUSD:{altname:"USDCUSD",wsname:"USDC/USD",base:"USDC",aclass_base:"currency",status:"online"}}' "$fixture_dir/kraken-spot.json" >"$fixture_dir/kraken-spot.tmp"

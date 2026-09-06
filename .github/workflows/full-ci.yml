@@ -52,6 +52,7 @@ jobs:
         run: |
           bash tests/market-discovery/test_discover_markets.sh
           bash tests/market-discovery/test_candles.sh
+          bash tests/market-discovery/test_routes.sh
 
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh

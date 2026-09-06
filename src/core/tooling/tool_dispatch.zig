@@ -431,6 +431,7 @@ pub const PermissionTargetKind = core_permissions.PermissionTargetKind;
 pub const ExecutorKind = enum {
     discover_markets,
     get_market_candles,
+    compare_trade_routes,
     glob_files,
     grep_files,
     read_file,

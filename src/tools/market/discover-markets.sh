@@ -466,6 +466,10 @@ if [[ ${FX_MARKET_MODE:-discover} == candles ]]; then
   run_candles "${files[@]}"
   exit $?
 fi
+if [[ ${FX_MARKET_MODE:-discover} == routes ]]; then
+  run_routes "${files[@]}"
+  exit $?
+fi
 tickers_json=$(printf '%s\n' "${tickers[@]}" | jq -Rsc 'split("\n")[:-1]')
 jq -s --argjson tickers "$tickers_json" '
   # Discovery hands off exact order selectors, not a snapshot of order sizing rules.

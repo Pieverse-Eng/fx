@@ -22,6 +22,8 @@ def exercise(kind, tool_name="discover_markets"):
         requests = []
         failures = []
         args = {"tickers": ["BTC", "CRCL"]}
+        if tool_name == "compare_trade_routes":
+            args = {"ticker": "BTC", "product": "perp", "direction": "long", "amount": "1000"}
         if kind == "invalid":
             args["venues"] = ["binance"]
         (fixtures / "calls").write_text("")
@@ -41,8 +43,8 @@ def exercise(kind, tool_name="discover_markets"):
                         tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
                         if kind != "denied":
                             schema = tools[tool_name]["parameters"]
-                            assert set(schema["properties"]) == ({"tickers", "product", "quote"} if tool_name == "discover_markets" else {"tickers"}), schema
-                            assert schema["required"] == ["tickers"]
+                            assert set(schema["properties"]) == ({"ticker", "product", "amount", "currency", "direction"} if tool_name == "compare_trade_routes" else {"tickers", "product", "quote"} if tool_name == "discover_markets" else {"tickers"}), schema
+                            assert schema["required"] == (["ticker", "product", "amount"] if tool_name == "compare_trade_routes" else ["tickers"])
                         delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "discovery-1", "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
                         reason = "tool_calls"
                     else:
@@ -89,17 +91,23 @@ def exercise(kind, tool_name="discover_markets"):
                         continue
                     try:
                         candidate, _ = decoder.raw_decode(content[offset:])
-                        if isinstance(candidate, dict) and set(candidate) == ({"results", "errors"} if tool_name == "discover_markets" else {"columns", "results", "errors"}):
+                        if isinstance(candidate, dict) and set(candidate) == ({"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
                             payload = candidate
                             break
                     except ValueError:
                         pass
                 assert payload is not None, content
-                assert [entry["ticker"] for entry in payload["results"]] == ["BTC", "CRCL"]
+                assert [entry["ticker"] for entry in payload["results"]] == (["BTC"] if tool_name == "compare_trade_routes" else ["BTC", "CRCL"])
                 if tool_name == "discover_markets":
                     assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
                     assert "lighter" in calls
                     assert bool(payload["errors"]) == (kind == "partial"), payload
+                elif tool_name == "compare_trade_routes":
+                    entry = payload["results"][0]
+                    assert entry["selected"] and len(entry["routes"]) >= 2, payload
+                    assert all("chain" not in r for r in entry["routes"]), payload
+                    assert not any(c in calls for c in ("route-no-asset", "route-rh", "route-networks")), calls
+                    assert all(r["fees"] >= 0 and r["expectedQuantity"] > 0 for r in entry["routes"])
                 else:
                     for entry in payload["results"]:
                         assert "source" not in entry and "markets" not in entry
@@ -128,3 +136,6 @@ for case in ("success", "partial", "invalid", "denied"):
 
 for case in ("success", "partial", "invalid", "denied"):
     exercise(case, "get_market_candles")
+
+for case in ("success", "invalid", "denied"):
+    exercise(case, "compare_trade_routes")

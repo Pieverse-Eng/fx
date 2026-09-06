@@ -24,6 +24,7 @@ const grep_files_impl = @import("../tools/filesystem/grep_files.zig");
 const read_file_impl = @import("../tools/filesystem/read_file.zig");
 const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
+const compare_trade_routes_impl = @import("../tools/market/compare_trade_routes.zig");
 const get_market_candles_impl = @import("../tools/market/get_market_candles.zig");
 const discover_markets_impl = @import("../tools/market/discover_markets.zig");
 const shell_impl = @import("../tools/shell/shell.zig");
@@ -886,6 +887,37 @@ pub const get_market_candles = ToolSpec{
     .irreversible_fn = get_market_candles_impl.isIrreversible,
 };
 
+const compare_trade_routes_description =
+    "This tool allows you to compare taker execution costs across eight venues for one asset and amount. Stock spot buys also check BNB, Solana and Robinhood Chain. Returns ranked indicative routes, fees and exclusions; does not place orders.";
+
+pub const compare_trade_routes = ToolSpec{
+    .name = "compare_trade_routes",
+    .description = compare_trade_routes_description,
+    .model_schema = .{
+        .name = "compare_trade_routes",
+        .description = compare_trade_routes_description,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "ticker", .json_type = .string, .description = "One base ticker; resolve names first." },
+                .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp" } }, .description = "Spot buys or perpetual opening positions." },
+                .{ .name = "amount", .json_type = .string, .description = "Positive decimal: total budget including fees/gas for spot, position notional (not margin) for perps." },
+                .{ .name = "currency", .json_type = .string, .shape = &.{ .enum_values = &.{ "USDT", "USDC", "USD" } }, .description = "Amount currency; defaults to USDT." },
+                .{ .name = "direction", .json_type = .string, .shape = &.{ .enum_values = &.{ "long", "short" } }, .description = "Required for perps; omit for spot buys." },
+            },
+            .required = &.{ "ticker", "product", "amount" },
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .compare_trade_routes,
+    .activity_kind = .read,
+    .action_label = "Comparing trade routes",
+    .completed_action_label = "Compared trade routes",
+    .decode = compare_trade_routes_impl.decode,
+    .call = compare_trade_routes_impl.call,
+    .reads_only_fn = compare_trade_routes_impl.readsOnly,
+    .irreversible_fn = compare_trade_routes_impl.isIrreversible,
+};
+
 pub const all = [_]tool_dispatch.Tool{
     glob_files,
     grep_files,
@@ -906,6 +938,7 @@ pub const all = [_]tool_dispatch.Tool{
     read_tool_result,
     discover_markets,
     get_market_candles,
+    compare_trade_routes,
 };
 
 pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
@@ -913,6 +946,7 @@ pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
 pub const advertisement_order = [_][]const u8{
     "discover_markets",
     "get_market_candles",
+    "compare_trade_routes",
     "read_file",
     "glob_files",
     "grep_files",
@@ -933,6 +967,7 @@ pub const advertisement_order = [_][]const u8{
 pub const read_only_tool_names = [_][]const u8{
     "discover_markets",
     "get_market_candles",
+    "compare_trade_routes",
     "read_file",
     "glob_files",
     "grep_files",
@@ -1074,6 +1109,7 @@ test "built-in tools register exact active local order" {
         "read_tool_result",
         "discover_markets",
         "get_market_candles",
+        "compare_trade_routes",
     };
 
     try std.testing.expectEqual(expected_names.len, all.len);
@@ -1843,6 +1879,7 @@ test "built-in read-only tool set matches plan inspection tools" {
     const expected_names = [_][]const u8{
         "discover_markets",
         "get_market_candles",
+        "compare_trade_routes",
         "read_file",
         "glob_files",
         "grep_files",
