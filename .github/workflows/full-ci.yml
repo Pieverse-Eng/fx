@@ -66,6 +66,10 @@ jobs:
         if: runner.os == 'Linux'
         run: bash skills/market-discovery/scripts/test_lighter.sh
 
+      - name: Test Bitget, Gate, and Kraken discovery skills (Linux runtime)
+        if: runner.os == 'Linux'
+        run: bash skills/market-discovery/scripts/test_remaining_venues.sh
+
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 

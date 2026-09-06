@@ -16,5 +16,8 @@ For general availability requests without a specified venue, check the supported
 | OKX CEX | Spot (including stock tokens), linear perpetual contracts | [references/okx.md](references/okx.md) |
 | Hyperliquid | Spot, native perpetuals, HIP-3 perpetuals | [references/hyperliquid.md](references/hyperliquid.md) |
 | Lighter | Spot, perpetual contracts | [references/lighter.md](references/lighter.md) |
+| Bitget | Spot, USDT/USDC perpetuals | [references/bitget.md](references/bitget.md) |
+| Gate | Spot, USDT perpetuals | [references/gate.md](references/gate.md) |
+| Kraken | Spot (including xStocks), linear and inverse perpetuals | [references/kraken.md](references/kraken.md) |
 
 For requests spanning supported venues, run independent venue queries in parallel and combine their results. Keep unsupported venues or products explicit as coverage gaps.
