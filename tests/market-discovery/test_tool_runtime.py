@@ -104,9 +104,12 @@ def exercise(kind, tool_name="discover_markets"):
                     for entry in payload["results"]:
                         assert "source" not in entry and "markets" not in entry
                         assert entry["quote"] == "USDT" and entry["lastTrade"]["price"] == 102, entry
+                        assert isinstance(entry["asOf"], str) and entry["asOf"].endswith("Z"), entry
+                        assert isinstance(entry["lastTrade"]["time"], str) and entry["lastTrade"]["time"].endswith("Z"), entry
                         assert set(entry["timeframes"]) == {"15m", "1h", "4h"}
                         for frame in entry["timeframes"].values():
                             assert len(frame["closed"]) == 50 and len(frame["current"]) == 6, frame
+                            assert all(isinstance(row[0], str) and row[0].endswith("Z") for row in frame["closed"] + [frame["current"]]), frame
                     assert calls.count("binance-futures") == 1, calls
                     assert calls.count("candles-15m") == 2, calls
                     for ticker in ("BTC", "CRCL"):

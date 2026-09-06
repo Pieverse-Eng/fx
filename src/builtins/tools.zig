@@ -862,7 +862,7 @@ pub const discover_markets = ToolSpec{
 };
 
 const get_market_candles_description =
-    "This tool allows you to retrieve 15m, 1h, and 4h OHLCV candles and the latest trade for multiple base tickers. Automatically selects a reference market by comparable 24h trading volume across the eight supported venues. Returns quote currency, timestamps, up to 50 closed candles and the current candle per timeframe, and query errors. Rows follow columns; timestamps are Unix milliseconds, prices are per underlying unit, and volume is underlying quantity or null. Current candles are unconfirmed. Does not generate trade recommendations.";
+    "This tool allows you to retrieve 15m, 1h, and 4h OHLCV candles and the latest trade for multiple base tickers. Automatically selects a reference market by comparable 24h trading volume across the eight supported venues. Returns quote currency, timestamps, up to 50 closed candles and the current candle per timeframe, and query errors. Rows follow columns; timestamps are ISO 8601 UTC strings, prices are per underlying unit, and volume is underlying quantity or null. Current candles are unconfirmed. Does not generate trade recommendations.";
 
 pub const get_market_candles = ToolSpec{
     .name = "get_market_candles",

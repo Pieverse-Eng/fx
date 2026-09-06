@@ -41,6 +41,15 @@ normalize_candles "$m" 15m "$fixture/input.json" "$now" | jq -e 'all(.closed[];.
 # Latest-trade time is the trade time, never request time or a candle boundary.
 echo '[{"price":"102","time":1800001233000}]' >"$fixture/trade.json"
 normalize_trade '{"ticker":"BTC","baseAsset":"BTC","venue":"binance"}' "$fixture/trade.json" "$now" | jq -e '.price==102 and .time==1800001233000' >/dev/null
+# The public boundary formats every timestamp, preserving milliseconds and missing data.
+echo '{"results":[{"asOf":1788721732188,"lastTrade":{"price":102,"time":1788721200007},"timeframes":{"15m":{"closed":[[1788720300000,100,103,98,102,12]],"current":[1788721200000,102,103,101,102,1]},"1h":null,"4h":{"closed":[],"current":null}}},{"asOf":null,"lastTrade":null,"timeframes":{"15m":null,"1h":null,"4h":null}}],"errors":[]}' | format_candle_times >"$fixture/utc.json"
+jq -e '.results[0] as $r |
+  $r.asOf=="2026-09-06T19:08:52.188Z" and
+  $r.lastTrade=={price:102,time:"2026-09-06T19:00:00.007Z"} and
+  $r.timeframes["15m"].closed[0]==["2026-09-06T18:45:00.000Z",100,103,98,102,12] and
+  $r.timeframes["15m"].current[0]=="2026-09-06T19:00:00.000Z" and
+  $r.timeframes["1h"]==null and $r.timeframes["4h"].current==null and
+  .results[1].asOf==null and .results[1].lastTrade==null and .errors==[]' "$fixture/utc.json" >/dev/null
 # Invalid OHLC bounds fail instead of turning into model-visible invented candles.
 echo '[[1799999100000,100,99,98,102,12]]' >"$fixture/bad.json"
 if normalize_candles '{"ticker":"BTC","baseAsset":"BTC","venue":"binance"}' 15m "$fixture/bad.json" "$now" >/dev/null 2>&1; then exit 1; fi

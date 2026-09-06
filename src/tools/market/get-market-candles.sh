@@ -257,6 +257,24 @@ candle_asset() (
   if [[ -n $cache_dir && -f $dir/sources.jsonl ]]; then cp "$dir/sources.jsonl" "$cache_dir/candle-source-$ticker.jsonl"; fi
 )
 
+# Keep milliseconds for arithmetic; expose directly readable UTC times to the agent.
+format_candle_times() {
+  jq -c '
+    def utc:
+      if . == null then null else
+        . as $ms | (($ms / 1000 | floor) | strftime("%Y-%m-%dT%H:%M:%S"))
+        + "." + ("00" + ($ms % 1000 | floor | tostring) | .[-3:]) + "Z"
+      end;
+    .results |= map(
+      .asOf |= utc |
+      (if .lastTrade != null then .lastTrade.time |= utc else . end) |
+      .timeframes |= with_entries(.value |=
+        if . == null then null else
+          .closed |= map(.[0] |= utc) |
+          if .current == null then . else .current[0] |= utc end
+        end))'
+}
+
 run_candles() {
   local candidates="$scratch_root/candidates.json" m rate volume ticker venue
   jq -s '[.[]|.venue as $venue|.results[]|.ticker as $ticker|.markets[]|.+{venue:$venue,ticker:$ticker}]' "$@" >"$candidates"
@@ -296,5 +314,5 @@ run_candles() {
   workers=()
   local files=(); for ticker in "${tickers[@]}"; do files+=("$scratch_root/candles-$ticker/result.json"); done
   jq -sc --slurpfile discovery "$scratch_root/candle-errors.json" --slurpfile rank "$scratch_root/rank-errors.jsonl" '
-    {columns:["openTime","open","high","low","close","volume"],results:map(.result),errors:([.[].errors[]]+$discovery[0]+($rank|unique_by(.ticker,.venue)))}' "${files[@]}"
+    {columns:["openTime","open","high","low","close","volume"],results:map(.result),errors:([.[].errors[]]+$discovery[0]+($rank|unique_by(.ticker,.venue)))}' "${files[@]}" | format_candle_times
 }
