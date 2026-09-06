@@ -5,19 +5,10 @@ description: Find exact venue trading symbols from base tickers. Currently suppo
 
 # Market discovery
 
-## Aster perpetuals
+Select the venue reference matching the requested scope and read it before querying. Load only the references needed for the request.
 
-Run the bundled script through `shell` using its absolute path relative to this skill's loaded location. Requires Python 3 with only its standard library; no credentials or installed venue CLI are needed.
+| Venue | Products | Reference |
+| --- | --- | --- |
+| Aster | Perpetual contracts | [references/aster.md](references/aster.md) |
 
-```bash
-python3 <skill-directory>/scripts/aster.py exchange-info --base-asset CRCL
-python3 <skill-directory>/scripts/aster.py exchange-info --base-asset BTC ETH --quote-asset USDT
-```
-
-The script fetches the official contract catalog once, normalizes input tickers to uppercase, and locally matches `baseAsset` exactly. It returns only `PERPETUAL` contracts with `status: TRADING`. An omitted quote filter includes all matching quote assets. Group requested tickers into one invocation.
-
-Use the returned `symbol` unchanged for subsequent venue queries. Output includes the source URL, retrieval time, requested filters, and a `markets` array with contract identity and classification fields. A successful empty array means no active exact-base perpetual matches for these filters. API, network, or malformed-response errors exit nonzero and must be reported as unresolved coverage.
-
-Inputs are venue base tickers, not company names or trading pairs. This script does not resolve aliases or contract multipliers: for example, `PEPE` does not match `1000PEPE`. Do not interpret an empty exact-base search as proof that no related exposure exists. Scope is Aster perpetuals; it does not search Spot or other venues.
-
-The official [`exchangeInfo` endpoint](https://asterdex.github.io/aster-api-website/futures-v3/market-data/#exchange-information) has no documented filter parameters. Fetching and filtering happen inside the script, so the agent does not need to inspect the full catalog.
+For requests spanning supported venues, run independent venue queries in parallel and combine their results. Keep unsupported venues or products explicit as coverage gaps.
