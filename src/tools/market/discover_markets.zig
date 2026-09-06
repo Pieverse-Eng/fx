@@ -182,6 +182,41 @@ test "discover_markets filters each requested pair without mixing quotes or hidi
     try std.testing.expectEqual(@as(usize, 0), both_output.unresolved.len);
 }
 
+test "discover_markets Lighter mainnet perps match USDC while spot keeps its own quote" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const catalogs = try std.json.parseFromSlice([]t.Catalog, a,
+        \\[{"source":"lighter","data":{"code":200,"order_books":[
+        \\{"symbol":"BTC","market_id":1,"market_type":"perp","base_asset_id":0,"quote_asset_id":0,"status":"active"},
+        \\{"symbol":"ETH/USDC","market_id":2048,"market_type":"spot","status":"active"},
+        \\{"symbol":"BTC/EUR","market_id":2049,"market_type":"spot","status":"active"}]}},
+        \\{"source":"binance_spot","data":{"symbols":[
+        \\{"symbol":"BTCUSDT","baseAsset":"BTC","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":true}]}}]
+    , .{});
+    const usdc_request = try parseRequest(a, "{\"tickers\":[\"BTC/USDC\",\"ETH/USDC\"]}");
+    const usdc = try aggregate(a, usdc_request, catalogs.value, 1);
+    try std.testing.expectEqual(@as(usize, 2), usdc.markets.len);
+    try std.testing.expectEqual(@as(usize, 0), usdc.unresolved.len);
+    try std.testing.expectEqualStrings("BTC", usdc.markets[0].symbol);
+    try std.testing.expectEqual(.future, usdc.markets[0].product);
+    try std.testing.expectEqualStrings("1", usdc.markets[0].marketId.?);
+    for (usdc.markets) |market| {
+        try std.testing.expectEqual(.lighter, market.venue);
+        try std.testing.expectEqualStrings("USDC", market.quote.?);
+    }
+    const default_request = try parseRequest(a, "{\"tickers\":[\"BTC\"]}");
+    const usdt = try aggregate(a, default_request, catalogs.value, 1);
+    try std.testing.expectEqual(@as(usize, 1), usdt.markets.len);
+    try std.testing.expectEqual(.binance, usdt.markets[0].venue);
+    try std.testing.expectEqual(@as(usize, 0), usdt.unresolved.len);
+    const eur_request = try parseRequest(a, "{\"tickers\":[\"BTC/EUR\"],\"product\":\"spot\"}");
+    const eur = try aggregate(a, eur_request, catalogs.value, 1);
+    try std.testing.expectEqual(@as(usize, 1), eur.markets.len);
+    try std.testing.expectEqualStrings("BTC/EUR", eur.markets[0].symbol);
+    try std.testing.expectEqualStrings("EUR", eur.markets[0].quote.?);
+}
+
 test "discover_markets real stock catalogs preserve exact symbols and all Gate variants" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

@@ -248,8 +248,10 @@ fn lighter(ctx: *Context, data: t.Value) !void {
             .venue = .lighter,
             .symbol = symbol,
             .product = if (spot) .spot else .future,
-            // Perp catalogs do not name a quote currency; IDs such as 0 must not be interpreted as a currency.
-            .quote = if (spot) try quotedPair(symbol, '/') else null,
+            // purr queries Lighter mainnet, whose perpetual quote asset is USDC:
+            // https://apidocs.lighter.xyz/docs/trading (Handle price and size).
+            // This is a product rule, not a mapping of the catalog's placeholder asset IDs.
+            .quote = if (spot) try quotedPair(symbol, '/') else "USDC",
             .status = try required(r, "status"),
             .marketId = try t.text(ctx.alloc, f(r, "market_id") orelse return error.MissingListingField),
             .contractType = if (spot) null else "perpetual",
