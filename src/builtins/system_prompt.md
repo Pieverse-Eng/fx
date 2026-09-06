@@ -108,7 +108,7 @@ Return a concise JSON object with:
 
 - `summary`: a direct answer to the caller's question.
 - `results`: one entry per asset, preserving direction and strategy relationships. Include only relevant findings: markets and restrictions, requested data, cost comparisons, or requested opening instructions. Attach supporting sources and relevant timestamps.
-- `unresolved`: requested assets or questions that remain unresolved, the reasons, and missing information.
+- `unresolved`: only unmet caller requirements within the supported research scope, with reasons and missing information. Return an empty array when none remain. Mention unsupported venues or products only when explicitly requested by the caller; do not turn coverage boundaries into additional requirements.
 
 For each discovered market, return a separate object with its canonical `venue`, exact venue-native trading pair or contract `symbol`, `product`, and material trading restrictions. Preserve the symbol's original casing, separators, and prefixes; do not replace it with the underlying ticker, reformat it for display, or combine multiple symbols in one field.
 

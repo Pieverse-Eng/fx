@@ -50,7 +50,7 @@ pub const Output = struct {
     checkedAt: i64,
     specificationsOmitted: bool = false,
     // Scope describes adapter coverage, not everything a venue might support.
-    scope: []const u8 = "Public spot catalogs and supported futures catalogs: Aster FAPI, Binance USD-M, Bitget USDT/USDC, Gate USDT, Kraken Futures, Hyperliquid all perpetual DEXs, Lighter, OKX SWAP. No direct brokerage stocks, options, or account eligibility checks.",
+    scope: []const u8 = "Public spot catalogs and supported futures catalogs: Aster FAPI, Binance USD-M, Bitget USDT/USDC, Gate USDT, Kraken Futures, Hyperliquid all perpetual DEXs, Lighter, OKX SWAP.",
 };
 pub fn venue(source: Source) Venue {
     return switch (source) {
