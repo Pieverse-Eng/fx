@@ -21,6 +21,7 @@ const connect_timeout_ms: i64 = 30_000;
 
 pub const agent_stream_provider = stream_provider.Provider{
     .stream_fn = streamCompletion,
+    .build_request_fn = buildRequestForProvider,
 };
 
 pub fn fallbackModelCapabilities(_: []const u8) @import("../core/config/model_capabilities.zig").Capabilities {
@@ -40,6 +41,7 @@ fn validateModel(model: []const u8) !void {
 }
 
 pub fn buildRequest(alloc: Allocator, request: stream_provider.RequestData) ![]u8 {
+    try request.validatePrompt();
     try validateModel(request.model);
     if (request.verified_images != null or request.vision_mode == .required) {
         return error.PieverseVisionUnsupported;
@@ -55,6 +57,8 @@ pub fn buildRequest(alloc: Allocator, request: stream_provider.RequestData) ![]u
     try writer.writeAll("{\"model\":");
     try std.json.Stringify.value(request.model, .{}, writer);
     try writer.writeAll(",\"messages\":[");
+    try writeMessages(writer, request.instructions);
+    if (request.instructions.len > 0 and request.messages.len > 0) try writer.writeByte(',');
     try writeMessages(writer, request.messages);
     try writer.writeAll("],\"stream\":true,\"stream_options\":{\"include_usage\":true}");
 
@@ -180,11 +184,15 @@ fn containsName(names: []const []const u8, candidate: []const u8) bool {
     return false;
 }
 
+fn buildRequestForProvider(_: ?*anyopaque, alloc: Allocator, request: stream_provider.RequestData) ![]u8 {
+    return buildRequest(alloc, request);
+}
+
 fn streamCompletion(_: ?*anyopaque, alloc: Allocator, request: stream_provider.ModelRequest) !stream_provider.Result {
     if (request.cancel_flag.load(.seq_cst)) return error.Cancelled;
     if (request.credential.credentialSource() != .pieverse_api_key) return error.PieverseCredentialRequired;
-    const payload = try buildRequest(alloc, request.data());
-    defer alloc.free(payload);
+    const payload = request.prepared_request_body orelse try buildRequest(alloc, request.data());
+    defer if (request.prepared_request_body == null) alloc.free(payload);
     return streamPrepared(alloc, request, payload) catch |err| {
         if (request.cancel_flag.load(.seq_cst)) return error.Cancelled;
         request.attempt_evidence.network_failure = gateway_client.networkFailureEvidence(err, request.delivery.load());
@@ -581,8 +589,8 @@ test "Pieverse request uses OpenAI chat completions tools and tenant model id" {
     };
     const body = try buildRequest(std.testing.allocator, .{
         .model = "pieverse/auto/paid",
+        .instructions = &.{.{ .role = .system, .content = "Research markets." }},
         .messages = &.{
-            .{ .role = .system, .content = "Research markets." },
             .{ .role = .user, .content = "Find BTC." },
         },
         .tools = .{
@@ -593,6 +601,13 @@ test "Pieverse request uses OpenAI chat completions tools and tenant model id" {
         .provider_options = .{ .parallel_tool_calls = true },
     });
     defer std.testing.allocator.free(body);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, body, .{});
+    defer parsed.deinit();
+    const messages = parsed.value.object.get("messages").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), messages.len);
+    try std.testing.expectEqualStrings("system", messages[0].object.get("role").?.string);
+    try std.testing.expectEqualStrings("Research markets.", messages[0].object.get("content").?.string);
+    try std.testing.expectEqualStrings("user", messages[1].object.get("role").?.string);
     try std.testing.expect(std.mem.find(u8, body, "\"model\":\"pieverse/auto/paid\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "\"stream_options\":{\"include_usage\":true}") != null);
     try std.testing.expect(std.mem.find(u8, body, "\"function\":{\"name\":\"market_search\"") != null);
@@ -673,4 +688,20 @@ test "Pieverse SSE rejects provider error frames" {
         \\
     ;
     try std.testing.expectError(error.PieverseResponseFailed, consumeTestSse(failed));
+}
+
+test "Pieverse rejects misplaced system instructions before serialization" {
+    try std.testing.expectError(error.InvalidProviderPrompt, buildRequest(std.testing.allocator, .{
+        .model = "pieverse/test",
+        .messages = &.{.{ .role = .system, .content = "misplaced" }},
+        .tool_choice = .auto,
+        .provider_options = .{},
+    }));
+    try std.testing.expectError(error.InvalidProviderPrompt, buildRequest(std.testing.allocator, .{
+        .model = "pieverse/test",
+        .instructions = &.{.{ .role = .user, .content = "untrusted" }},
+        .messages = &.{},
+        .tool_choice = .auto,
+        .provider_options = .{},
+    }));
 }
