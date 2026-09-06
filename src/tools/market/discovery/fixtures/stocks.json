@@ -1,0 +1,1148 @@
+[
+  {
+    "source": "aster",
+    "data": {
+      "symbols": [
+        {
+          "symbol": "AAPLUSDT",
+          "filters": [
+            {
+              "minPrice": "0.010000",
+              "maxPrice": "2000",
+              "filterType": "PRICE_FILTER",
+              "tickSize": "0.010000"
+            },
+            {
+              "stepSize": "0.01",
+              "filterType": "LOT_SIZE",
+              "maxQty": "20000",
+              "minQty": "0.01"
+            },
+            {
+              "stepSize": "0.01",
+              "filterType": "MARKET_LOT_SIZE",
+              "maxQty": "2000",
+              "minQty": "0.01"
+            },
+            {
+              "limit": 200,
+              "filterType": "MAX_NUM_ORDERS"
+            },
+            {
+              "limit": 10,
+              "filterType": "MAX_NUM_ALGO_ORDERS"
+            },
+            {
+              "notional": "5",
+              "filterType": "MIN_NOTIONAL"
+            },
+            {
+              "multiplierDown": "0.9800",
+              "multiplierUp": "1.0200",
+              "ltMultiplierDown": "0.9800",
+              "multiplierDecimal": "4",
+              "filterType": "PERCENT_PRICE",
+              "ltMultiplierUp": "1.0200"
+            }
+          ],
+          "contractType": "PERPETUAL",
+          "status": "TRADING",
+          "baseAsset": "AAPL",
+          "quoteAsset": "USDT",
+          "symbolType": 1,
+          "name": "",
+          "tags": [
+            "Apple",
+            "Stock",
+            "\u80a1\u7968",
+            "\u82f9\u679c",
+            "\u82f9",
+            "\u80a1\u7968",
+            "\u860b\u679c",
+            "\u860b"
+          ]
+        },
+        {
+          "symbol": "TSLAUSDT",
+          "filters": [
+            {
+              "minPrice": "0.010000",
+              "maxPrice": "2000",
+              "filterType": "PRICE_FILTER",
+              "tickSize": "0.010000"
+            },
+            {
+              "stepSize": "0.01",
+              "filterType": "LOT_SIZE",
+              "maxQty": "20000",
+              "minQty": "0.01"
+            },
+            {
+              "stepSize": "0.01",
+              "filterType": "MARKET_LOT_SIZE",
+              "maxQty": "2000",
+              "minQty": "0.01"
+            },
+            {
+              "limit": 200,
+              "filterType": "MAX_NUM_ORDERS"
+            },
+            {
+              "limit": 10,
+              "filterType": "MAX_NUM_ALGO_ORDERS"
+            },
+            {
+              "notional": "5",
+              "filterType": "MIN_NOTIONAL"
+            },
+            {
+              "multiplierDown": "0.9800",
+              "multiplierUp": "1.0200",
+              "ltMultiplierDown": "0.9800",
+              "multiplierDecimal": "4",
+              "filterType": "PERCENT_PRICE",
+              "ltMultiplierUp": "1.0200"
+            }
+          ],
+          "contractType": "PERPETUAL",
+          "status": "TRADING",
+          "baseAsset": "TSLA",
+          "quoteAsset": "USDT",
+          "symbolType": 1,
+          "name": "",
+          "tags": [
+            "Tesla",
+            "Stock",
+            "\u80a1\u7968",
+            "\u7279\u65af\u62c9",
+            "\u80a1\u7968",
+            "\u7279\u65af\u62c9"
+          ]
+        },
+        {
+          "symbol": "NVDAUSDT",
+          "filters": [
+            {
+              "minPrice": "0.010000",
+              "maxPrice": "2000",
+              "filterType": "PRICE_FILTER",
+              "tickSize": "0.010000"
+            },
+            {
+              "stepSize": "0.01",
+              "filterType": "LOT_SIZE",
+              "maxQty": "30000",
+              "minQty": "0.01"
+            },
+            {
+              "stepSize": "0.01",
+              "filterType": "MARKET_LOT_SIZE",
+              "maxQty": "3000",
+              "minQty": "0.01"
+            },
+            {
+              "limit": 200,
+              "filterType": "MAX_NUM_ORDERS"
+            },
+            {
+              "limit": 10,
+              "filterType": "MAX_NUM_ALGO_ORDERS"
+            },
+            {
+              "notional": "5",
+              "filterType": "MIN_NOTIONAL"
+            },
+            {
+              "multiplierDown": "0.9800",
+              "multiplierUp": "1.0200",
+              "ltMultiplierDown": "0.9800",
+              "multiplierDecimal": "4",
+              "filterType": "PERCENT_PRICE",
+              "ltMultiplierUp": "1.0200"
+            }
+          ],
+          "contractType": "PERPETUAL",
+          "status": "TRADING",
+          "baseAsset": "NVDA",
+          "quoteAsset": "USDT",
+          "symbolType": 1,
+          "name": "",
+          "tags": []
+        }
+      ]
+    }
+  },
+  {
+    "source": "binance_spot",
+    "data": {
+      "symbols": [
+        {
+          "symbol": "NVDABUSDT",
+          "status": "TRADING",
+          "baseAsset": "NVDAB",
+          "quoteAsset": "USDT",
+          "isSpotTradingAllowed": true,
+          "filters": [
+            {
+              "filterType": "PRICE_FILTER",
+              "minPrice": "0.01000000",
+              "maxPrice": "100000.00000000",
+              "tickSize": "0.01000000"
+            },
+            {
+              "filterType": "LOT_SIZE",
+              "minQty": "0.00100000",
+              "maxQty": "922327.00000000",
+              "stepSize": "0.00100000"
+            },
+            {
+              "filterType": "ICEBERG_PARTS",
+              "limit": 100
+            },
+            {
+              "filterType": "MARKET_LOT_SIZE",
+              "minQty": "0.00000000",
+              "maxQty": "1168.88205833",
+              "stepSize": "0.00000000"
+            },
+            {
+              "filterType": "TRAILING_DELTA",
+              "minTrailingAboveDelta": 10,
+              "maxTrailingAboveDelta": 2000,
+              "minTrailingBelowDelta": 10,
+              "maxTrailingBelowDelta": 2000
+            },
+            {
+              "filterType": "PERCENT_PRICE_BY_SIDE",
+              "bidMultiplierUp": "1.1",
+              "bidMultiplierDown": "0.8",
+              "askMultiplierUp": "1.2",
+              "askMultiplierDown": "0.9",
+              "avgPriceMins": 5
+            },
+            {
+              "filterType": "NOTIONAL",
+              "minNotional": "5.00000000",
+              "applyMinToMarket": true,
+              "maxNotional": "9000000.00000000",
+              "applyMaxToMarket": false,
+              "avgPriceMins": 5
+            },
+            {
+              "filterType": "MAX_NUM_ORDERS",
+              "maxNumOrders": 200
+            },
+            {
+              "filterType": "MAX_NUM_ORDER_LISTS",
+              "maxNumOrderLists": 20
+            },
+            {
+              "filterType": "MAX_NUM_ALGO_ORDERS",
+              "maxNumAlgoOrders": 5
+            },
+            {
+              "filterType": "MAX_NUM_ORDER_AMENDS",
+              "maxNumOrderAmends": 10
+            }
+          ]
+        },
+        {
+          "symbol": "TSLABUSDT",
+          "status": "TRADING",
+          "baseAsset": "TSLAB",
+          "quoteAsset": "USDT",
+          "isSpotTradingAllowed": true,
+          "filters": [
+            {
+              "filterType": "PRICE_FILTER",
+              "minPrice": "0.01000000",
+              "maxPrice": "100000.00000000",
+              "tickSize": "0.01000000"
+            },
+            {
+              "filterType": "LOT_SIZE",
+              "minQty": "0.00100000",
+              "maxQty": "922327.00000000",
+              "stepSize": "0.00100000"
+            },
+            {
+              "filterType": "ICEBERG_PARTS",
+              "limit": 100
+            },
+            {
+              "filterType": "MARKET_LOT_SIZE",
+              "minQty": "0.00000000",
+              "maxQty": "604.59323750",
+              "stepSize": "0.00000000"
+            },
+            {
+              "filterType": "TRAILING_DELTA",
+              "minTrailingAboveDelta": 10,
+              "maxTrailingAboveDelta": 2000,
+              "minTrailingBelowDelta": 10,
+              "maxTrailingBelowDelta": 2000
+            },
+            {
+              "filterType": "PERCENT_PRICE_BY_SIDE",
+              "bidMultiplierUp": "1.1",
+              "bidMultiplierDown": "0.8",
+              "askMultiplierUp": "1.2",
+              "askMultiplierDown": "0.9",
+              "avgPriceMins": 5
+            },
+            {
+              "filterType": "NOTIONAL",
+              "minNotional": "5.00000000",
+              "applyMinToMarket": true,
+              "maxNotional": "9000000.00000000",
+              "applyMaxToMarket": false,
+              "avgPriceMins": 5
+            },
+            {
+              "filterType": "MAX_NUM_ORDERS",
+              "maxNumOrders": 200
+            },
+            {
+              "filterType": "MAX_NUM_ORDER_LISTS",
+              "maxNumOrderLists": 20
+            },
+            {
+              "filterType": "MAX_NUM_ALGO_ORDERS",
+              "maxNumAlgoOrders": 5
+            },
+            {
+              "filterType": "MAX_NUM_ORDER_AMENDS",
+              "maxNumOrderAmends": 10
+            }
+          ]
+        },
+        {
+          "symbol": "AAPLBUSDT",
+          "status": "TRADING",
+          "baseAsset": "AAPLB",
+          "quoteAsset": "USDT",
+          "isSpotTradingAllowed": true,
+          "filters": [
+            {
+              "filterType": "PRICE_FILTER",
+              "minPrice": "0.01000000",
+              "maxPrice": "100000.00000000",
+              "tickSize": "0.01000000"
+            },
+            {
+              "filterType": "LOT_SIZE",
+              "minQty": "0.00100000",
+              "maxQty": "922327.00000000",
+              "stepSize": "0.00100000"
+            },
+            {
+              "filterType": "ICEBERG_PARTS",
+              "limit": 100
+            },
+            {
+              "filterType": "MARKET_LOT_SIZE",
+              "minQty": "0.00000000",
+              "maxQty": "585.28852083",
+              "stepSize": "0.00000000"
+            },
+            {
+              "filterType": "TRAILING_DELTA",
+              "minTrailingAboveDelta": 10,
+              "maxTrailingAboveDelta": 2000,
+              "minTrailingBelowDelta": 10,
+              "maxTrailingBelowDelta": 2000
+            },
+            {
+              "filterType": "PERCENT_PRICE_BY_SIDE",
+              "bidMultiplierUp": "1.1",
+              "bidMultiplierDown": "0.8",
+              "askMultiplierUp": "1.2",
+              "askMultiplierDown": "0.9",
+              "avgPriceMins": 5
+            },
+            {
+              "filterType": "NOTIONAL",
+              "minNotional": "5.00000000",
+              "applyMinToMarket": true,
+              "maxNotional": "9000000.00000000",
+              "applyMaxToMarket": false,
+              "avgPriceMins": 5
+            },
+            {
+              "filterType": "MAX_NUM_ORDERS",
+              "maxNumOrders": 200
+            },
+            {
+              "filterType": "MAX_NUM_ORDER_LISTS",
+              "maxNumOrderLists": 20
+            },
+            {
+              "filterType": "MAX_NUM_ALGO_ORDERS",
+              "maxNumAlgoOrders": 5
+            },
+            {
+              "filterType": "MAX_NUM_ORDER_AMENDS",
+              "maxNumOrderAmends": 10
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "binance_future",
+    "data": {
+      "symbols": [
+        {
+          "symbol": "TSLAUSDT",
+          "contractType": "TRADIFI_PERPETUAL",
+          "status": "TRADING",
+          "baseAsset": "TSLA",
+          "quoteAsset": "USDT",
+          "filters": [
+            {
+              "filterType": "PRICE_FILTER",
+              "maxPrice": "100000",
+              "tickSize": "0.01000",
+              "minPrice": "0.01000"
+            },
+            {
+              "maxQty": "20000",
+              "filterType": "LOT_SIZE",
+              "minQty": "0.01",
+              "stepSize": "0.01"
+            },
+            {
+              "maxQty": "2000",
+              "minQty": "0.01",
+              "stepSize": "0.01",
+              "filterType": "MARKET_LOT_SIZE"
+            },
+            {
+              "filterType": "MAX_NUM_ORDERS",
+              "limit": 200
+            },
+            {
+              "notional": "5",
+              "filterType": "MIN_NOTIONAL"
+            },
+            {
+              "multiplierDown": "0.9700",
+              "multiplierDecimal": "4",
+              "filterType": "PERCENT_PRICE",
+              "multiplierUp": "1.0300"
+            },
+            {
+              "filterType": "POSITION_RISK_CONTROL",
+              "positionControlSide": "NONE"
+            }
+          ]
+        },
+        {
+          "symbol": "NVDAUSDT",
+          "contractType": "TRADIFI_PERPETUAL",
+          "status": "TRADING",
+          "baseAsset": "NVDA",
+          "quoteAsset": "USDT",
+          "filters": [
+            {
+              "maxPrice": "20000",
+              "tickSize": "0.01000",
+              "filterType": "PRICE_FILTER",
+              "minPrice": "0.01000"
+            },
+            {
+              "stepSize": "0.01",
+              "filterType": "LOT_SIZE",
+              "maxQty": "30000",
+              "minQty": "0.01"
+            },
+            {
+              "minQty": "0.01",
+              "maxQty": "3000",
+              "filterType": "MARKET_LOT_SIZE",
+              "stepSize": "0.01"
+            },
+            {
+              "limit": 200,
+              "filterType": "MAX_NUM_ORDERS"
+            },
+            {
+              "notional": "5",
+              "filterType": "MIN_NOTIONAL"
+            },
+            {
+              "multiplierDown": "0.9700",
+              "multiplierDecimal": "4",
+              "filterType": "PERCENT_PRICE",
+              "multiplierUp": "1.0300"
+            },
+            {
+              "filterType": "POSITION_RISK_CONTROL",
+              "positionControlSide": "NONE"
+            }
+          ]
+        },
+        {
+          "symbol": "AAPLUSDT",
+          "contractType": "TRADIFI_PERPETUAL",
+          "status": "TRADING",
+          "baseAsset": "AAPL",
+          "quoteAsset": "USDT",
+          "filters": [
+            {
+              "minPrice": "0.01000",
+              "maxPrice": "20000",
+              "tickSize": "0.01000",
+              "filterType": "PRICE_FILTER"
+            },
+            {
+              "maxQty": "20000",
+              "minQty": "0.01",
+              "filterType": "LOT_SIZE",
+              "stepSize": "0.01"
+            },
+            {
+              "maxQty": "2000",
+              "stepSize": "0.01",
+              "filterType": "MARKET_LOT_SIZE",
+              "minQty": "0.01"
+            },
+            {
+              "limit": 200,
+              "filterType": "MAX_NUM_ORDERS"
+            },
+            {
+              "filterType": "MIN_NOTIONAL",
+              "notional": "5"
+            },
+            {
+              "multiplierDecimal": "4",
+              "multiplierDown": "0.9700",
+              "filterType": "PERCENT_PRICE",
+              "multiplierUp": "1.0300"
+            },
+            {
+              "filterType": "POSITION_RISK_CONTROL",
+              "positionControlSide": "NONE"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "binance_assets",
+    "data": {
+      "code": "000000",
+      "success": true,
+      "data": [
+        {
+          "id": "1748",
+          "assetCode": "TSLAB",
+          "trading": true,
+          "tags": [
+            "bStocks"
+          ],
+          "delisted": false,
+          "uq": "TSLA"
+        },
+        {
+          "id": "1749",
+          "assetCode": "NVDAB",
+          "trading": true,
+          "tags": [
+            "bStocks"
+          ],
+          "delisted": false,
+          "uq": "NVDA"
+        },
+        {
+          "id": "1803",
+          "assetCode": "AAPLB",
+          "trading": true,
+          "tags": [
+            "bStocks"
+          ],
+          "delisted": false,
+          "uq": "AAPL"
+        },
+        {
+          "id": "1823",
+          "assetCode": "TSLAONETH",
+          "trading": false,
+          "tags": [],
+          "delisted": false,
+          "uq": ""
+        },
+        {
+          "id": "1828",
+          "assetCode": "TSLAONBSC",
+          "trading": false,
+          "tags": [],
+          "delisted": false,
+          "uq": ""
+        },
+        {
+          "id": "1841",
+          "assetCode": "TSLAX",
+          "trading": false,
+          "tags": [],
+          "delisted": false,
+          "uq": ""
+        }
+      ]
+    }
+  },
+  {
+    "source": "bitget_spot",
+    "data": {
+      "data": [
+        {
+          "symbol": "RNVDAUSDT",
+          "category": "SPOT",
+          "baseCoin": "rNVDA",
+          "quoteCoin": "USDT",
+          "symbolType": "stock",
+          "status": "online"
+        },
+        {
+          "symbol": "RTSLAUSDT",
+          "category": "SPOT",
+          "baseCoin": "rTSLA",
+          "quoteCoin": "USDT",
+          "symbolType": "stock",
+          "status": "online"
+        },
+        {
+          "symbol": "RAAPLUSDT",
+          "category": "SPOT",
+          "baseCoin": "rAAPL",
+          "quoteCoin": "USDT",
+          "symbolType": "stock",
+          "status": "online"
+        }
+      ]
+    }
+  },
+  {
+    "source": "bitget_usdt",
+    "data": {
+      "data": [
+        {
+          "symbol": "TSLAUSDT",
+          "category": "USDT-FUTURES",
+          "baseCoin": "TSLA",
+          "quoteCoin": "USDT",
+          "symbolType": "stock",
+          "type": "perpetual",
+          "status": "online"
+        },
+        {
+          "symbol": "NVDAUSDT",
+          "category": "USDT-FUTURES",
+          "baseCoin": "NVDA",
+          "quoteCoin": "USDT",
+          "symbolType": "stock",
+          "type": "perpetual",
+          "status": "online"
+        },
+        {
+          "symbol": "AAPLUSDT",
+          "category": "USDT-FUTURES",
+          "baseCoin": "AAPL",
+          "quoteCoin": "USDT",
+          "symbolType": "stock",
+          "type": "perpetual",
+          "status": "online"
+        }
+      ]
+    }
+  },
+  {
+    "source": "bitget_usdc",
+    "data": {
+      "data": []
+    }
+  },
+  {
+    "source": "gate_spot",
+    "data": [
+      {
+        "id": "AAPLG_USDT",
+        "base": "AAPLG",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "TSLA3L_USDT",
+        "base": "TSLA3L",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "TSLA3S_USDT",
+        "base": "TSLA3S",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "TSLAON_USDT",
+        "base": "TSLAON",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "AAPL3L_USDT",
+        "base": "AAPL3L",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "AAPLX_USDT",
+        "base": "AAPLX",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "NVDAG_USDT",
+        "base": "NVDAG",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "AINVDA_USDT",
+        "base": "AINVDA",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "NVDAON_USDT",
+        "base": "NVDAON",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "NVDA3L_USDT",
+        "base": "NVDA3L",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "NVDA3S_USDT",
+        "base": "NVDA3S",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "NVDAX_USDT",
+        "base": "NVDAX",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "TSLAX_USDT",
+        "base": "TSLAX",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "TSLAG_USDT",
+        "base": "TSLAG",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "AAPL3S_USDT",
+        "base": "AAPL3S",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      },
+      {
+        "id": "AAPLON_USDT",
+        "base": "AAPLON",
+        "quote": "USDT",
+        "trade_status": "tradable",
+        "type": "normal"
+      }
+    ]
+  },
+  {
+    "source": "gate_future",
+    "data": [
+      {
+        "in_delisting": false,
+        "name": "AAPLX_USDT",
+        "type": "direct",
+        "quanto_multiplier": "0.01",
+        "status": "trading"
+      },
+      {
+        "in_delisting": false,
+        "name": "AAPL_USDT",
+        "type": "direct",
+        "quanto_multiplier": "0.01",
+        "status": "trading"
+      },
+      {
+        "in_delisting": false,
+        "name": "AINVDA_USDT",
+        "type": "direct",
+        "quanto_multiplier": "10",
+        "status": "trading"
+      },
+      {
+        "in_delisting": false,
+        "name": "NVDAX_USDT",
+        "type": "direct",
+        "quanto_multiplier": "0.01",
+        "status": "trading"
+      },
+      {
+        "in_delisting": false,
+        "name": "NVDA_USDT",
+        "type": "direct",
+        "quanto_multiplier": "0.01",
+        "status": "trading"
+      },
+      {
+        "in_delisting": false,
+        "name": "TSLAX_USDT",
+        "type": "direct",
+        "quanto_multiplier": "0.01",
+        "status": "trading"
+      },
+      {
+        "in_delisting": false,
+        "name": "TSLA_USDT",
+        "type": "direct",
+        "quanto_multiplier": "0.01",
+        "status": "trading"
+      }
+    ]
+  },
+  {
+    "source": "kraken_assets",
+    "data": {
+      "AAPLSPV": {
+        "aclass": "tokenized_asset",
+        "altname": "AAPLx",
+        "status": "enabled"
+      },
+      "AAPLx": {
+        "aclass": "tokenized_asset",
+        "altname": "AAPLx",
+        "status": "enabled"
+      },
+      "NVDASPV": {
+        "aclass": "tokenized_asset",
+        "altname": "NVDAx",
+        "status": "enabled"
+      },
+      "NVDAx": {
+        "aclass": "tokenized_asset",
+        "altname": "NVDAx",
+        "status": "enabled"
+      },
+      "TSLASPV": {
+        "aclass": "tokenized_asset",
+        "altname": "TSLAx",
+        "status": "enabled"
+      },
+      "TSLAx": {
+        "aclass": "tokenized_asset",
+        "altname": "TSLAx",
+        "status": "enabled"
+      }
+    }
+  },
+  {
+    "source": "kraken_xstocks",
+    "data": {
+      "AAPLSPVUSD": {
+        "aclass_base": "tokenized_asset",
+        "altname": "AAPLxUSD",
+        "base": "AAPLx",
+        "fees": [
+          [
+            0,
+            0.1
+          ]
+        ],
+        "quote": "ZUSD",
+        "status": "online",
+        "wsname": "AAPLx/USD"
+      },
+      "AAPLxUSD": {
+        "aclass_base": "tokenized_asset",
+        "altname": "AAPLxUSD",
+        "base": "AAPLx",
+        "fees": [
+          [
+            0,
+            0.1
+          ]
+        ],
+        "quote": "ZUSD",
+        "status": "online",
+        "wsname": "AAPLx/USD"
+      },
+      "NVDASPVUSD": {
+        "aclass_base": "tokenized_asset",
+        "altname": "NVDAxUSD",
+        "base": "NVDAx",
+        "fees": [
+          [
+            0,
+            0.1
+          ]
+        ],
+        "quote": "ZUSD",
+        "status": "online",
+        "wsname": "NVDAx/USD"
+      },
+      "NVDAxUSD": {
+        "aclass_base": "tokenized_asset",
+        "altname": "NVDAxUSD",
+        "base": "NVDAx",
+        "fees": [
+          [
+            0,
+            0.1
+          ]
+        ],
+        "quote": "ZUSD",
+        "status": "online",
+        "wsname": "NVDAx/USD"
+      },
+      "TSLASPVUSD": {
+        "aclass_base": "tokenized_asset",
+        "altname": "TSLAxUSD",
+        "base": "TSLAx",
+        "fees": [
+          [
+            0,
+            0.1
+          ]
+        ],
+        "quote": "ZUSD",
+        "status": "online",
+        "wsname": "TSLAx/USD"
+      },
+      "TSLAxUSD": {
+        "aclass_base": "tokenized_asset",
+        "altname": "TSLAxUSD",
+        "base": "TSLAx",
+        "fees": [
+          [
+            0,
+            0.1
+          ]
+        ],
+        "quote": "ZUSD",
+        "status": "online",
+        "wsname": "TSLAx/USD"
+      }
+    }
+  },
+  {
+    "source": "kraken_future",
+    "data": {
+      "result": "success",
+      "instruments": [
+        {
+          "base": "TSLAx",
+          "category": "xStocks",
+          "contractSize": 1,
+          "isExpired": false,
+          "quote": "USD",
+          "symbol": "PF_TSLAXUSD",
+          "tags": [],
+          "tradeable": true,
+          "type": "flexible_futures"
+        },
+        {
+          "base": "NVDAx",
+          "category": "xStocks",
+          "contractSize": 1,
+          "isExpired": false,
+          "quote": "USD",
+          "symbol": "PF_NVDAXUSD",
+          "tags": [],
+          "tradeable": true,
+          "type": "flexible_futures"
+        },
+        {
+          "base": "AAPLx",
+          "category": "xStocks",
+          "contractSize": 1,
+          "isExpired": false,
+          "quote": "USD",
+          "symbol": "PF_AAPLXUSD",
+          "tags": [],
+          "tradeable": true,
+          "type": "flexible_futures"
+        }
+      ]
+    }
+  },
+  {
+    "source": "lighter",
+    "data": {
+      "code": 200,
+      "order_books": [
+        {
+          "symbol": "AAPL",
+          "market_id": 113,
+          "market_type": "perp",
+          "base_asset_id": 0,
+          "quote_asset_id": 0,
+          "status": "active"
+        },
+        {
+          "symbol": "TSLA",
+          "market_id": 112,
+          "market_type": "perp",
+          "base_asset_id": 0,
+          "quote_asset_id": 0,
+          "status": "active"
+        },
+        {
+          "symbol": "NVDA",
+          "market_id": 110,
+          "market_type": "perp",
+          "base_asset_id": 0,
+          "quote_asset_id": 0,
+          "status": "active"
+        }
+      ]
+    }
+  },
+  {
+    "source": "okx_spot",
+    "data": [
+      {
+        "baseCcy": "XAAPL",
+        "category": "1",
+        "ctType": "",
+        "ctVal": "",
+        "ctValCcy": "",
+        "instFamily": "",
+        "instId": "XAAPL-USDT",
+        "instType": "SPOT",
+        "lotSz": "0.00001",
+        "minSz": "0.01",
+        "quoteCcy": "USDT",
+        "settleCcy": "",
+        "state": "live",
+        "tickSz": "0.01",
+        "instCategory": "3"
+      },
+      {
+        "baseCcy": "XNVDA",
+        "category": "1",
+        "ctType": "",
+        "ctVal": "",
+        "ctValCcy": "",
+        "instFamily": "",
+        "instId": "XNVDA-USDT",
+        "instType": "SPOT",
+        "lotSz": "0.00001",
+        "minSz": "0.01",
+        "quoteCcy": "USDT",
+        "settleCcy": "",
+        "state": "live",
+        "tickSz": "0.01",
+        "instCategory": "3"
+      },
+      {
+        "baseCcy": "XTSLA",
+        "category": "1",
+        "ctType": "",
+        "ctVal": "",
+        "ctValCcy": "",
+        "instFamily": "",
+        "instId": "XTSLA-USDT",
+        "instType": "SPOT",
+        "lotSz": "0.00001",
+        "minSz": "0.01",
+        "quoteCcy": "USDT",
+        "settleCcy": "",
+        "state": "live",
+        "tickSz": "0.01",
+        "instCategory": "3"
+      }
+    ]
+  },
+  {
+    "source": "okx_future",
+    "data": [
+      {
+        "baseCcy": "",
+        "category": "1",
+        "ctType": "linear",
+        "ctVal": "1",
+        "ctValCcy": "AAPL",
+        "instFamily": "AAPL-USDT",
+        "instId": "AAPL-USDT-SWAP",
+        "instType": "SWAP",
+        "lotSz": "0.01",
+        "minSz": "0.01",
+        "quoteCcy": "",
+        "settleCcy": "USDT",
+        "state": "live",
+        "tickSz": "0.01",
+        "instCategory": "3"
+      },
+      {
+        "baseCcy": "",
+        "category": "1",
+        "ctType": "linear",
+        "ctVal": "1",
+        "ctValCcy": "NVDA",
+        "instFamily": "NVDA-USDT",
+        "instId": "NVDA-USDT-SWAP",
+        "instType": "SWAP",
+        "lotSz": "0.01",
+        "minSz": "0.01",
+        "quoteCcy": "",
+        "settleCcy": "USDT",
+        "state": "live",
+        "tickSz": "0.01",
+        "instCategory": "3"
+      },
+      {
+        "baseCcy": "",
+        "category": "1",
+        "ctType": "linear",
+        "ctVal": "1",
+        "ctValCcy": "TSLA",
+        "instFamily": "TSLA-USDT",
+        "instId": "TSLA-USDT-SWAP",
+        "instType": "SWAP",
+        "lotSz": "0.01",
+        "minSz": "0.01",
+        "quoteCcy": "",
+        "settleCcy": "USDT",
+        "state": "live",
+        "tickSz": "0.01",
+        "instCategory": "3"
+      }
+    ]
+  }
+]

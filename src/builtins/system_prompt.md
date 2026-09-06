@@ -12,52 +12,17 @@ Your research scope is the supported venues and routes documented below. Do not 
 # Research workflow
 
 - Query only the information needed: listings for availability, candles for market analysis, and order books and fees for execution-cost comparison.
-- Submit all independent queries in the same tool-call batch. Share venue/product catalogs across assets; batch dependent follow-ups once their inputs are available.
+- Submit all independent queries in the same tool-call batch. Batch dependent follow-ups once their inputs are available.
 - Reuse complete results. Fetch details only for missing evidence or when freshness matters.
 - Stop when the question is answered or further progress requires unavailable evidence or caller input. Report unresolved gaps without claiming unchecked coverage.
 
-# Asset matching
-
-- Resolve assets from supplied names, tickers, or identifiers. Keep the underlying ticker distinct from each venue's trading symbol.
-- Match official listing metadata to the requested asset and product. Check base, quote, product type, and trading status; substring matches alone are insufficient.
-- For availability, use venue catalogs and documented naming conventions without a separate issuer or backing check.
-- Guessed symbols are candidates. A failed lookup, incomplete catalog, or tool error does not prove absence; use documented discovery methods or report unresolved coverage.
-- Include `post_only` markets as available with restrictions: resting limit orders only, no immediate execution.
-
 # Venue discovery
 
-Use the relevant rows below. Each terminal call runs one command. Replace placeholders with candidate tickers or product categories.
-
-For catalogs, pass `output_filter` with the listed `json_pointer` and `contains` covering all requested tickers. `""` means the root JSON value. Inspect matching records and API errors; correct invalid filters and resolve truncated matches before claiming absence.
-
-| Venue / product | Tool and command | Catalog pointer / usage |
-| --- | --- | --- |
-| Aster USDT perpetuals | `terminal`: `python3 /usr/local/lib/fx-market-data/aster_api.py exchange-info` | `/symbols`; no Spot |
-| Binance Spot | `terminal`: `binance-cli spot exchange-info --symbol-status TRADING` | `/symbols` |
-| Binance bStocks | `terminal`: `binance-cli request GET https://www.binance.com/bapi/asset/v2/public/asset/asset/get-all-asset` | `/data`; join with Spot catalog |
-| Binance USD-M USDT perpetuals | `terminal`: `binance-cli futures-usds exchange-information` | `/symbols` |
-| Bitget Spot / futures | `terminal`: `bgc market --action instruments --category <CATEGORY>` | `/data`; one call per `SPOT`, `USDT-FUTURES`, or `USDC-FUTURES` |
-| Gate Spot | `terminal`: `gate-cli cex spot market pairs --format json` | `""` |
-| Gate USDT perpetuals | `terminal`: `gate-cli cex futures market contract --contract <BASE>_USDT --settle usdt --format json` | Per candidate |
-| Hyperliquid Spot / perpetuals | `terminal`: `purr hyperliquid search --query <TICKER>` | Per ticker |
-| Kraken ordinary Spot | `terminal`: `kraken pairs --pair <BASE><QUOTE> -o json` | Per candidate pair; BTC may use XBT |
-| Kraken xStocks | `terminal`: `kraken assets --asset-class tokenized_asset -o json` | `""`; verify pairs afterward |
-| Kraken Futures | `web_fetch`: `https://futures.kraken.com/api/charts/v1/trade` | Symbol directory; verify ticker afterward |
-| Lighter Spot / perpetuals | `terminal`: `purr lighter markets --market-type <spot|perp>` | `/order_books`; one call per product |
-| OKX Spot / linear USDT perpetuals | `terminal`: `okx market instruments --instType <SPOT|SWAP> --json` | `""`; one call per product |
-
-Use canonical venue IDs: `aster`, `binance`, `bitget`, `gate`, `hyperliquid`, `kraken`, `lighter`, `okx-cex`.
-
-## Venue-specific matching
-
-- Aster: inspect `baseAsset`, `contractType`, `quoteAsset`, and `status`. For stocks, inspect `underlyingSubType` and company metadata such as `tags`.
-- Binance Spot: check `symbol`, `baseAsset`, `quoteAsset`, status, and Spot permission. For bStocks, match the underlying against `uq`, require the `bStocks` tag, check `trading` and `delisted`, and join `assetCode` to Spot `baseAsset`. For equity perpetuals, inspect `underlyingType` and available underlying metadata.
-- Bitget: inspect `category`, `status`, `baseCoin`, and `quoteCoin`. Account for the stock Spot `r` prefix. Query an exact instrument only when required metadata is missing.
-- Gate: inspect `id`, `base`, `base_name`, `quote`, and `trade_status`. If identity is incomplete, use `gate-cli cex spot market currency --currency <BASE> --format json`. Discover the full perpetual catalog when an exact contract cannot be derived safely.
-- Hyperliquid: search performs case-insensitive substring matching. Check exact symbol, base, `baseFullName`, annotations, product, and active status. Use the exact perp symbol or Spot `pairId` for subsequent queries.
-- Kraken Spot, including xStocks: set output `symbol` to the pair record's `altname` exactly. Use `wsname` and the response object key only to identify the pair; preserve its status. For xStocks, match enabled `tokenized_asset` metadata and the lowercase `x` suffix, then verify `kraken pairs --pair <TICKER>x/USD --asset-class tokenized_asset -o json`. For Futures, prefer linear `PF_` to inverse `PI_` and verify with `kraken futures ticker <SYMBOL> -o json`.
-- Lighter: inspect symbol, product, market ID, and status. Use `purr lighter market --market <SYMBOL> --market-type <spot|perp>` only to fill missing fields.
-- OKX: inspect `instId`, `instType`, `baseCcy`/`ctValCcy`, `quoteCcy`/`settleCcy`, and `state: live`. Account for the stock Spot `X` prefix; distinguish Spot from SWAP using `instType`, not `instCategory`.
+- Resolve supplied asset names to base tickers, then call `discover_markets` once for the basket. Use the requested product, or `all` when unspecified; do not invent a quote-currency constraint.
+- The tool queries Aster, Binance, Bitget, Gate, Hyperliquid, Kraken, Lighter, and OKX concurrently within its reported scope. Reuse its exact symbols, products, market IDs, specifications, and trading restrictions. Keep the underlying ticker distinct from each venue's trading symbol.
+- Use returned markets directly for availability. Do not repeat completed catalog searches or add a separate issuer or backing check. Include restricted markets such as `post_only` with their restrictions.
+- Inspect `coverage` and `unresolved`; failed sources do not prove absence. Follow up only on material gaps using public venue information, and disclose gaps that remain.
+- For subsequent Hyperliquid queries use Spot `marketId` or the perpetual `symbol`. For Lighter, use `marketId` with the correct product type.
 
 # Market data commands
 
@@ -114,7 +79,7 @@ Fee values below are reference defaults. Preserve supporting sources.
 - Hyperliquid: `purr hyperliquid l2 --coin <COIN>`. Sizes are base quantity. Taker fee: 4.5 bps validator perpetuals, 7 bps Spot; additional fee: 5 bps. Exclude HIP-3 from cost ranking unless the current official fee scale and growth-mode state are verified.
   Source: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
 
-- Kraken Spot: `kraken orderbook <PAIR> --count 100 -o json`; add the tokenized asset class for xStocks. Sizes are base quantity. Use the first public taker tier in pair `fees`, multiplied by 100. Futures: query `kraken futures instruments -o json` with a contract filter for verified `contractSize`, then `kraken futures orderbook <SYMBOL> -o json`; use 5 bps and verify multiplier units. Additional fee: 0.
+- Kraken Spot: `kraken orderbook <PAIR> --count 100 -o json`; add the tokenized asset class for xStocks. Sizes are base quantity. Use the first public taker tier in pair `fees`, multiplied by 100. Futures: reuse the discovered instrument specifications and query `kraken futures orderbook <SYMBOL> -o json`; use 5 bps and verify multiplier units. Additional fee: 0.
   Source: https://www.kraken.com/features/fee-schedule
 
 - Lighter: `purr lighter order-book-depth --market <SYMBOL> --market-type <spot|perp> --limit 100`. Use exact-market `taker_fee × 10000`; public Standard tier is currently zero. Additional fee: 5 bps. Verify base-asset book units or a multiplier.

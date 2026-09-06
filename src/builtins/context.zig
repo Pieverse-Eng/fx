@@ -3490,7 +3490,6 @@ test "gateway_system_prompt: compact ordered sections" {
     const sections = [_][]const u8{
         "# Identity",
         "# Research workflow",
-        "# Asset matching",
         "# Venue discovery",
         "# Market data commands",
         "# Venue cost comparison",
@@ -3507,42 +3506,15 @@ test "gateway_system_prompt: compact ordered sections" {
     try std.testing.expect(gateway_system_prompt.len < 24 * 1024);
 }
 
-test "gateway_system_prompt: resolves natural-language assets before venue lookup" {
-    try expectDefaultPromptContains("Resolve assets from supplied names, tickers, or identifiers.");
-    try expectDefaultPromptContains("Keep the underlying ticker distinct from each venue's trading symbol.");
-    try expectDefaultPromptContains("Check base, quote, product type, and trading status");
-    try expectDefaultPromptContains("without a separate issuer or backing check");
-    try expectDefaultPromptContains("Guessed symbols are candidates.");
-    try expectDefaultPromptContains("A failed lookup, incomplete catalog, or tool error does not prove absence");
-    try expectDefaultPromptContains("Include `post_only` markets as available with restrictions");
-}
-
-test "gateway_system_prompt: embeds every supported venue contract" {
-    try expectDefaultPromptContains("Pieverse's Market Research Agent");
-    try expectDefaultPromptContains("News-derived requests:");
-    try expectDefaultPromptContains("Trading strategies:");
-    try expectDefaultPromptContains("Market inquiries:");
-    try expectDefaultPromptContains("without inventing a direction, preparing a trade, or adding a venue-selection task");
-    try expectDefaultPromptContains("Use canonical venue IDs: `aster`, `binance`, `bitget`, `gate`, `hyperliquid`, `kraken`, `lighter`, `okx-cex`.");
-    try expectDefaultPromptContains("python3 /usr/local/lib/fx-market-data/aster_api.py exchange-info");
-    try expectDefaultPromptContains("binance-cli spot exchange-info");
-    try expectDefaultPromptContains("bgc market --action instruments");
-    try expectDefaultPromptContains("gate-cli cex futures market contract");
-    try expectDefaultPromptContains("purr hyperliquid search");
-    try expectDefaultPromptContains("kraken pairs");
-    try expectDefaultPromptContains("purr lighter markets");
-    try expectDefaultPromptContains("okx market instruments");
-    try expectDefaultPromptContains("Submit all independent queries in the same tool-call batch.");
-    try expectDefaultPromptContains("Share venue/product catalogs across assets");
-    try expectDefaultPromptContains("Reuse complete results.");
-    try expectDefaultPromptContains("correct invalid filters and resolve truncated matches before claiming absence");
-    try expectDefaultPromptContains("match the underlying against `uq`");
-    try expectDefaultPromptContains("join `assetCode` to Spot `baseAsset`");
-    try expectDefaultPromptContains("Market availability and quotes do not establish account readiness.");
-    try expectDefaultPromptContains("The host handles readiness and execution.");
-    try expectDefaultPromptDoesNotContain("configured-venue list");
-    try expectDefaultPromptDoesNotContain("installed venue skill");
-    try expectDefaultPromptDoesNotContain("available skills");
+test "gateway_system_prompt: delegates catalog discovery and preserves identifiers" {
+    try expectDefaultPromptContains("call `discover_markets` once for the basket");
+    try expectDefaultPromptContains("or `all` when unspecified");
+    try expectDefaultPromptContains("failed sources do not prove absence");
+    try expectDefaultPromptContains("Spot `marketId` or the perpetual `symbol`");
+    try expectDefaultPromptContains("Include restricted markets such as `post_only`");
+    try expectDefaultPromptDoesNotContain("purr hyperliquid search");
+    try expectDefaultPromptDoesNotContain("exchange-info");
+    try expectDefaultPromptDoesNotContain("read_tool_result");
 }
 
 test "gateway_system_prompt: comparable venues use deterministic cost ranking" {

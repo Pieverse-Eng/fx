@@ -24,6 +24,7 @@ const read_file_impl = @import("../tools/filesystem/read_file.zig");
 const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const memory_impl = @import("../tools/memory/memory.zig");
 const finalize_market_result_impl = @import("../tools/market/finalize_market_result.zig");
+const discover_markets_impl = @import("../tools/market/discover_markets.zig");
 const calculate_venue_costs_impl = @import("../tools/market/calculate_venue_costs.zig");
 const quote_onchain_stock_impl = @import("../tools/market/quote_onchain_stock.zig");
 const terminal_impl = @import("../tools/terminal/terminal.zig");
@@ -1261,6 +1262,40 @@ const venue_cost_candidate_schema = model_tool_schema.ObjectSchema{
     .additional_properties = false,
 };
 
+const discover_markets_description = "This tool allows you to find available markets across eight supported venues for a basket of base tickers. It returns exact venue symbols, products, trading restrictions, market IDs, and catalog coverage. Use it for market discovery; no order parameters are needed. It does not compare costs, check accounts, or trade. Report incomplete coverage and preserve returned identifiers.";
+pub const discover_markets = ToolSpec{
+    .name = "discover_markets",
+    .description = discover_markets_description,
+    .model_schema = .{
+        .name = "discover_markets",
+        .description = discover_markets_description,
+        .strict_arguments = true,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "tickers", .json_type = .array, .bounds = &.{ .min_items = 1, .max_items = 8 }, .shape = &.{ .array_values = .{ .json_type = .string } }, .description = "Base tickers, case-insensitive. Preserve baskets in one call; do not supply company names or guessed venue symbols." },
+                .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "future", "all" } } },
+                .{ .name = "quote", .json_type = .string, .nullable = &.{ .description = "Optional quote-currency filter; null searches all supported quotes." }, .bounds = &.{ .min_length = 1, .max_length = 16 } },
+            },
+            .required = &.{ "tickers", "product" },
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .discover_markets,
+    .activity_kind = .read,
+    .requires_approval = false,
+    .action_label = "Discovering",
+    .completed_action_label = "Discovered",
+    .label_arg_kind = .none,
+    .label_arg_default = "markets",
+    .permission_target_kind = .none,
+    .decode = discover_markets_impl.decode,
+    .validate = discover_markets_impl.validate,
+    .call = discover_markets_impl.call,
+    .result_disposition = .continue_model,
+    .reads_only_fn = discover_markets_impl.readsOnly,
+    .irreversible_fn = discover_markets_impl.isIrreversible,
+};
+
 const calculate_venue_costs_description =
     "This tool allows you to compare execution costs across two or more comparable venues for a market/taker order, accounting for spread, slippage, fees, and quote-currency conversion. Supply verified order books, size multipliers, conversion rates, and fees. Routes with insufficient depth are excluded. It calculates costs; you must verify that the listings represent comparable exposure.";
 
@@ -1453,6 +1488,7 @@ pub const all = [_]tool_dispatch.Tool{
     mcp_features,
     ask_user_question,
     vision,
+    discover_markets,
     calculate_venue_costs,
     quote_onchain_stock,
     finalize_market_result,
@@ -1488,7 +1524,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "7c8b035c6e800edfa8604ea2d22c4d2ce76a9a2642cf6dfbcf1f2b2ee5a32eed",
+        "57ba4c5dafc1d4233e51dc5e73ce01e90903c06df39bcd6e842159d1c64fd354",
         &actual_hex,
     );
 }
@@ -2128,6 +2164,7 @@ pub const advertisement_order = [_][]const u8{
     "ask_user_question",
     "web_fetch",
     "web_search",
+    "discover_markets",
     "calculate_venue_costs",
     "quote_onchain_stock",
     "finalize_market_result",
@@ -2194,6 +2231,7 @@ test "built-in tools register exact active local order" {
         "mcp_features",
         "ask_user_question",
         "vision",
+        "discover_markets",
         "calculate_venue_costs",
         "quote_onchain_stock",
         "finalize_market_result",
