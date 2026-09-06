@@ -24,9 +24,16 @@ def exercise(kind, tool_name="discover_markets"):
         args = {"tickers": ["BTC", "CRCL"]}
         if tool_name == "compare_trade_routes":
             args = {"ticker": "BTC", "product": "perp", "direction": "long", "amount": "1000"}
+            if kind.startswith("quote_"):
+                args["quote"] = kind.removeprefix("quote_").upper()
+            if kind == "currency_usdc":
+                args["currency"] = "USDC"
+            if kind == "invalid_quote":
+                args["quote"] = "USDT;echo bad"
         if kind == "invalid":
             args["venues"] = ["binance"]
         (fixtures / "calls").write_text("")
+        (fixtures / "commands").write_text("")
         marker = fixtures / "binance-assets.fail"
         if kind == "partial":
             marker.touch()
@@ -43,7 +50,7 @@ def exercise(kind, tool_name="discover_markets"):
                         tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
                         if kind != "denied":
                             schema = tools[tool_name]["parameters"]
-                            assert set(schema["properties"]) == ({"ticker", "product", "amount", "currency", "direction"} if tool_name == "compare_trade_routes" else {"tickers", "product", "quote"} if tool_name == "discover_markets" else {"tickers"}), schema
+                            assert set(schema["properties"]) == ({"ticker", "product", "amount", "currency", "quote", "direction"} if tool_name == "compare_trade_routes" else {"tickers", "product", "quote"} if tool_name == "discover_markets" else {"tickers"}), schema
                             assert schema["required"] == (["ticker", "product", "amount"] if tool_name == "compare_trade_routes" else ["tickers"])
                         delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "discovery-1", "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
                         reason = "tool_calls"
@@ -76,7 +83,7 @@ def exercise(kind, tool_name="discover_markets"):
             assert output["output"].strip() == "DISCOVERY_TEST_OK", output
             assert [call["name"] for call in output["tool_calls"]] == [tool_name], output
             calls = (fixtures / "calls").read_text().splitlines()
-            if kind in ("invalid", "denied"):
+            if kind in ("invalid", "invalid_quote", "denied"):
                 assert not calls, calls
             else:
                 if tool_name == "discover_markets":
@@ -109,6 +116,12 @@ def exercise(kind, tool_name="discover_markets"):
                     assert set(route) <= {"venue", "symbol", "product", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset"}, payload
                     assert isinstance(payload["gaps"], list) and all(isinstance(gap, str) for gap in payload["gaps"]), payload
                     assert not any(c in calls for c in ("route-no-asset", "route-rh", "route-networks")), calls
+                    commands = (fixtures / "commands").read_text().splitlines()
+                    books = [c for c in commands if c.startswith("binance-cli:") and "order-book" in c]
+                    assert any("--symbol BTCUSDT " in c for c in books) == (kind != "quote_usdc"), books
+                    assert any("--symbol BTCUSDC " in c for c in books) == (kind in ("quote_usdc", "quote_all")), books
+                    assert "route-hl" in calls, calls
+                    assert ("route-kraken" in calls) == (kind != "quote_usdc"), calls
                 else:
                     for entry in payload["results"]:
                         assert "source" not in entry and "markets" not in entry
@@ -138,5 +151,5 @@ for case in ("success", "partial", "invalid", "denied"):
 for case in ("success", "partial", "invalid", "denied"):
     exercise(case, "get_market_candles")
 
-for case in ("success", "invalid", "denied"):
+for case in ("success", "quote_usdc", "quote_all", "currency_usdc", "invalid", "invalid_quote", "denied"):
     exercise(case, "compare_trade_routes")

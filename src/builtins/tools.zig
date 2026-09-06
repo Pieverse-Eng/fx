@@ -888,7 +888,7 @@ pub const get_market_candles = ToolSpec{
 };
 
 const compare_trade_routes_description =
-    "This tool allows you to find the lowest-cost available taker route for an asset and amount across eight venues, including BNB, Solana and Robinhood Chain for stock spot buys. Returns the selected route's identifiers and any comparison gaps. Does not place orders.";
+    "This tool allows you to find the lowest-cost available taker route across eight venues, including supported onchain routes for stock spot buys. Returns route identifiers and comparison gaps. Excludes funding conversions and transfers; does not place orders.";
 
 pub const compare_trade_routes = ToolSpec{
     .name = "compare_trade_routes",
@@ -901,7 +901,8 @@ pub const compare_trade_routes = ToolSpec{
                 .{ .name = "ticker", .json_type = .string, .description = "One base ticker; resolve names first." },
                 .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp" } }, .description = "Spot buys or perpetual opening positions." },
                 .{ .name = "amount", .json_type = .string, .description = "Positive decimal: total budget including fees/gas for spot, position notional (not margin) for perps." },
-                .{ .name = "currency", .json_type = .string, .shape = &.{ .enum_values = &.{ "USDT", "USDC", "USD" } }, .description = "Amount currency; defaults to USDT." },
+                .{ .name = "currency", .json_type = .string, .shape = &.{ .enum_values = &.{ "USDT", "USDC", "USD" } }, .description = "Budget and comparison currency; defaults to USDT. Does not filter markets." },
+                .{ .name = "quote", .json_type = .string, .description = "Optional venue quote filter. Defaults to USDT, USDC on Hyperliquid/Lighter, USD on Kraken. Override only when requested; ALL searches all quotes. Onchain routes use their supported payment assets." },
                 .{ .name = "direction", .json_type = .string, .shape = &.{ .enum_values = &.{ "long", "short" } }, .description = "Required for perps; omit for spot buys." },
             },
             .required = &.{ "ticker", "product", "amount" },

@@ -16,11 +16,11 @@ fn choice(value: std.json.Value, values: []const []const u8) bool {
     return false;
 }
 fn inputError(value: std.json.Value) ?[]const u8 {
-    if (value != .object) return "Pass ticker, product, amount, optional currency, and direction for perps.";
+    if (value != .object) return "Pass ticker, product, amount, optional currency/quote, and direction for perps.";
     const a = value.object;
     for (a.keys()) |key| {
         var known = false;
-        for ([_][]const u8{ "ticker", "product", "amount", "currency", "direction" }) |k| if (std.mem.eql(u8, key, k)) {
+        for ([_][]const u8{ "ticker", "product", "amount", "currency", "quote", "direction" }) |k| if (std.mem.eql(u8, key, k)) {
             known = true;
         };
         if (!known) return "Unknown comparison parameter.";
@@ -36,6 +36,10 @@ fn inputError(value: std.json.Value) ?[]const u8 {
     const n = std.fmt.parseFloat(f64, amount.string) catch return "Invalid amount.";
     if (!std.math.isFinite(n) or n <= 0 or n > 1_000_000_000) return "amount must be positive and no greater than 1000000000.";
     if (a.get("currency")) |c| if (!choice(c, &.{ "USD", "USDT", "USDC" })) return "currency must be USD, USDT, or USDC; default USDT.";
+    if (a.get("quote")) |q| {
+        if (q != .string or q.string.len == 0 or q.string.len > 32) return "quote must be a currency ticker or ALL.";
+        for (q.string) |c| if (!std.ascii.isAlphanumeric(c)) return "quote must be a currency ticker or ALL.";
+    }
     if (std.mem.eql(u8, product.string, "perp")) {
         if (!choice(a.get("direction") orelse return "Perps require direction: long or short.", &.{ "long", "short" })) return "Perps require direction: long or short.";
     } else if (a.get("direction") != null) return "Spot comparison supports buys only; omit direction.";
@@ -68,7 +72,8 @@ pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.
     defer cmd.deinit();
     public_command.prefix(ctx.allocator, &cmd.writer, ctx.workspace_root) catch return error.OutOfMemory;
     public_command.writeQuoted(&cmd.writer, program.written()) catch return error.OutOfMemory;
-    cmd.writer.print(" compare-trade-routes {s} --quote ALL --product {s}", .{ a.get("ticker").?.string, if (std.mem.eql(u8, a.get("product").?.string, "perp")) "perpetual" else "spot" }) catch return error.OutOfMemory;
+    cmd.writer.print(" compare-trade-routes {s} --product {s}", .{ a.get("ticker").?.string, if (std.mem.eql(u8, a.get("product").?.string, "perp")) "perpetual" else "spot" }) catch return error.OutOfMemory;
+    if (a.get("quote")) |q| cmd.writer.print(" --quote {s}", .{q.string}) catch return error.OutOfMemory;
     return public_command.execute(ctx, cmd.written(), .comparison);
 }
 pub fn readsOnly(_: dispatch.ToolInput) bool {

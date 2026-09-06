@@ -416,6 +416,8 @@ run_venue() {
     lighter) quote=USDC; currency_role=spot_quote_or_perpetual_settlement; cli=purr; fn=lighter ;;
     okx-cex) cli=okx; fn=okx ;;
   esac
+  # Preserve native quote defaults; restrict Aster cost comparisons to USDT.
+  if [[ ${FX_MARKET_MODE:-discover} == routes && $venue == aster ]]; then quote=USDT; fi
   (( ! quote_set )) || quote=$quote_override
   errors='[]'; started_ms=$(date +%s%3N)
   : >"$scratch/matches.jsonl"

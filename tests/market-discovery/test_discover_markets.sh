@@ -57,6 +57,7 @@ case "${0##*/}:$*" in
  *) echo "Unexpected public query: $*" >&2; exit 2;;
 esac
 printf '%s\n' "$key" >>"$FIXTURE_DIR/calls"
+printf '%s:%s\n' "${0##*/}" "$*" >>"$FIXTURE_DIR/commands"
 if [[ ${WAIT_FOR_ALL:-0} == 1 ]]; then
   touch "$FIXTURE_DIR/started-$venue"
   # All eight workers must have entered their first public query before any returns.
