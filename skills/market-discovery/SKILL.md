@@ -15,5 +15,6 @@ For general availability requests without a specified venue, check the supported
 | Binance | Spot (including bStocks), USDⓈ-M perpetual contracts | [references/binance.md](references/binance.md) |
 | OKX CEX | Spot (including stock tokens), linear perpetual contracts | [references/okx.md](references/okx.md) |
 | Hyperliquid | Spot, native perpetuals, HIP-3 perpetuals | [references/hyperliquid.md](references/hyperliquid.md) |
+| Lighter | Spot, perpetual contracts | [references/lighter.md](references/lighter.md) |
 
 For requests spanning supported venues, run independent venue queries in parallel and combine their results. Keep unsupported venues or products explicit as coverage gaps.
