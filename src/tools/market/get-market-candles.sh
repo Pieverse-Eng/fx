@@ -23,8 +23,8 @@ def exposure($m):
   ($m.baseAsset // ""|ascii_upcase) as $base | ($m.ticker|ascii_upcase) as $t |
   if $base==$t then 1
   elif $m.venue=="hyperliquid" and $base==("K"+$t) then 1000
-  elif ($m.venue=="lighter" or $m.venue=="bitget") and $base==("1000"+$t) then 1000
-  elif $m.venue=="bitget" and ($base==("1000000"+$t) or $base==("1M"+$t)) then 1000000
+  elif $base==("1000"+$t) then 1000
+  elif $base==("1000000"+$t) or $base==("1M"+$t) then 1000000
   else 1 end;
 def quote_ccy($m): $m.quoteAsset // $m.collateralAsset // $m.settlementAsset;
 def findrow($data;$key;$symbol): first($data|rows|.[]?|select(.[$key]==$symbol)) // null;
