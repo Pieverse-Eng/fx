@@ -156,12 +156,21 @@ jq -e '(.venues|length)==8 and .errors==[] and (.results|map(.ticker))==["BTC","
 jq -Rsc 'split("\n")[:-1] | length==19 and (group_by(.)|all(.[];length==1))' "$fixture_dir/calls" | jq -e . >/dev/null
 jq -e '[.results[]|select(.ticker=="CRCL")|.markets[]] as $m |
  any($m[];.venue=="aster" and .symbol=="CRCLUSDT") and
- any($m[];.venue=="binance" and .symbol=="CRCLBUSDT" and .representation=="tokenized_stock") and
- any($m[];.venue=="bitget" and .symbol=="RCRCLUSDT") and
+ any($m[];.venue=="binance" and .symbol=="CRCLBUSDT" and .product=="spot") and
+ any($m[];.venue=="bitget" and .symbol=="RCRCLUSDT" and .category=="SPOT") and
  ([$m[]|select(.venue=="gate")]|length)==5 and
- any($m[];.venue=="kraken" and .symbol=="CRCLxUSD" and .status=="post_only") and
+ any($m[];.venue=="kraken" and .symbol=="CRCLxUSD" and .assetClass=="tokenized_asset" and .restrictions==["Resting limit orders only"]) and
  any($m[];.venue=="okx-cex" and .symbol=="XCRCL-USDT") and
- any($m[];.venue=="hyperliquid" and .symbol=="xyz:CRCL" and .onlyIsolated==true)' "$fixture_dir/result.json" >/dev/null
+ any($m[];.venue=="hyperliquid" and .symbol=="xyz:CRCL" and .assetId==110001 and .dex=="xyz" and .restrictions==["isolated_only"])' "$fixture_dir/result.json" >/dev/null
+# Keep the order selectors needed by each CLI; do not leak sizing metadata.
+jq -e '
+ all(.results[].markets[]; (.product=="spot" or .product=="perp") and
+   ((keys-["venue","symbol","product","category","settlementAsset","assetId","dex","assetClass","marketId","restrictions"]|length)==0)) and
+ any(.results[].markets[];.venue=="gate" and .product=="perp" and .settlementAsset=="USDT") and
+ all(.results[].markets[]|select(.venue=="lighter");(.marketId|type)=="number") and
+ any(.results[].markets[];.venue=="hyperliquid" and .product=="spot" and .assetId==10142) and
+ all(.venues[];(has("elapsedMs") or has("sources"))|not) and (has("elapsedMs")|not)
+' "$fixture_dir/result.json" >/dev/null
 jq -e 'any(.results[]|select(.ticker=="PEPE")|.markets[];.venue=="lighter" and .symbol=="1000PEPE") and any(.results[]|select(.ticker=="PEPE")|.markets[];.venue=="hyperliquid" and .symbol=="kPEPE")' "$fixture_dir/result.json" >/dev/null
 # Dedup inputs, validate filters, and keep currency overrides literal.
 : >"$fixture_dir/calls"
@@ -174,7 +183,7 @@ run BTC --venues hyperliquid --quote ALL | jq -e '(.results[0].markets|length)==
 run BTC --venues okx --quote ALL | jq -e '(.results[0].markets|length)==3' >/dev/null
 run ETH --venues lighter --quote USDT | jq -e '(.results[0].markets|length)==1 and .results[0].markets[0].symbol=="ETH/USDT"' >/dev/null
 run BTC --product spot | jq -e '.errors==[] and all(.results[0].markets[];.product=="spot")' >/dev/null
-run BTC --product perpetual | jq -e '.errors==[] and all(.results[0].markets[];.product=="perpetual")' >/dev/null
+run BTC --product perpetual | jq -e '.errors==[] and all(.results[0].markets[];.product=="perp")' >/dev/null
 run CLOSE BUY SELL DOGE STOP OLD INCH UNKNOWN --venues bitget,gate,kraken >"$fixture_dir/result.json"
 jq -e 'any(.results[]|select(.ticker=="CLOSE")|.markets[];.restrictions==["Opening restricted"]) and
  any(.results[]|select(.ticker=="BUY")|.markets[];.restrictions==["Buy only"]) and
@@ -185,7 +194,7 @@ run 1INCH --venues bitget,kraken,lighter | jq -e '(.results[0].markets|length)==
 # Partial failures remain venue-specific, without suppressing healthy venues/products.
 touch "$fixture_dir/binance-assets.fail"
 if run CRCL >"$fixture_dir/error.json"; then echo 'Expected partial error'; exit 1; fi
-jq -e 'any(.errors[];.venue=="binance" and .query=="assets") and any(.results[0].markets[];.venue=="binance" and .product=="perpetual") and any(.results[0].markets[];.venue=="kraken")' "$fixture_dir/error.json" >/dev/null
+jq -e 'any(.errors[];.venue=="binance" and .query=="assets") and any(.results[0].markets[];.venue=="binance" and .product=="perp") and any(.results[0].markets[];.venue=="kraken")' "$fixture_dir/error.json" >/dev/null
 rm "$fixture_dir/binance-assets.fail"
 if run BTC --venues gate,bitget --quote EUR >"$fixture_dir/error.json"; then exit 1; fi
 jq -e '(.errors|length)==2 and all(.venues[];.status=="incomplete")' "$fixture_dir/error.json" >/dev/null

@@ -37,12 +37,14 @@ For Hyperliquid perpetuals the currency filter selects collateral; for Lighter p
 
 ## Results
 
-- `results`: one entry per input ticker, containing matching markets with the venue, exact symbol, product, trading state, and supplied specifications. Preserve symbols, casing, prefixes, market/asset IDs, and Hyperliquid Spot pair IDs for follow-ups; never invent a BTCUSDC symbol for a venue that returns BTC.
-- `venues`: each venue's scope, public sources, query duration, and complete/incomplete status. A null scope currency means all currencies within that venue's supported products.
+- `results`: one entry per input ticker. Every market returns `venue`, the exact `symbol`, and `product` (`spot` or `perp`). Preserve symbols, casing, and prefixes; never invent a BTCUSDC symbol for a venue that returns BTC.
+- Order routing fields appear only where needed: Bitget `category`; Gate perpetual `settlementAsset`; Hyperliquid `assetId` and applicable `dex`; Kraken xStocks `assetClass`; Lighter `marketId`. Pass `symbol` as OKX `instId`, Gate pair/contract, or the other venue's symbol. Use Hyperliquid `assetId` as `--asset` and Lighter `marketId` as `--market-id`.
+- `restrictions` appears only for restricted markets, including post-only, one-sided, and isolated-only trading.
+- `venues`: each venue's query scope and complete/incomplete status. A null scope currency means all currencies within that venue's supported products.
 - `errors`: query failures or unresolved coverage. Exit code 1 can accompany useful partial results. Report these gaps; an error is not evidence that a market is absent. Empty matches apply only to the reported scope.
 
-Keep products and restrictions distinct. Kraken post_only means resting limit orders only; limit_only, reduce_only, and one-sided markets retain their restrictions. Hyperliquid Spot `listed` means catalog presence, not verified liquidity. Do not combine linear and inverse contracts or leveraged tokens as equivalent exposure. Gate leveraged tokens require their explicit base ticker.
+Keep products and restrictions distinct. Resting limit orders only means post-only; it does not permit immediate execution. Gate leveraged tokens require their explicit base ticker.
 
-Naming candidates and catalog matches do not independently prove issuer backing or economic equivalence. Retain the supplied asset names/classification and report ambiguity where needed. Do not infer quantity conversion from ticker prefixes or raw multipliers. Availability does not establish liquidity, execution cost, jurisdiction eligibility, or account readiness.
+This result identifies markets for subsequent venue workflows. Order quantities, prices, and direction come from the caller; current sizing rules and account state belong to the execution workflow. Specifications, precision, minimum amounts, and contract multipliers are not returned. For follow-up data that needs a different identifier, use the venue's market-resolution command. Availability does not establish liquidity, execution cost, jurisdiction eligibility, or account readiness.
 
 Requires Bash 4+, jq, GNU timeout, and the selected venue CLIs: binance-cli, bgc, gate-cli, kraken, okx, and purr. Aster and Hyperliquid also use curl. Calls access public data only; they do not access wallets or submit orders.

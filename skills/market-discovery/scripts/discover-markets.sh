@@ -438,7 +438,6 @@ run_venue() {
 }
 
 queried_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-started_ms=$(date +%s%3N)
 for venue in "${venues[@]}"; do
   run_venue "$venue" >"$scratch_root/$venue.stdout" 2>"$scratch_root/$venue.stderr" &
   workers+=("$!")
@@ -453,12 +452,23 @@ for index in "${!workers[@]}"; do
 done
 workers=()
 tickers_json=$(printf '%s\n' "${tickers[@]}" | jq -Rsc 'split("\n")[:-1]')
-elapsed_ms=$(( $(date +%s%3N) - started_ms ))
-jq -s --arg queriedAt "$queried_at" --argjson elapsedMs "$elapsed_ms" --argjson tickers "$tickers_json" '
+jq -s --arg queriedAt "$queried_at" --argjson tickers "$tickers_json" '
+  # Discovery hands off exact order selectors, not a snapshot of order sizing rules.
+  def order_market($venue):
+    . as $market |
+    {venue:$venue,symbol,product:(if .product=="perpetual" then "perp" else .product end)} +
+    (if $venue=="bitget" then {category} else {} end) +
+    (if $venue=="gate" and .product=="perpetual" then {settlementAsset} else {} end) +
+    (if $venue=="hyperliquid" then {assetId} + (if .dex!=null then {dex} else {} end) else {} end) +
+    (if $venue=="kraken" and .assetClass=="tokenized_asset" then {assetClass} else {} end) +
+    (if $venue=="lighter" then {marketId} else {} end) +
+    (($market.restrictions // []) +
+      (if $market.onlyIsolated==true or $market.marginMode=="noCross" then ["isolated_only"] else [] end) |
+      unique | if length>0 then {restrictions:.} else {} end);
   . as $venues |
-  {queriedAt:$queriedAt,elapsedMs:$elapsedMs,
-   results:[$tickers[]|. as $ticker|{ticker:$ticker,markets:[$venues[]|.venue as $venue|.results[]|select(.ticker==$ticker)|.markets[]|.+{venue:$venue}]}],
-   venues:[$venues[]|{venue,scope,elapsedMs,sources,status:(if (.errors|length)>0 then "incomplete" else "complete" end)}],
+  {queriedAt:$queriedAt,
+   results:[$tickers[]|. as $ticker|{ticker:$ticker,markets:[$venues[]|.venue as $venue|.results[]|select(.ticker==$ticker)|.markets[]|order_market($venue)]}],
+   venues:[$venues[]|{venue,scope,status:(if (.errors|length)>0 then "incomplete" else "complete" end)}],
    errors:[$venues[]|.venue as $venue|.errors[]|.+{venue:$venue}]}
 ' "${files[@]}" >"$scratch_root/result.json"
 cat "$scratch_root/result.json"
