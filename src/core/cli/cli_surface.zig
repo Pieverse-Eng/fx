@@ -701,6 +701,7 @@ fn runProviderLogin(alloc: Allocator, cfg: Config, provider: model_provider.Prov
         .gateway => try login_flow.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener),
         .codex => try chatgpt_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener),
         .grok => try grok_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener),
+        .pieverse => return error.PieverseEnvironmentCredentialRequired,
     }
 }
 
@@ -759,6 +760,7 @@ fn activateProviderSelectionFallible(
             .gateway => "Gateway is already selected.\n",
             .codex => "Codex is already selected.\n",
             .grok => "Grok is already selected.\n",
+            .pieverse => "Pieverse is already selected.\n",
         });
         return true;
     }
@@ -792,6 +794,7 @@ fn activateProviderSelectionFallible(
                 .codex => "Codex credential is unavailable",
                 .grok => "Grok credential is unavailable",
                 .gateway => "configure a Gateway credential first",
+                .pieverse => "set FX_PIEVERSE_API_KEY first",
             },
         );
         return false;
@@ -801,6 +804,7 @@ fn activateProviderSelectionFallible(
             .codex => "Codex model catalog is unavailable",
             .grok => "Grok model catalog is unavailable",
             .gateway => "Gateway model catalog is unavailable",
+            .pieverse => "Pieverse model catalog is unavailable",
         });
         return false;
     };
@@ -868,12 +872,14 @@ fn activateProviderSelectionFallible(
         .codex => try writeStdout(deps, "Signed in with Codex.\n"),
         .grok => try writeStdout(deps, "Signed in with Grok.\n"),
         .gateway => unreachable,
+        .pieverse => unreachable,
     };
     if (caller == .provider_command) {
         try writeStdout(deps, switch (target) {
             .gateway => "Provider set to Gateway.\n",
             .codex => "Provider set to Codex.\n",
             .grok => "Provider set to Grok.\n",
+            .pieverse => "Provider set to Pieverse.\n",
         });
     }
     return true;
@@ -1018,6 +1024,7 @@ fn runNonInteractiveWithDeps(
                 .gateway => "Signed in to Vercel.\nAI Gateway access may still require billing or API setup for the selected account.\n",
                 .codex => "Signed in with Codex.\n",
                 .grok => "Signed in with Grok.\n",
+                .pieverse => unreachable,
             });
             return .handled_success;
         },
@@ -1032,6 +1039,10 @@ fn runNonInteractiveWithDeps(
             }
             // Preserve the original `fx logout` behavior for scripts and users.
             const login_provider = maybe_login_provider orelse .gateway;
+            if (login_provider == .pieverse) {
+                try writeStderr(deps, "fx logout: Pieverse credentials are process-scoped; unset FX_PIEVERSE_API_KEY\n");
+                return .handled_failure;
+            }
             if (login_provider == .codex) {
                 const outcome = chatgpt_oauth.logout() catch {
                     try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
@@ -1279,6 +1290,7 @@ fn runNonInteractiveWithDeps(
                     .gateway => "fx models: Gateway model catalog is unavailable\n",
                     .codex => "fx models: Codex model catalog is unavailable\n",
                     .grok => "fx models: Grok model catalog is unavailable\n",
+                    .pieverse => "fx models: Pieverse model catalog is unavailable\n",
                 });
                 return .handled_failure;
             };

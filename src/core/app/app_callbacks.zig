@@ -1069,6 +1069,7 @@ pub fn Bindings(comptime App: type) type {
                             .grok_subscription => "Reconnect Grok through /login to repair this source.",
                             .vercel_oidc_token, .ai_gateway_api_key, .stored_key => "Run /provider to repair this source.",
                             .host_managed => credentials.host_managed_auth_message,
+                            .pieverse_api_key => credentials.missing_pieverse_interactive_credential_message,
                         },
                     },
                 )

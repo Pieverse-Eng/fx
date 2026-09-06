@@ -165,6 +165,7 @@ pub fn Runtime(comptime App: type) type {
                         .gateway => credentials.missing_interactive_credential_message,
                         .codex => credentials.missing_chatgpt_interactive_credential_message,
                         .grok => credentials.missing_grok_interactive_credential_message,
+                        .pieverse => credentials.missing_pieverse_interactive_credential_message,
                     },
                 }, true),
                 .failed => |failure| {
@@ -1207,14 +1208,14 @@ pub fn Runtime(comptime App: type) type {
                     switch (target) {
                         .codex => try beginCodexSignInForProviderSwitch(app),
                         .grok => try beginGrokSignInForProviderSwitch(app),
-                        .gateway => {},
+                        .gateway, .pieverse => {},
                     }
                 }
-                if (target == .gateway or !request.allow_login) {
+                if (target == .gateway or target == .pieverse or !request.allow_login) {
                     try app.writeDomainNotice(.{
                         .topic = "provider",
                         .tone = .warning,
-                        .body = if (intent == .post_oauth) "Subscription sign-in completed, but its saved credential is unavailable. The current provider is unchanged." else if (target == .codex) "Run fx login codex, then try switching again." else if (target == .grok) "Run fx login grok, then try switching again." else credentials.missing_interactive_credential_message,
+                        .body = if (intent == .post_oauth) "Subscription sign-in completed, but its saved credential is unavailable. The current provider is unchanged." else if (target == .codex) "Run fx login codex, then try switching again." else if (target == .grok) "Run fx login grok, then try switching again." else if (target == .pieverse) credentials.missing_pieverse_interactive_credential_message else credentials.missing_interactive_credential_message,
                     }, true);
                 }
                 return false;
@@ -1816,6 +1817,7 @@ pub fn Runtime(comptime App: type) type {
                 .ai_gateway_api_key,
                 .stored_key,
                 .host_managed,
+                .pieverse_api_key,
                 => {},
             }
         }
@@ -2221,7 +2223,7 @@ test "interactive subscription sign-in rejects active and queued work before OAu
             switch (provider) {
                 .codex => try Runtime(BusySignInApp).beginChatGptSignIn(&app),
                 .grok => try Runtime(BusySignInApp).beginGrokSignIn(&app),
-                .gateway => unreachable,
+                .gateway, .pieverse => unreachable,
             }
 
             try std.testing.expectEqual(@as(usize, 0), app.auth.start_count);

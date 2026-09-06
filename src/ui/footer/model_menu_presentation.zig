@@ -420,6 +420,7 @@ fn loadedCatalogStatusText(state: model_cache_runtime.ModelMenuCatalogState) ?[]
             .chatgpt_subscription => "Codex catalog: authenticated with a subscription.",
             .grok_subscription => "Grok catalog: authenticated with a subscription.",
             .host_managed => "Provider catalog: authentication is managed by the host.",
+            .pieverse_api_key => "Pieverse catalog: authenticated with a tenant key.",
         };
     }
     return null;

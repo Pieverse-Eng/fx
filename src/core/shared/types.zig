@@ -96,6 +96,7 @@ pub const CredentialSource = enum {
     chatgpt_subscription,
     grok_subscription,
     host_managed,
+    pieverse_api_key,
 };
 
 pub const DirectCredentialLease = struct {

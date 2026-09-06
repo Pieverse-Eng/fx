@@ -4196,6 +4196,7 @@ test {
     _ = @import("gateway/openai_codex.zig");
     _ = @import("gateway/responses_protocol.zig");
     _ = @import("gateway/openai_codex_permission_reviewer.zig");
+    _ = @import("gateway/pieverse.zig");
     _ = @import("core/auth/grok_session.zig");
     _ = @import("core/auth/grok_oauth.zig");
     _ = @import("gateway/xai_grok_models.zig");

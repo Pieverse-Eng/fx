@@ -58,6 +58,17 @@ The OpenAI Codex route uses ChatGPT subscription access directly and never sends
 The Grok route uses subscription access directly at xAI and never sends its OAuth token to Vercel AI Gateway or OpenAI. Its session is stored privately at `~/.fx/grok-auth.json`, refreshed when needed, and used only with the authenticated xAI catalog and Responses API.
 
 Codex and Grok discover current stable client versions from upstream release metadata without requiring either CLI to be installed. fx caches release metadata for one minute. Opening `/model` or requesting ACP model options refreshes an expired subscription catalog. If a release lookup temporarily fails, fx uses the last successfully fetched version.
+Embedded Pieverse runtimes can select the tenant-scoped OpenAI-compatible route without persisting credentials:
+
+```bash
+FX_PROVIDER=pieverse \
+FX_MODEL=pieverse/auto/paid \
+FX_PIEVERSE_API_KEY=sk-pv-... \
+FX_PIEVERSE_BASE_URL=https://ai.pieverse.io/v1 \
+fx ask "research this market"
+```
+
+`FX_MODEL` is used as-is, so an embedding platform can pass the parent agent's current model when it starts fx. `FX_PIEVERSE_API_KEY` authorizes only the Pieverse provider and is never accepted by the Vercel, Codex, or Grok routes. `FX_PIEVERSE_BASE_URL` is optional and defaults to `https://ai.pieverse.io/v1`.
 
 To use an AI Gateway API key instead:
 

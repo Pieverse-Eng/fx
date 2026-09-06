@@ -64,6 +64,7 @@ pub const CatalogAuthenticatedSource = enum {
     stored_key,
     chatgpt_subscription,
     grok_subscription,
+    pieverse_api_key,
 
     fn credentialSource(self: CatalogAuthenticatedSource) Source {
         return switch (self) {
@@ -73,6 +74,7 @@ pub const CatalogAuthenticatedSource = enum {
             .stored_key => .stored_key,
             .chatgpt_subscription => .chatgpt_subscription,
             .grok_subscription => .grok_subscription,
+            .pieverse_api_key => .pieverse_api_key,
         };
     }
 };
@@ -221,6 +223,7 @@ pub fn catalogAccessForCredentialAndAccount(
         .chatgpt_subscription => .chatgpt_subscription,
         .grok_subscription => .grok_subscription,
         .host_managed => unreachable,
+        .pieverse_api_key => .pieverse_api_key,
         .fx_login => blk: {
             const team = team_context orelse
                 return .{ .public_only = .fx_login_team_required };
@@ -255,6 +258,8 @@ pub const missing_chatgpt_credential_message = "fx needs a Codex subscription lo
 pub const missing_chatgpt_interactive_credential_message = "Codex needs a subscription login. Run /login, open Connections, then choose Codex subscription.";
 pub const missing_grok_credential_message = "fx needs a Grok subscription login for this model. Run fx login grok.";
 pub const missing_grok_interactive_credential_message = "Grok needs a subscription login. Run /login, open Connections, then choose Grok subscription.";
+pub const missing_pieverse_credential_message = "fx needs a Pieverse tenant key. Set FX_PIEVERSE_API_KEY.";
+pub const missing_pieverse_interactive_credential_message = "Pieverse needs a tenant key. Set FX_PIEVERSE_API_KEY before starting fx.";
 pub const unreadable_store_message = "fx could not read the stored API key from " ++ stored_key_backend_label ++ ". A key may be saved but unreadable. Set FX_TRACE_LOG for the failing step, or set AI_GATEWAY_API_KEY.";
 pub const host_managed_auth_message = "Authentication is managed by the host.";
 
@@ -262,6 +267,15 @@ test "public credential guidance spells fx lowercase" {
     try std.testing.expect(std.mem.startsWith(u8, missing_credential_message, "fx needs"));
     try std.testing.expect(std.mem.startsWith(u8, missing_interactive_credential_message, "fx needs"));
     try std.testing.expect(std.mem.startsWith(u8, unreadable_store_message, "fx could"));
+}
+
+pub fn missingMessageForProvider(provider: model_provider.ProviderId, interactive: bool) []const u8 {
+    return switch (provider) {
+        .gateway => if (interactive) missing_interactive_credential_message else missing_credential_message,
+        .codex => if (interactive) missing_chatgpt_interactive_credential_message else missing_chatgpt_credential_message,
+        .grok => if (interactive) missing_grok_interactive_credential_message else missing_grok_credential_message,
+        .pieverse => if (interactive) missing_pieverse_interactive_credential_message else missing_pieverse_credential_message,
+    };
 }
 
 test "auth mode accepts only local and host-managed process values" {
@@ -526,6 +540,7 @@ pub fn loadSource(
         .chatgpt_subscription => loadChatGptCredential(alloc, transport, .if_needed),
         .grok_subscription => loadGrokCredential(alloc, transport, .if_needed),
         .host_managed => null,
+        .pieverse_api_key => loadEnvCredential(alloc, "FX_PIEVERSE_API_KEY", source),
     };
 }
 
@@ -564,6 +579,7 @@ pub fn sourceExists(
                 break :blk false;
             },
         },
+        .pieverse_api_key => nonEmptyEnvValue("FX_PIEVERSE_API_KEY") != null,
         .stored_key => blk: {
             if (secret_store.isDisabled()) break :blk false;
             break :blk switch (secret_store.presence()) {
@@ -604,6 +620,7 @@ pub fn sourcePresence(
         .chatgpt_subscription => chatgpt_session.presence(),
         .grok_subscription => grok_session.presence(),
         .host_managed => .missing,
+        .pieverse_api_key => if (nonEmptyEnvValue("FX_PIEVERSE_API_KEY") != null) .present else .missing,
     };
 }
 
@@ -902,6 +919,7 @@ pub fn sourceLabel(source: Source) []const u8 {
         .chatgpt_subscription => "Codex subscription",
         .grok_subscription => "Grok subscription",
         .host_managed => "host managed",
+        .pieverse_api_key => "FX_PIEVERSE_API_KEY",
     };
 }
 
@@ -1226,6 +1244,28 @@ test "source-specific credential loading bypasses generic precedence" {
     try std.testing.expect(try sourceExists(alloc, host.unavailable_secret_store, .ai_gateway_api_key));
     try std.testing.expect(try sourceExists(alloc, host.unavailable_secret_store, .vercel_oidc_token));
     try std.testing.expect(!(try sourceExists(alloc, host.unavailable_secret_store, .stored_key)));
+}
+
+test "Pieverse provider resolves only its process-scoped tenant key" {
+    const alloc = std.testing.allocator;
+    const env = try CredentialTestEnv.install(alloc, &.{
+        .{ "AI_GATEWAY_API_KEY", "vercel-key" },
+        .{ "FX_PIEVERSE_API_KEY", "pieverse-key" },
+    });
+    defer env.deinit();
+
+    const resolution = try resolveForProvider(
+        alloc,
+        oauth_transport.unavailable_provider,
+        host.unavailable_secret_store,
+        .stored,
+        .pieverse,
+        .ai_gateway_api_key,
+    );
+    var credential = resolution.credential orelse return error.TestExpectedCredential;
+    defer credential.deinit(alloc);
+    try std.testing.expectEqualStrings("pieverse-key", credential.token);
+    try std.testing.expectEqual(Source.pieverse_api_key, credential.source);
 }
 
 test "a remembered choice outranks the environment" {

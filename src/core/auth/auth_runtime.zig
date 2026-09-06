@@ -35,6 +35,7 @@ const credential_source_order = [_]credentials.Source{
     .stored_key,
     .chatgpt_subscription,
     .grok_subscription,
+    .pieverse_api_key,
 };
 
 const SourceProbeFn = *const fn (?*anyopaque, Allocator, credentials.Source) anyerror!bool;
@@ -1386,6 +1387,7 @@ pub const StatusSnapshot = struct {
     gateway_connected: bool = false,
     chatgpt_connected: bool = false,
     grok_connected: bool = false,
+    pieverse_connected: bool = false,
     /// The active credential is past its refresh deadline. Distinct from `refreshable`,
     /// which answers whether this source type can refresh at all.
     expired: bool = false,
@@ -1432,6 +1434,12 @@ pub const StatusSnapshot = struct {
             return switch (surface) {
                 .cli => credentials.missing_grok_credential_message,
                 .interactive => credentials.missing_grok_interactive_credential_message,
+            };
+        }
+        if (self.required_source == .pieverse_api_key) {
+            return switch (surface) {
+                .cli => credentials.missing_pieverse_credential_message,
+                .interactive => credentials.missing_pieverse_interactive_credential_message,
             };
         }
         return switch (surface) {
@@ -1485,6 +1493,14 @@ pub fn loadStatusSnapshotForProvider(
         error.OutOfMemory => return err,
         else => false,
     };
+    const pieverse_connected = credentials.sourceExists(
+        alloc,
+        secret_store,
+        .pieverse_api_key,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => false,
+    };
     // Resolves in `.stored` mode: a diagnostic must not refresh, because refreshing
     // rewrites the session file and performs network I/O. It reports the expired state
     // instead of repairing it.
@@ -1513,9 +1529,9 @@ pub fn loadStatusSnapshotForProvider(
         },
     };
     const resolved_source = if (resolution.credential) |credential| credential.source else null;
-    var gateway_connected = resolved_source != null and resolved_source != .chatgpt_subscription and resolved_source != .grok_subscription;
-    const gateway_probe_required = provider == .codex or provider == .grok or
-        resolved_source == .chatgpt_subscription or resolved_source == .grok_subscription;
+    var gateway_connected = resolved_source != null and resolved_source != .chatgpt_subscription and resolved_source != .grok_subscription and resolved_source != .pieverse_api_key;
+    const gateway_probe_required = provider == .codex or provider == .grok or provider == .pieverse or
+        resolved_source == .chatgpt_subscription or resolved_source == .grok_subscription or resolved_source == .pieverse_api_key;
     if (gateway_probe_required) {
         for ([_]credentials.Source{ .vercel_oidc_token, .ai_gateway_api_key, .fx_login, .stored_key }) |source| {
             if (credentials.sourceExists(alloc, secret_store, source) catch |err| switch (err) {
@@ -1541,6 +1557,7 @@ pub fn loadStatusSnapshotForProvider(
             .gateway_connected = gateway_connected,
             .chatgpt_connected = chatgpt_connected,
             .grok_connected = grok_connected,
+            .pieverse_connected = pieverse_connected,
             .expired = expired,
         };
     }
@@ -1552,6 +1569,7 @@ pub fn loadStatusSnapshotForProvider(
         .gateway_connected = gateway_connected,
         .chatgpt_connected = chatgpt_connected,
         .grok_connected = grok_connected,
+        .pieverse_connected = pieverse_connected,
     };
 }
 
@@ -1835,6 +1853,7 @@ pub const Runtime = struct {
             self.source_inventory.contains(.stored_key);
         const chatgpt_connected = self.source_inventory.contains(.chatgpt_subscription);
         const grok_connected = self.source_inventory.contains(.grok_subscription);
+        const pieverse_connected = self.source_inventory.contains(.pieverse_api_key);
         const credential = self.selected_credential orelse return .{
             .required_source = requestedSource(provider, preferred),
             .failure = if (self.credential_failure) |failure|
@@ -1846,6 +1865,7 @@ pub const Runtime = struct {
             .gateway_connected = gateway_connected,
             .chatgpt_connected = chatgpt_connected,
             .grok_connected = grok_connected,
+            .pieverse_connected = pieverse_connected,
         };
         return .{
             .active_source = credential.source,
@@ -1853,6 +1873,7 @@ pub const Runtime = struct {
             .gateway_connected = gateway_connected,
             .chatgpt_connected = chatgpt_connected,
             .grok_connected = grok_connected,
+            .pieverse_connected = pieverse_connected,
             .expired = credential.needsRefreshAt(now_ms),
         };
     }

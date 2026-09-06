@@ -548,6 +548,7 @@ fn streamAgentCompletion(
     request: agent_stream_provider_contract.ModelRequest,
 ) anyerror!agent_stream_provider_contract.Result {
     const credential_source = request.credential.credentialSource();
+    if (credential_source == .pieverse_api_key) return agent_stream_provider_contract.failResult(error.CredentialCannotAuthorizeGateway);
     if (credential_source == .chatgpt_subscription or credential_source == .grok_subscription) {
         return agent_stream_provider_contract.failResult(
             error.SubscriptionCredentialCannotAuthorizeGateway,
