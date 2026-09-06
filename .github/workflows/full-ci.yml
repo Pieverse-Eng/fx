@@ -50,6 +50,10 @@ jobs:
       - name: Test market discovery skill
         run: python3 -m unittest discover -s skills/market-discovery/scripts -p 'test_*.py' -v
 
+      - name: Test Binance discovery skill (Linux runtime)
+        if: runner.os == 'Linux'
+        run: bash skills/market-discovery/scripts/test_binance.sh
+
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 

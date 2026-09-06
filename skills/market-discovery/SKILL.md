@@ -12,5 +12,6 @@ For general availability requests without a specified venue, check the supported
 | Venue | Products | Reference |
 | --- | --- | --- |
 | Aster | Perpetual contracts | [references/aster.md](references/aster.md) |
+| Binance | Spot (including bStocks), USDⓈ-M perpetual contracts | [references/binance.md](references/binance.md) |
 
 For requests spanning supported venues, run independent venue queries in parallel and combine their results. Keep unsupported venues or products explicit as coverage gaps.
