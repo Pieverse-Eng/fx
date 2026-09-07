@@ -845,7 +845,7 @@ pub const discover_markets = ToolSpec{
         .description = discover_markets_description,
         .input_schema = .{
             .properties = &.{
-                .{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 64 }, .description = "Base tickers used by supported venues, case-insensitive; not trading pairs. This tool matches tickers; it does not resolve company names or map listing codes across venues. Resolve asset identity and candidate venue tickers before calling. An empty result means no match for the supplied ticker. Aster requires its exact base ticker (e.g. 1000PEPE)." },
+                .{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 64 }, .description = "Base tickers used by supported venues, case-insensitive; not trading pairs. Matches tickers and verified venue-scoped aliases; does not resolve company names or listing codes. Resolve asset identity and candidate venue tickers before calling. An empty result means no match for the supplied ticker. Quantity-prefixed contracts retain their native symbols." },
                 .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp", "all" } }, .description = "Optional product filter; defaults to all. Includes stock tokens and stock-linked perpetuals. Excludes dated futures. Aster supports perpetuals only." },
                 .{ .name = "quote", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Use only for a requested currency, or ALL for all quotes. Omit for defaults: USDT at Binance/Bitget/Gate/OKX, USDC at Hyperliquid/Lighter, USD at Kraken, all at Aster. For perps: Hyperliquid filters collateral, Lighter settlement, Kraken price denomination." },
             },
@@ -1069,7 +1069,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "9d1b0da12b3adea1958acaf3e4a6b4e40dc3477eb7ee9f6efd5776ade0408133",
+        "c19ece2fa8de857d70d79bdcc77be62895d374b9b1cb78dcb00cd39aad7803e3",
         &actual_hex,
     );
 }

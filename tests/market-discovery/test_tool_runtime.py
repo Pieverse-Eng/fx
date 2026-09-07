@@ -35,6 +35,9 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                 args["quote"] = "USDT;echo bad"
         if kind == "invalid":
             args["venues"] = ["binance"]
+        if kind == "aliases":
+            args = ({"ticker": "SKHYNIX", "product": "perp", "direction": "long", "amount": "1000"}
+                    if tool_name == "compare_trade_routes" else {"tickers": ["SKHYNIX", "SAMSUNG"]})
         (fixtures / "calls").write_text("")
         (fixtures / "commands").write_text("")
         marker = fixtures / "binance-assets.fail"
@@ -93,7 +96,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         thread.start()
         env = {"PATH": str(fixtures) + os.pathsep + os.environ["PATH"], "HOME": str(home), "FIXTURE_DIR": str(fixtures), "LANG": "C.UTF-8", "FX_PROVIDER": "pieverse", "FX_PIEVERSE_API_KEY": "local-fixture", "FX_MODEL": "pieverse/test/model", "FX_DISABLE_KEYCHAIN": "1", "FX_SKIP_ONBOARDING": "1", "FX_PIEVERSE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1"}
         try:
-            result = subprocess.run([binary, "ask", "--auto", "--json", "--no-save", "--", "Find available BTC and CRCL markets."], cwd=home, env=env, text=True, capture_output=True, timeout=40)
+            prompt = "Research SKHYNIX and SAMSUNG markets." if kind == "aliases" else "Find available BTC and CRCL markets."
+            result = subprocess.run([binary, "ask", "--auto", "--json", "--no-save", "--", prompt], cwd=home, env=env, text=True, capture_output=True, timeout=40)
             assert not failures, failures
             assert result.returncode == 0, (result.returncode, result.stderr)
             assert not any(text in result.stderr.lower() for text in ("panic:", "segmentation fault", "error:", "assertion failed")), result.stderr
@@ -109,7 +113,9 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                 assert not calls, calls
             else:
                 if tool_name == "discover_markets" and not multiple:
-                    assert len(calls) == 19 and len(set(calls)) == 19, calls
+                    # CRCL needs one extra Gate stock metadata query.
+                    expected_calls = 18 if kind == "aliases" else 19
+                    assert len(calls) == expected_calls and len(set(calls)) == expected_calls, calls
                 messages = [message for message in requests[1]["messages"] if message.get("role") == "tool"]
                 # Tool result presentation may add an envelope; locate the JSON payload.
                 content = messages[-1]["content"]
@@ -133,8 +139,32 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     # The model emitted only IDs, while the binary returned the payload.
                     assert len(output["output"]) < 100
                 if tool_name != "compare_trade_routes":
-                    assert [entry["ticker"] for entry in payload["results"]] == ["BTC", "CRCL"]
-                if tool_name == "discover_markets":
+                    assert [entry["ticker"] for entry in payload["results"]] == args["tickers"]
+                if kind == "aliases":
+                    commands = (fixtures / "commands").read_text()
+                    if tool_name == "discover_markets":
+                        assert payload["errors"] == [], payload
+                        expected = [{("aster", "SKHYNIXUSDT"), ("hyperliquid", "xyz:SKHX"), ("lighter", "SKHYNIXUSD")},
+                                    {("aster", "SAMSUNGUSDT"), ("hyperliquid", "xyz:SMSN"), ("lighter", "SAMSUNGUSD")}]
+                        assert [{(m["venue"], m["symbol"]) for m in r["markets"]} for r in payload["results"]] == expected, payload
+                        assert next(m for m in payload["results"][0]["markets"] if m["venue"] == "hyperliquid")["assetId"] == 110003
+                        assert next(m for m in payload["results"][0]["markets"] if m["venue"] == "lighter")["marketId"] == 161
+                    elif tool_name == "get_market_candles":
+                        assert payload["errors"] == [], payload["errors"]
+                        for entry, venue, symbol in zip(payload["results"], ["hyperliquid", "lighter"], ["xyz:SKHX", "SAMSUNGUSD"]):
+                            source = json.loads((home / f".fx/market-cache/v1/candle-source-{entry['ticker']}.jsonl").read_text().splitlines()[-1])
+                            assert source["venue"] == venue and source["symbol"] == symbol, source
+                            assert entry["quote"] == "USDC" and entry["lastTrade"]["price"] == 102, entry
+                            for frame in entry["timeframes"].values():
+                                assert len(frame["closed"]) == 50 and frame["closed"][0][1:] == [100, 103, 98, 102, 12], frame
+                        assert "--coin xyz:SKHX " in commands and '"coin":"xyz:SKHX"' in commands, commands
+                        assert "market_id=162" in commands and "market_id=140" not in commands, commands
+                    else:
+                        assert payload["bestRoute"]["venue"] == "lighter" and payload["bestRoute"]["symbol"] == "SKHYNIXUSD", payload
+                        assert payload["bestRoute"]["marketId"] == 161, payload
+                        assert "--market SKHYNIXUSD --market-type perp" in commands, commands
+                        assert any("xyz:SKHX" in gap and "HIP-3" in gap for gap in payload["gaps"]), payload
+                elif tool_name == "discover_markets":
                     assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
                     assert "lighter" in calls
                     assert bool(payload["errors"]) == (kind == "partial"), payload
@@ -175,6 +205,9 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
 
 for case in ("success", "partial", "invalid", "denied"):
     exercise(case)
+
+for tool_name in ("discover_markets", "get_market_candles", "compare_trade_routes"):
+    exercise("aliases", tool_name)
 
 for case in ("success", "partial", "invalid", "denied"):
     exercise(case, "get_market_candles")
