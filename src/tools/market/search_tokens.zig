@@ -66,7 +66,21 @@ fn command(alloc: std.mem.Allocator, params: Params, timestamp: i64) ![]u8 {
     return out.toOwnedSlice();
 }
 
-const Token = struct { name: []const u8, symbol: []const u8, chain: []const u8, contract: []const u8 };
+const Token = struct {
+    name: []const u8,
+    symbol: []const u8,
+    chain: []const u8,
+    contract: []const u8,
+    twitter: ?[]const u8,
+    website: ?[]const u8,
+    telegram: ?[]const u8,
+};
+
+fn socialLink(value: std.json.Value, key: []const u8) ?[]const u8 {
+    const field = value.object.get(key) orelse return null;
+    if (field != .string or std.mem.trim(u8, field.string, " \t\r\n").len == 0) return null;
+    return field.string;
+}
 
 fn tokenField(value: std.json.Value, key: []const u8) ![]const u8 {
     if (value != .object) return error.InvalidResponse;
@@ -94,6 +108,9 @@ fn response(alloc: std.mem.Allocator, text: []const u8, params: Params) ![]u8 {
             .symbol = try tokenField(entry, "symbol"),
             .chain = try tokenField(entry, "chain"),
             .contract = try tokenField(entry, "contract"),
+            .twitter = socialLink(entry, "twitter"),
+            .website = socialLink(entry, "website"),
+            .telegram = socialLink(entry, "telegram"),
         };
         if (params.chain) |chain| if (!std.ascii.eqlIgnoreCase(chain, token.chain)) return error.ChainFilterMismatch;
         try tokens.append(alloc, token);
@@ -171,13 +188,14 @@ test "search_tokens validates input and defaults" {
 
 test "search_tokens preserves ranking limits and addresses and rejects incomplete responses" {
     const alloc = std.testing.allocator;
-    const fixture = "{\"status\":0,\"data\":{\"list\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\",\"price\":1},{\"name\":\"Second\",\"symbol\":\"B\",\"chain\":\"bnb\",\"contract\":\"0xAB\"}]}}";
+    const fixture = "{\"status\":0,\"data\":{\"list\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\",\"twitter\":\"https://x.com/example\",\"website\":\"https://example.com\",\"telegram\":\"https://t.me/example\",\"price\":1},{\"name\":\"Second\",\"symbol\":\"B\",\"chain\":\"bnb\",\"contract\":\"0xAB\",\"twitter\":\"\",\"website\":null,\"telegram\":42}]}}";
     const output = try response(alloc, fixture, .{ .query = "A" });
     defer alloc.free(output);
-    try std.testing.expectEqualStrings("{\"results\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\"}]}", output);
+    try std.testing.expectEqualStrings("{\"results\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\",\"twitter\":\"https://x.com/example\",\"website\":\"https://example.com\",\"telegram\":\"https://t.me/example\"}]}", output);
     const multi = try response(alloc, fixture, .{ .query = "A", .limit = 2 });
     defer alloc.free(multi);
     try std.testing.expect(std.mem.find(u8, multi, "Second") != null);
+    try std.testing.expect(std.mem.find(u8, multi, "\"twitter\":null,\"website\":null,\"telegram\":null") != null);
     const empty = try response(alloc, "{\"status\":0,\"data\":{\"list\":[]}}", .{ .query = "A" });
     defer alloc.free(empty);
     try std.testing.expectEqualStrings("{\"results\":[]}", empty);

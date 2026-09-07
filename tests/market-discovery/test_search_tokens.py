@@ -12,7 +12,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 BINARY = str(Path(sys.argv[1]).resolve())
 LIVE = "--live" in sys.argv[2:]
 TOKEN = {"name": "Cash Cat", "symbol": "CASHCAT", "chain": "robinhood",
-         "contract": "0x020bfC650A365f8BB26819deAAbF3E21291018b4"}
+         "contract": "0x020bfC650A365f8BB26819deAAbF3E21291018b4",
+         "twitter": "https://x.com/cashcat_token", "website": "https://cashcat.cc/",
+         "telegram": "https://t.me/cashcat_robinhood"}
 
 
 def exercise(kind, arguments):
@@ -45,7 +47,7 @@ if kind == 'malformed':
 if kind == 'provider':
     print('{"status":429,"msg":"rate limited"}')
     sys.exit(0)
-first = {"name":"Cash Cat","symbol":"CASHCAT","chain":"robinhood","contract":"0x020bfC650A365f8BB26819deAAbF3E21291018b4","price":123,"icon":"unused"}
+first = {"name":"Cash Cat","symbol":"CASHCAT","chain":"robinhood","contract":"0x020bfC650A365f8BB26819deAAbF3E21291018b4","price":123,"icon":"unused","twitter":"https://x.com/cashcat_token","website":"https://cashcat.cc/","telegram":"https://t.me/cashcat_robinhood"}
 second = {"name":"Second","symbol":"CASHCAT","chain":"robinhood","contract":"0xOther"}
 print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, second]}}))
 ''')
@@ -132,7 +134,7 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
                 assert len(results) <= arguments.get("limit", 1), payload
                 if LIVE:
                     assert results, payload
-                    assert all(set(t) == {"name", "symbol", "chain", "contract"} for t in results), payload
+                    assert all(set(t) == {"name", "symbol", "chain", "contract", "twitter", "website", "telegram"} for t in results), payload
                     if "chain" in arguments:
                         assert all(t["chain"] == arguments["chain"] for t in results), payload
                     print("Live result:", json.dumps(payload))
@@ -147,6 +149,8 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
                     else:
                         assert results[0] == TOKEN, payload
                         assert len(results) == arguments.get("limit", 1), payload
+                        if len(results) > 1:
+                            assert all(results[1][key] is None for key in ("twitter", "website", "telegram")), payload
             print(f"Registered search_tokens: {kind} passed")
         finally:
             server.shutdown()

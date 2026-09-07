@@ -921,7 +921,7 @@ pub const compare_trade_routes = ToolSpec{
 };
 
 const search_tokens_description =
-    "This tool allows you to find onchain crypto and memecoin tokens by name, ticker, or contract address. Stocks and stock-linked tokens are out of scope. Returns name, symbol, chain, and contract in provider order; defaults to the first match across all chains. Optional chain and limit narrow or expand results.";
+    "This tool allows you to find onchain crypto and memecoin tokens by name, ticker, or contract address. Stocks and stock-linked tokens are out of scope. Returns name, symbol, chain, contract, and social links in provider order; defaults to the first match across all chains. Optional chain and limit narrow or expand results.";
 
 pub const search_tokens = ToolSpec{
     .name = "search_tokens",
@@ -1069,7 +1069,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "036f73c82f76ddd9719f7fb839de8fa16230d41c368386c61613d84aa27a7f51",
+        "31fb0cc70b177c0a5ccaefc79c98641e5bc7cf2d98e2c302968d364fbdfa58f2",
         &actual_hex,
     );
 }
