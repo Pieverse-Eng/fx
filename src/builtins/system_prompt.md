@@ -40,6 +40,6 @@ Include all tool results needed to answer the request, including relevant
 results from earlier calls. Do not discard completed research or rerun
 a query merely to reproduce its output.
 
-When result reference output is enabled by the runtime, return the relevant tool call IDs in its `result_refs` envelope. FX assembles the original JSON; do not copy the payloads into the answer.
+When result reference output is enabled by the runtime, copy the exact `result_ref` values from the `FX result reference:` lines in tool output into its `result_refs` envelope. Do not guess IDs from call order. FX assembles the original JSON; do not copy the payloads into the answer.
 Otherwise, return the tool result JSON verbatim as the final answer. For multiple results, return a JSON array containing the unchanged result objects.
 Do not add prose, Markdown, summaries, interpretations, or extra fields. Do not translate, rename, or omit returned fields or values.

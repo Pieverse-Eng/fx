@@ -1,10 +1,12 @@
 """Exercise the registered tool with a local gateway and fixture venue CLIs."""
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -21,6 +23,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             (home / ".fx/settings.json").write_text(json.dumps({"permission": {tool_name: "deny"}}))
         requests = []
         failures = []
+        call_ids = ["call_" + uuid.uuid4().hex[:24] for _ in range(2 if multiple else 1)]
         args = {"tickers": ["BTC", "CRCL"]}
         if tool_name == "compare_trade_routes":
             args = {"ticker": "BTC", "product": "perp", "direction": "long", "amount": "1000"}
@@ -52,12 +55,25 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                             schema = tools[tool_name]["parameters"]
                             assert set(schema["properties"]) == ({"ticker", "product", "amount", "currency", "quote", "direction"} if tool_name == "compare_trade_routes" else {"tickers", "product", "quote"} if tool_name == "discover_markets" else {"tickers"}), schema
                             assert schema["required"] == (["ticker", "product", "amount"] if tool_name == "compare_trade_routes" else ["tickers"])
-                        delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "discovery-1", "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
+                        delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": call_ids[0], "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
                         if multiple:
-                            delta["tool_calls"].append({"index": 1, "id": "discovery-2", "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}})
+                            delta["tool_calls"].append({"index": 1, "id": call_ids[1], "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}})
                         reason = "tool_calls"
                     else:
-                        final = json.dumps({"result_refs": ["discovery-2", "discovery-1"] if multiple else ["discovery-1"]}) if references else "DISCOVERY_TEST_OK"
+                        final = "DISCOVERY_TEST_OK"
+                        if references:
+                            # Select IDs exclusively from model-visible text, never
+                            # from provider metadata or prearranged fixture IDs.
+                            refs = []
+                            for message in request["messages"]:
+                                if message.get("role") != "tool":
+                                    continue
+                                markers = re.findall(r"FX result reference: ([^\n]*)", message["content"])
+                                assert len(markers) == 1, message["content"]
+                                ref = json.loads(markers[0])["result_ref"]
+                                assert ref == message["tool_call_id"]
+                                refs.append(ref)
+                            final = json.dumps({"result_refs": list(reversed(refs))})
                         delta = {"role": "assistant", "content": final}
                         reason = "stop"
                     chunks = [{"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}, {"choices": [{"index": 0, "delta": {}, "finish_reason": reason}]}]
@@ -84,7 +100,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             assert len(requests) == 2, requests
             output = json.loads(result.stdout)
             if references:
-                assert json.loads(output["output"]) == {"result_refs": ["discovery-2", "discovery-1"] if multiple else ["discovery-1"]}, output
+                assert json.loads(output["output"]) == {"result_refs": list(reversed(call_ids))}, output
             else:
                 assert output["output"].strip() == "DISCOVERY_TEST_OK", output
             assert [call["name"] for call in output["tool_calls"]] == [tool_name] * (2 if multiple else 1), output

@@ -2544,19 +2544,21 @@ fn executeToolCallAuthorized(
     tool_ctx.session_grants = request.session_grants;
     tool_ctx.advertised_dynamic_tool_names = request.advertised_dynamic_tool_names;
     tool_ctx.max_tool_result_bytes = request.max_tool_result_bytes;
-    const result = tool_runtime.executeToolCallAuthorized(
+    var result = tool_runtime.executeToolCallAuthorized(
         tool_ctx,
         request,
     ) catch |err| {
         captureToolExecutionError(ctx, request, err);
         return err;
     };
+    captureToolExecutionResult(ctx, request, result);
     if (ctx.output_mode == .json) {
         ctx.tool_call_records_mutex.lockUncancelable(io_mod.getIo());
         defer ctx.tool_call_records_mutex.unlock(io_mod.getIo());
-        ctx.result_store.capture(ctx.alloc, request.call.id, result.model_output);
+        if (try ctx.result_store.captureForModel(ctx.alloc, request.result_allocator, request.call.id, result.model_output)) |annotated| {
+            result.model_output = annotated;
+        }
     }
-    captureToolExecutionResult(ctx, request, result);
     return result;
 }
 
