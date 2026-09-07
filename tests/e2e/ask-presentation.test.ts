@@ -138,6 +138,24 @@ function fakeGatewayStreamingText(lines: string[], delayMs: number) {
 }
 
 describe("fx ask presentation", () => {
+  test("JSON rejects result references outside the current request", async () => {
+    const root = createRoot();
+    const gateway = startFakeGateway([
+      fakeGatewayFinalText('{"result_refs":["previous-request-call"]}'),
+    ]);
+    gateways.push(gateway);
+    const result = await runFx(
+      ["ask", "--json", "--no-save", "Return the research results."],
+      { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT },
+    );
+    expect(result.code).toBe(1);
+    const output = JSON.parse(result.stdout);
+    expect(output.exit_code).toBe(1);
+    expect(output.final_output).toBe("");
+    expect(output.error).toBe("UnknownResultReference");
+    expect(gateway.requests[0]!.body).toContain("Result references are enabled");
+  }, TIMEOUT);
+
   test("redirected command output separates the next tool header", async () => {
     const root = createRoot();
     const gateway = startFakeGateway([
