@@ -845,7 +845,7 @@ pub const discover_markets = ToolSpec{
         .description = discover_markets_description,
         .input_schema = .{
             .properties = &.{
-                .{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 64 }, .description = "Base tickers, case-insensitive, e.g. [IREN, APLD, HUT]. Not company names or trading pairs. Aster requires its exact base ticker (e.g. 1000PEPE)." },
+                .{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 64 }, .description = "Base tickers used by supported venues, case-insensitive; not trading pairs. This tool matches tickers; it does not resolve company names or map listing codes across venues. Resolve asset identity and candidate venue tickers before calling. An empty result means no match for the supplied ticker. Aster requires its exact base ticker (e.g. 1000PEPE)." },
                 .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp", "all" } }, .description = "Optional product filter; defaults to all. Includes stock tokens and stock-linked perpetuals. Excludes dated futures. Aster supports perpetuals only." },
                 .{ .name = "quote", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Use only for a requested currency, or ALL for all quotes. Omit for defaults: USDT at Binance/Bitget/Gate/OKX, USDC at Hyperliquid/Lighter, USD at Kraken, all at Aster. For perps: Hyperliquid filters collateral, Lighter settlement, Kraken price denomination." },
             },
@@ -873,7 +873,7 @@ pub const get_market_candles = ToolSpec{
         .name = "get_market_candles",
         .description = get_market_candles_description,
         .input_schema = .{
-            .properties = &.{.{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 16 }, .description = "Case-insensitive base tickers, e.g. [IREN, APLD]. Resolve names first; pass related assets together." }},
+            .properties = &.{.{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 16 }, .description = "Resolved base tickers used by supported venues, case-insensitive. Verify asset identity and venue identifiers first; do not pass unresolved names or listing codes. Pass related resolved assets together." }},
             .required = &.{"tickers"},
             .additional_properties = false,
         },
@@ -899,7 +899,7 @@ pub const compare_trade_routes = ToolSpec{
         .description = compare_trade_routes_description,
         .input_schema = .{
             .properties = &.{
-                .{ .name = "ticker", .json_type = .string, .description = "One base ticker; resolve names first." },
+                .{ .name = "ticker", .json_type = .string, .description = "One resolved base ticker used by a supported venue. Verify asset identity and venue identifiers first; do not pass an unresolved name or listing code." },
                 .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp" } }, .description = "Spot buys or perpetual opening positions." },
                 .{ .name = "amount", .json_type = .string, .description = "Positive decimal: total budget including fees/gas for spot, position notional (not margin) for perps." },
                 .{ .name = "currency", .json_type = .string, .shape = &.{ .enum_values = &.{ "USDT", "USDC", "USD" } }, .description = "Budget and comparison currency; defaults to USDT. Does not filter markets." },
@@ -1069,7 +1069,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "48a3385171bf0f574131cf851d23625b506609afb556fdfe56772cd901f89b5a",
+        "9d1b0da12b3adea1958acaf3e4a6b4e40dc3477eb7ee9f6efd5776ade0408133",
         &actual_hex,
     );
 }
