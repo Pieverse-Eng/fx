@@ -933,7 +933,7 @@ pub const search_tokens = ToolSpec{
             .properties = &.{
                 .{ .name = "query", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 256 }, .description = "Token name, ticker, or contract address, e.g. cashcat." },
                 .{ .name = "chain", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Optional Bitget Wallet chain code, e.g. bnb, sol, or robinhood. Omit to search all chains." },
-                .{ .name = "limit", .json_type = .integer, .bounds = &.{ .minimum = 1, .maximum = 20 }, .description = "Maximum results (1–20); defaults to 1." },
+                .{ .name = "limit", .json_type = .integer, .bounds = &.{ .minimum = 1, .maximum = 20 }, .description = "Maximum results (1–20). Omit by default; the tool returns the first result. Set only when additional candidates are needed." },
             },
             .required = &.{"query"},
             .additional_properties = false,
@@ -1069,7 +1069,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "31fb0cc70b177c0a5ccaefc79c98641e5bc7cf2d98e2c302968d364fbdfa58f2",
+        "6eba8b46274a8d4e9ccb65c89ad0924516dc32abe96674cd669029597ee2638b",
         &actual_hex,
     );
 }
