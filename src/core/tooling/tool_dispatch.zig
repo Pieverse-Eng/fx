@@ -432,6 +432,7 @@ pub const ExecutorKind = enum {
     discover_markets,
     get_market_candles,
     compare_trade_routes,
+    search_tokens,
     glob_files,
     grep_files,
     read_file,

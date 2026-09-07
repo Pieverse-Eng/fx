@@ -26,6 +26,7 @@ const write_file_impl = @import("../tools/filesystem/write_file.zig");
 const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
 const compare_trade_routes_impl = @import("../tools/market/compare_trade_routes.zig");
 const get_market_candles_impl = @import("../tools/market/get_market_candles.zig");
+const search_tokens_impl = @import("../tools/market/search_tokens.zig");
 const discover_markets_impl = @import("../tools/market/discover_markets.zig");
 const shell_impl = @import("../tools/shell/shell.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
@@ -919,6 +920,35 @@ pub const compare_trade_routes = ToolSpec{
     .irreversible_fn = compare_trade_routes_impl.isIrreversible,
 };
 
+const search_tokens_description =
+    "This tool allows you to find onchain memecoins and long-tail tokens by name, ticker, or contract address. Stocks, stock-linked tokens, and major cryptocurrencies are out of scope. Returns name, symbol, chain, contract, and social links in provider order.";
+
+pub const search_tokens = ToolSpec{
+    .name = "search_tokens",
+    .description = search_tokens_description,
+    .model_schema = .{
+        .name = "search_tokens",
+        .description = search_tokens_description,
+        .input_schema = .{
+            .properties = &.{
+                .{ .name = "query", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 256 }, .description = "Token name, ticker, or contract address, e.g. cashcat." },
+                .{ .name = "chain", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Optional Bitget Wallet chain code, e.g. bnb, sol, or robinhood. Omit to search all chains." },
+                .{ .name = "limit", .json_type = .integer, .bounds = &.{ .minimum = 1, .maximum = 20 }, .description = "Maximum results (1–20). Omit by default; the tool returns the first result. Set only when additional candidates are needed." },
+            },
+            .required = &.{"query"},
+            .additional_properties = false,
+        },
+    },
+    .executor_kind = .search_tokens,
+    .activity_kind = .read,
+    .action_label = "Searching tokens",
+    .completed_action_label = "Searched tokens",
+    .decode = search_tokens_impl.decode,
+    .call = search_tokens_impl.call,
+    .reads_only_fn = search_tokens_impl.readsOnly,
+    .irreversible_fn = search_tokens_impl.isIrreversible,
+};
+
 pub const all = [_]tool_dispatch.Tool{
     glob_files,
     grep_files,
@@ -940,6 +970,7 @@ pub const all = [_]tool_dispatch.Tool{
     discover_markets,
     get_market_candles,
     compare_trade_routes,
+    search_tokens,
 };
 
 pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
@@ -948,6 +979,7 @@ pub const advertisement_order = [_][]const u8{
     "discover_markets",
     "get_market_candles",
     "compare_trade_routes",
+    "search_tokens",
     "read_file",
     "glob_files",
     "grep_files",
@@ -969,6 +1001,7 @@ pub const read_only_tool_names = [_][]const u8{
     "discover_markets",
     "get_market_candles",
     "compare_trade_routes",
+    "search_tokens",
     "read_file",
     "glob_files",
     "grep_files",
@@ -1036,7 +1069,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "ccc1e489bf536f2f518a0b32c02ddc99a9f2af6fd3466c6456da3b22fbed23d4",
+        "48a3385171bf0f574131cf851d23625b506609afb556fdfe56772cd901f89b5a",
         &actual_hex,
     );
 }
@@ -1111,6 +1144,7 @@ test "built-in tools register exact active local order" {
         "discover_markets",
         "get_market_candles",
         "compare_trade_routes",
+        "search_tokens",
     };
 
     try std.testing.expectEqual(expected_names.len, all.len);
@@ -1881,6 +1915,7 @@ test "built-in read-only tool set matches plan inspection tools" {
         "discover_markets",
         "get_market_candles",
         "compare_trade_routes",
+        "search_tokens",
         "read_file",
         "glob_files",
         "grep_files",
