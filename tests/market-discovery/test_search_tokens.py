@@ -67,7 +67,7 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
                         tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
                         if kind != "denied":
                             spec = tools["search_tokens"]
-                            assert "Stocks and stock-linked tokens are out of scope" in spec["description"]
+                            assert "Stocks, stock-linked tokens, and major cryptocurrencies are out of scope" in spec["description"]
                             assert set(spec["parameters"]["properties"]) == {"query", "chain", "limit"}
                             assert spec["parameters"]["required"] == ["query"]
                         delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "search-1", "type": "function", "function": {"name": "search_tokens", "arguments": json.dumps(arguments)}}]}
