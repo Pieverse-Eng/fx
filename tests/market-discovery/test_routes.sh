@@ -5,14 +5,41 @@ math=$(cat "$root/src/tools/market/route_math.jq")
 jq -ne "$math"'
   {venue:"bitget",symbol:"RCRCLUSDT",product:"spot",category:"SPOT",effectivePrice:100,fees:1,quotedAt:"fixture",id:"venue"} as $venue |
   {issuer:"bstocks",chain:"bnb",symbol:"CRCLB",contract:"0x1",provider:"fixture",inputContract:"0x2",gas:1,effectivePrice:101} as $chain |
-  (comparison_result([$venue,$chain];[]) == {bestRoute:{venue:"bitget",symbol:"RCRCLUSDT",product:"spot",category:"SPOT"},gaps:[]}) and
+  (comparison_result([$venue,$chain];[]) == {
+    bestRoute:{venue:"bitget",symbol:"RCRCLUSDT",product:"spot",category:"SPOT"},
+    rankedRoutes:[{venue:"bitget",symbol:"RCRCLUSDT",product:"spot",category:"SPOT",costRank:1},
+      {issuer:"bstocks",chain:"bnb",symbol:"CRCLB",contract:"0x1",provider:"fixture",costRank:2}],gaps:[]}) and
   (comparison_result([$chain,$venue];[]).bestRoute == {issuer:"bstocks",chain:"bnb",symbol:"CRCLB",contract:"0x1"}) and
   (comparison_result([$venue+{venue:"hyperliquid",assetId:110109,dex:"xyz"},$chain];[]).bestRoute.assetId == 110109) and
   (comparison_result([$venue,$chain];[{venue:"kraken",symbol:"CRCLxUSD",message:"Unavailable book"}]).gaps == ["kraken / CRCLxUSD: Unavailable book"]) and
-  (comparison_result([];[]) == {bestRoute:null,gaps:["No eligible route with a valid quote"]}) and
+  (comparison_result([];[]) == {bestRoute:null,rankedRoutes:[],gaps:["No eligible route with a valid quote"]}) and
   (comparison_result([$venue];[]).gaps == ["Only one eligible route; comparative minimum not established"])
 ' >/dev/null
 echo 'Compact route selection, chain symbols, routing identifiers and comparison gaps passed.'
+jq -ne "$math"'
+  {venue:"gate",symbol:"BTC_USDT",product:"perp",effectivePrice:99} as $gate |
+  {venue:"binance",symbol:"BTCUSDT",product:"perp",effectivePrice:100} as $binance |
+  {venue:"hyperliquid",symbol:"BTC",product:"perp",assetId:0,effectivePrice:101} as $hl |
+  comparison_result([$gate,$binance,$binance+{symbol:"BTCUSDC",effectivePrice:100.5},$hl];[]) as $result |
+  ($result.rankedRoutes|map(.venue)==["gate","binance","hyperliquid"]) and
+  ($result.rankedRoutes|map(select(.venue=="binance" or .venue=="hyperliquid"))|.[0].venue=="binance") and
+  ($result.rankedRoutes[0].costRank < $result.rankedRoutes[1].costRank) and
+  ($result.rankedRoutes[-1].assetId==0) and
+  ($result.rankedRoutes|map(select(.venue=="kraken"))==[]) and
+  (comparison_result([$gate,$binance+{effectivePrice:99},$hl];[]).rankedRoutes|map(.costRank)==[1,1,2]) and
+  (comparison_result([$hl,$binance,$gate];[]).rankedRoutes|map(.venue)==["hyperliquid","binance","gate"]) and
+  (comparison_result([$hl,$binance,$gate];[]).rankedRoutes|map(.costRank)==[1,2,3]) and
+  (all($result.rankedRoutes[]; has("effectivePrice")==false and has("fees")==false))
+' >/dev/null
+jq -ne "$math"'
+  {issuer:"xstocks",chain:"bnb",symbol:"CRCLx",contract:"0x1",provider:"bitget-wallet",product:"spot",effectivePrice:100} as $first |
+  comparison_result([$first,$first+{issuer:"bstocks",symbol:"CRCLB",contract:"0x2",effectivePrice:101},
+    $first+{chain:"solana",contract:"mint",provider:"dflow",effectivePrice:102}];[]) as $result |
+  ($result.rankedRoutes|length==2) and
+  ($result.rankedRoutes[0]|.contract=="0x1" and .provider=="bitget-wallet") and
+  ($result.rankedRoutes[1]|.chain=="solana" and .provider=="dflow")
+' >/dev/null
+echo 'Configured-venue selection, strict cheaper alternatives, ties, shorts and route deduplication passed.'
 jq -ne "$math"'
   def close($expected): (. - $expected)|fabs <= 1e-12*($expected|fabs);
   {id:"precise",venue:"binance",symbol:"BTCUSDT",product:"perp",quote:"USDT",quotedAt:"fixture",
