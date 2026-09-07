@@ -39,11 +39,26 @@ def round_down($x;$step):
     end
   else $x end;
 def route_identity: {id,venue,symbol,product,quote,quotedAt} + (.routing // {});
+def comparison_route_identity:
+  if .chain!=null then {issuer,chain,symbol,contract}
+  else {venue,symbol,product,category,assetId,pairId,dex,marketId,assetClass,settlementAsset}
+    | with_entries(select(.value!=null)) end;
+def ranked_routes($routes):
+  # The caller already sorts by effective entry price, descending for shorts.
+  # Retain the cheapest route per venue or onchain provider/chain. Equal
+  # effective prices share a rank so callers do not recommend a tied route
+  # as a cheaper alternative. Configuration policy belongs to the caller.
+  reduce $routes[] as $route ({seen:[],price:null,rank:0,routes:[]};
+    ([$route.venue,$route.product,$route.chain,$route.provider]|tojson) as $key |
+    if .price!=$route.effectivePrice then .rank+=1 | .price=$route.effectivePrice else . end |
+    if (.seen|index($key))!=null then . else
+      .seen+=[$key] |
+      .routes+=[($route|comparison_route_identity) + {costRank:.rank} +
+        (if $route.chain!=null and $route.provider!=null then {provider:$route.provider} else {} end)]
+    end) | .routes;
 def comparison_result($routes;$errors):
-  {bestRoute: (if ($routes|length)==0 then null else $routes[0] |
-    if .chain!=null then {issuer,chain,symbol,contract}
-    else {venue,symbol,product,category,assetId,pairId,dex,marketId,assetClass,settlementAsset}
-      | with_entries(select(.value!=null)) end end),
+  {bestRoute: (if ($routes|length)==0 then null else $routes[0]|comparison_route_identity end),
+   rankedRoutes: ranked_routes($routes),
    gaps: ([$errors[] | ([.venue,.chain,.issuer,.symbol,.query] | map(select(.!=null and .!="")) | join(" / ")) as $context |
      (if $context=="" then .message else $context+": "+.message end)] +
      (if ($routes|length)==0 then ["No eligible route with a valid quote"]

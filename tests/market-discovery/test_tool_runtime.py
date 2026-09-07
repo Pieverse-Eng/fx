@@ -126,7 +126,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                         continue
                     try:
                         candidate, _ = decoder.raw_decode(content[offset:])
-                        if isinstance(candidate, dict) and set(candidate) == ({"bestRoute", "gaps"} if tool_name == "compare_trade_routes" else {"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
+                        if isinstance(candidate, dict) and set(candidate) == ({"bestRoute", "rankedRoutes", "gaps"} if tool_name == "compare_trade_routes" else {"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
                             payload = candidate
                             break
                     except ValueError:
@@ -172,6 +172,13 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     route = payload["bestRoute"]
                     assert route["venue"] and route["symbol"] and route["product"] == "perp", payload
                     assert set(route) <= {"venue", "symbol", "product", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset"}, payload
+                    ranked = payload["rankedRoutes"]
+                    assert ranked and ranked[0] == {**route, "costRank": 1}, payload
+                    assert len({r["venue"] for r in ranked}) == len(ranked), payload
+                    assert [r["costRank"] for r in ranked] == sorted(r["costRank"] for r in ranked), payload
+                    assert all(set(r) <= set(route) | {"costRank", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset"} for r in ranked), payload
+                    configured = [r for r in ranked if r["venue"] in {"binance", "hyperliquid"}]
+                    assert len(configured) == 2 and configured[0]["costRank"] <= configured[1]["costRank"], payload
                     assert isinstance(payload["gaps"], list) and all(isinstance(gap, str) for gap in payload["gaps"]), payload
                     assert not any(c in calls for c in ("route-no-asset", "route-rh", "route-networks")), calls
                     commands = (fixtures / "commands").read_text().splitlines()
@@ -218,4 +225,5 @@ for case in ("success", "quote_usdc", "quote_all", "currency_usdc", "invalid", "
 exercise("success", references=True)
 exercise("partial", references=True)
 exercise("success", "get_market_candles", references=True)
+exercise("success", "compare_trade_routes", references=True)
 exercise("success", references=True, multiple=True)

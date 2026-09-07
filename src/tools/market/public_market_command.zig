@@ -70,8 +70,9 @@ pub fn execute(ctx: dispatch.DispatchContext, cmd: []const u8, shape: enum { mar
                 .markets => break :valid object.get("results") != null and object.get("errors") != null,
                 .comparison => {
                     const route = object.get("bestRoute") orelse break :valid false;
+                    const ranked_routes = object.get("rankedRoutes") orelse break :valid false;
                     const gaps = object.get("gaps") orelse break :valid false;
-                    break :valid object.count() == 2 and (route == .object or route == .null) and gaps == .array;
+                    break :valid object.count() == 3 and (route == .object or route == .null) and ranked_routes == .array and gaps == .array;
                 },
             }
         };
