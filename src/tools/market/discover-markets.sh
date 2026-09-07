@@ -76,8 +76,27 @@ fetch_aster() {
   fi
   wait_queries
 }
+# Verified perpetual aliases only; catalogs do not expose a common issuer ID.
+# XYZ identities: https://docs.trade.xyz/asset-directory/korea
+# Native symbols: Aster exchangeInfo and Lighter orderBooks (2026-09-07).
+# Scope each mapping to its venue (and full builder symbol on Hyperliquid).
+# SKHY is an ADR exposure, not an alias. Never strip arbitrary USD suffixes.
+perp_alias_jq='
+def perp_alias_matches($venue; $symbol; $ticker):
+  [ {tickers:["SKHYNIX","SKHX"], symbols:{hyperliquid:["xyz:SKHX"], lighter:["SKHYNIXUSD"], aster:["SKHYNIX"]}},
+    {tickers:["SAMSUNG","SMSN"], symbols:{hyperliquid:["xyz:SMSN"], lighter:["SAMSUNGUSD"], aster:["SAMSUNG"]}},
+    {tickers:["HYUNDAI"], symbols:{lighter:["HYUNDAIUSD"]}} ] |
+  any(.[]; (.tickers|index($ticker))!=null and ((.symbols[$venue] // [])|index($symbol))!=null);
+'
+
 match_aster() {
-  jq --arg ticker "$ticker" --arg quote "$quote" '{markets:[.symbols[]|select(.status=="TRADING" and .contractType=="PERPETUAL" and .baseAsset==$ticker and ($quote=="" or .quoteAsset==$quote))|{symbol,baseAsset,quoteAsset,marginAsset,contractType,status,underlyingType,underlyingSubType,channel,product:"perpetual"}]}' "$scratch/catalog.json"
+  jq --arg ticker "$ticker" --arg quote "$quote" "$perp_alias_jq"'
+  [$ticker,"1000"+$ticker,"1000000"+$ticker,"1M"+$ticker] as $bases |
+  {markets:[.symbols[]|
+    select(.status=="TRADING" and .contractType=="PERPETUAL" and ($quote=="" or .quoteAsset==$quote))|
+    select(.baseAsset as $base | ($bases|index($base))!=null or
+      (((.underlyingSubType // [])|index("STOCK"))!=null and perp_alias_matches("aster"; $base; $ticker)))|
+    {symbol,baseAsset,quoteAsset,marginAsset,contractType,status,underlyingType,underlyingSubType,channel,product:"perpetual"}]}' "$scratch/catalog.json"
 }
 
 fetch_binance() {
@@ -279,7 +298,7 @@ fetch_lighter() {
 
 match_lighter() {
 jq --arg ticker "$ticker" --arg currency "$quote" --arg product "$product" \
-  --arg queriedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson errors "$errors" '
+  --arg queriedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson errors "$errors" "$perp_alias_jq"'
   {venue:"lighter",ticker:$ticker,currencyFilter:(if $currency=="" then null else $currency end),
    product:$product,queriedAt:$queriedAt,
    sources:["https://mainnet.zklighter.elliot.ai/api/v1/orderBooks?filter=all",
@@ -289,7 +308,8 @@ jq --arg ticker "$ticker" --arg currency "$quote" --arg product "$product" \
      select($product=="all" or $product==$kind) |
      (.symbol|split("/")[0]) as $base |
      ($base|ascii_upcase) as $normalized |
-     select($normalized==$ticker or ($kind=="perpetual" and $normalized==("1000"+$ticker))) |
+     select($normalized==$ticker or ($kind=="perpetual" and
+       ($normalized==("1000"+$ticker) or perp_alias_matches("lighter"; $normalized; $ticker)))) |
      # The current purr public mainnet uses USDC settlement for perpetuals.
      # Perp quote_asset_id=0 is a placeholder, not a Spot token index.
      (if $kind=="spot" then (.symbol|split("/")[1]) else "USDC" end) as $settlement |
@@ -355,7 +375,7 @@ fetch_hyperliquid() {
 match_hyperliquid() {
   jq -n --arg ticker "$ticker" --arg currency "$quote" --arg product "$product" \
     --arg queriedAt "$queried_at" --argjson errors '[]' \
-    --slurpfile spot "$scratch/spot.json" --slurpfile perps "$scratch/perps.json" '
+    --slurpfile spot "$scratch/spot.json" --slurpfile perps "$scratch/perps.json" "$perp_alias_jq"'
 # Keep actual market identifiers and currency roles separate.
 def base_matches($name):
   ($name|ascii_upcase) as $base | $base==$ticker or $base==("K"+$ticker);
@@ -370,7 +390,8 @@ def spot_matches($token):
   [$tokens[]|select(.index==$pair.tokens[1])] as $quote |
   {pair:$pair,base:$base[0],quote:$quote[0]}] as $pairs |
 [$perps[0][] |
-  select(.asset==null or base_matches(.asset.name|split(":")|last)) |
+  select(.asset==null or base_matches(.asset.name|split(":")|last) or
+    (.dex=="xyz" and perp_alias_matches("hyperliquid"; .asset.name; $ticker))) |
   . as $row | [$tokens[]|select(.index==$row.collateralToken)] as $collateral |
   . + {collateral:$collateral[0]}] as $perpRows |
 {venue:"hyperliquid",ticker:$ticker,currencyFilter:(if $currency=="" then null else $currency end),product:$product,

@@ -17,6 +17,16 @@ case "${0##*/}:$*" in
  kraken:*orderbook*) venue=kraken; key=route-kraken;;
  okx:*'market orderbook'*) venue=okx-cex; key=route-okx;;
  purr:*'hyperliquid l2'*) venue=hyperliquid; key=route-hl;;
+ purr:'lighter market --market '*) venue=lighter; key=route-lighter-meta;;
+ purr:'lighter order-book-depth '*) venue=lighter; key=route-lighter-book;;
+ purr:'hyperliquid candles '*15m*) venue=hyperliquid; key=hl-candles-15m;;
+ purr:'hyperliquid candles '*1h*) venue=hyperliquid; key=hl-candles-1h;;
+ purr:'hyperliquid candles '*4h*) venue=hyperliquid; key=hl-candles-4h;;
+ curl:*recentTrades*api.hyperliquid.xyz/info*) venue=hyperliquid; key=hl-trades;;
+ curl:*api/v1/candles*resolution=15m*) venue=lighter; key=lighter-candles-15m;;
+ curl:*api/v1/candles*resolution=1h*) venue=lighter; key=lighter-candles-1h;;
+ curl:*api/v1/candles*resolution=4h*) venue=lighter; key=lighter-candles-4h;;
+ curl:*api/v1/recentTrades*) venue=lighter; key=lighter-trades;;
  curl:*api.xstocks.fi*) venue=issuer; key=route-no-asset;;
  curl:*api.robinhood.com*) venue=issuer; key=route-rh;;
  curl:*getNetworkCoinAll*) venue=issuer; key=route-networks;;
@@ -24,7 +34,7 @@ case "${0##*/}:$*" in
  curl:*binance.com*klines*interval=1h*) venue=binance; key=candles-1h;;
  curl:*binance.com*klines*interval=4h*) venue=binance; key=candles-4h;;
  curl:*binance.com*trades*) venue=binance; key=candle-trades;;
- curl:*fapi.asterdex.com*ticker/24hr*) venue=aster; key=stats-empty;;
+ curl:*fapi.asterdex.com*ticker/24hr*) venue=aster; key=stats-aster;;
  curl:*binance.com*api/v3/ticker/24hr*) venue=binance; key=stats-binance-spot;;
  curl:*binance.com*fapi/v1/ticker/24hr*) venue=binance; key=stats-binance-perp;;
  bgc:*'--action tickers'*) venue=bitget; key=stats-empty;;
@@ -32,8 +42,9 @@ case "${0##*/}:$*" in
  kraken:ticker*tokenized_asset*) venue=kraken; key=stats-empty;;
  kraken:ticker*) venue=kraken; key=stats-kraken;;
  okx:*'market tickers'*) venue=okx-cex; key=stats-empty;;
+ purr:'hyperliquid markets --kind perp --dex xyz') venue=hyperliquid; key=stats-hl-xyz;;
  purr:'hyperliquid markets --kind perp'*) venue=hyperliquid; key=stats-empty;;
- curl:*orderBookDetails*) venue=lighter; key=stats-empty;;
+ curl:*orderBookDetails*) venue=lighter; key=stats-lighter;;
  curl:*fapi.asterdex.com*) venue=aster; key=aster;;
  binance-cli:spot*) venue=binance; key=binance-spot;;
  binance-cli:futures-usds*) venue=binance; key=binance-futures;;
@@ -175,6 +186,31 @@ jq -n '{symbols:[
  {symbol:"OLDUSDT",baseAsset:"OLD",quoteAsset:"USDT",marginAsset:"USDT",status:"PENDING_TRADING",contractType:""},
  {symbol:"BTCUSDC",baseAsset:"BTC",quoteAsset:"USDC",marginAsset:"USDC",status:"TRADING",contractType:"PERPETUAL"}
 ]}' >"$fixture_dir/aster.json"
+# Representative native catalog records, including inactive predecessors and ADRs.
+jq '.[1].universe += [{name:"xyz:SKHX",szDecimals:3}, {name:"xyz:SMSN",szDecimals:3},
+ {name:"xyz:SKHY",szDecimals:3}, {name:"xyz:SKHYNIX5L",szDecimals:3}] |
+ .[2].universe += [{name:"late:SKHX",szDecimals:3}]' "$fixture_dir/hl-metas.json" >"$fixture_dir/aliases.tmp"
+mv "$fixture_dir/aliases.tmp" "$fixture_dir/hl-metas.json"
+jq '.order_books += [
+ {symbol:"SKHYNIX",market_id:143,market_type:"perp",status:"inactive"},
+ {symbol:"SKHYNIXUSD",market_id:161,market_type:"perp",status:"active",supported_size_decimals:3},
+ {symbol:"SAMSUNG",market_id:140,market_type:"perp",status:"inactive"},
+ {symbol:"SAMSUNGUSD",market_id:162,market_type:"perp",status:"active",supported_size_decimals:3},
+ {symbol:"HYUNDAI",market_id:142,market_type:"perp",status:"inactive"},
+ {symbol:"HYUNDAIUSD",market_id:160,market_type:"perp",status:"active"},
+ {symbol:"SKHY",market_id:216,market_type:"perp",status:"active"},
+ {symbol:"SKHYNIXUSD/USDC",market_id:2049,market_type:"spot",status:"active"},
+ {symbol:"SKHYNIX5L",market_id:9991,market_type:"perp",status:"active"},
+ {symbol:"UNKNOWNUSD",market_id:9992,market_type:"perp",status:"active"},
+ {symbol:"TUSD",market_id:9993,market_type:"perp",status:"active"},
+ {symbol:"USD1",market_id:9994,market_type:"perp",status:"active"}]' "$fixture_dir/lighter.json" >"$fixture_dir/aliases.tmp"
+mv "$fixture_dir/aliases.tmp" "$fixture_dir/lighter.json"
+jq '.symbols += (["SKHYNIX","SAMSUNG","SKHY","SKHYNIX5L"]|map({symbol:(.+"USDT"),baseAsset:.,
+ quoteAsset:"USDT",marginAsset:"USDT",status:"TRADING",contractType:"PERPETUAL",underlyingSubType:["STOCK"]})) +
+ (["1000PEPE","1000000MOG","1MBABYDOGE","1000PEPPER"]|map({symbol:(.+"USDT"),baseAsset:.,
+ quoteAsset:"USDT",marginAsset:"USDT",status:"TRADING",contractType:"PERPETUAL"})) +
+ [{symbol:"SKHXUSDT",baseAsset:"SKHX",quoteAsset:"USDT",marginAsset:"USDT",status:"PENDING_TRADING",contractType:""}]' "$fixture_dir/aster.json" >"$fixture_dir/aliases.tmp"
+mv "$fixture_dir/aliases.tmp" "$fixture_dir/aster.json"
 if [[ $# == 1 ]]; then
   echo '[{"symbol":"USDTUSD","bidPrice":"0.9999","askPrice":"1.0001","bidQty":"100","askQty":"100"},{"symbol":"USDCUSD","bidPrice":"0.9989","askPrice":"0.9991","bidQty":"100","askQty":"100"}]' >"$fixture_dir/route-rates.json"
   echo '{"asks":[["100","20"]],"bids":[["99","20"]]}' >"$fixture_dir/route-book.json"
@@ -183,10 +219,15 @@ if [[ $# == 1 ]]; then
   echo '{"result":"success","orderBook":{"asks":[["100","20"]],"bids":[["99","20"]]}}' >"$fixture_dir/route-kraken.json"
   echo '[{"asks":[["100","2000"]],"bids":[["99","2000"]]}]' >"$fixture_dir/route-okx.json"
   echo '{"levels":[[{"px":"99","sz":"20"}],[{"px":"100","sz":"20"}]]}' >"$fixture_dir/route-hl.json"
+  echo '{"taker_fee":"0.0000","supported_size_decimals":3,"min_base_amount":"0.007","min_quote_amount":"10"}' >"$fixture_dir/route-lighter-meta.json"
+  echo '{"asks":[{"price":"100","remaining_base_amount":"20"}],"bids":[{"price":"99","remaining_base_amount":"20"}]}' >"$fixture_dir/route-lighter-book.json"
   echo '{"error":"asset not found"}' >"$fixture_dir/route-no-asset.json"
   echo '{"assets":[]}' >"$fixture_dir/route-rh.json"
   echo '{"data":[]}' >"$fixture_dir/route-networks.json"
   echo '[]' >"$fixture_dir/stats-empty.json"
+  echo '[{"symbol":"SKHYNIXUSDT","quoteVolume":"10"},{"symbol":"SAMSUNGUSDT","quoteVolume":"10"}]' >"$fixture_dir/stats-aster.json"
+  jq '[.[1], [.[1].universe[]|{dayNtlVlm:(if .name=="xyz:SKHX" then "2000000" else "1" end)}]]' "$fixture_dir/hl-metas.json" >"$fixture_dir/stats-hl-xyz.json"
+  echo '{"order_book_details":[{"market_id":161,"daily_quote_token_volume":"1000000"},{"market_id":162,"daily_quote_token_volume":"1000000"}]}' >"$fixture_dir/stats-lighter.json"
   jq -n --argjson now "$(date +%s%3N)" '[{symbol:"BTCUSDT",quoteVolume:"10",lastPrice:"100"},{symbol:"USDTUSD",count:100,closeTime:$now},{symbol:"USDCUSD",count:100,closeTime:$now}]' >"$fixture_dir/stats-binance-spot.json"
   echo '[{"symbol":"BTCUSDT","quoteVolume":"1000000","lastPrice":"100"},{"symbol":"CRCLUSDT","quoteVolume":"1000000","lastPrice":"100"}]' >"$fixture_dir/stats-binance-perp.json"
   echo '{"USDTZUSD":{"c":["0.99"]},"USDCUSD":{"c":["1.001"]}}' >"$fixture_dir/stats-kraken.json"
@@ -196,8 +237,12 @@ if [[ $# == 1 ]]; then
   for tf in 15m 1h 4h; do
     duration=900000; [[ $tf != 1h ]] || duration=3600000; [[ $tf != 4h ]] || duration=14400000
     jq -n --argjson now "$now" --argjson duration "$duration" '[range(60;-1;-1)|[($now/$duration|floor)*$duration-.*$duration,100,103,98,102,12]]' >"$fixture_dir/candles-$tf.json"
+    jq 'map({t:.[0],o:.[1],h:.[2],l:.[3],c:.[4],v:.[5]})' "$fixture_dir/candles-$tf.json" >"$fixture_dir/hl-candles-$tf.json"
+    jq '{code:200,c:.}' "$fixture_dir/hl-candles-$tf.json" >"$fixture_dir/lighter-candles-$tf.json"
   done
   jq -n --argjson now "$now" '[{price:"102",time:($now-1)}]' >"$fixture_dir/candle-trades.json"
+  jq 'map({px:.price,time})' "$fixture_dir/candle-trades.json" >"$fixture_dir/hl-trades.json"
+  jq '{trades:map({price,timestamp:.time})}' "$fixture_dir/candle-trades.json" >"$fixture_dir/lighter-trades.json"
   python3 "$repo_root/tests/market-discovery/test_tool_runtime.py" "$1" "$fixture_dir"
   exit
 fi
@@ -231,6 +276,38 @@ jq -e '(.results|map(.ticker))==["BTC","CRCL"]' "$fixture_dir/result.json" >/dev
 [[ $(wc -l <"$fixture_dir/calls") == 19 ]]
 # Some venues cannot cover a requested currency; retain the other results.
 partial() { run "$@" || [[ $? == 1 ]]; }
+# Aliases retain input grouping and native order IDs; no fuzzy issuer matching.
+run SKHYNIX SKHX SAMSUNG SMSN HYUNDAI SKHY T USD1 000660 --quote ALL >"$fixture_dir/aliases.json"
+jq -e '
+ def markets($t): [.results[]|select(.ticker==$t)|.markets[]];
+ (markets("SKHYNIX") == (markets("SKHX")|map(select(.symbol!="late:SKHX")))) and
+ any(markets("SKHX")[];.symbol=="late:SKHX") and (markets("SAMSUNG") == markets("SMSN")) and
+ (markets("SKHYNIX")|length)==3 and (markets("SAMSUNG")|length)==3 and
+ any(markets("SKHYNIX")[];.symbol=="xyz:SKHX" and .assetId==110003 and .dex=="xyz") and
+ any(markets("SKHYNIX")[];.symbol=="SKHYNIXUSD" and .marketId==161) and
+ any(markets("SKHYNIX")[];.symbol=="SKHYNIXUSDT") and
+ any(markets("SAMSUNG")[];.symbol=="xyz:SMSN") and
+ any(markets("SAMSUNG")[];.symbol=="SAMSUNGUSD" and .marketId==162) and
+ (markets("HYUNDAI")|map(.symbol))==["HYUNDAIUSD"] and
+ (markets("SKHY")|map(.symbol)|sort)==["SKHY","SKHYUSDT","xyz:SKHY"] and
+ markets("T")==[] and markets("000660")==[] and
+ (markets("USD1")|map(.symbol))==["USD1"] and .errors==[]' "$fixture_dir/aliases.json" >/dev/null
+run SKHYNIX SAMSUNG --product spot | jq -e 'all(.results[];.markets==[])' >/dev/null
+partial SKHYNIX --quote USDT | jq -e '(.results[0].markets|map(.symbol))==["SKHYNIXUSDT"]' >/dev/null
+run SKHYNIXUSD | jq -e 'any(.results[0].markets[];.marketId==161)' >/dev/null
+run PEPE 1000PEPE MOG BABYDOGE | jq -e '
+ [.results[]|.ticker as $t|.markets[]|select(.venue=="aster")|[$t,.symbol]] ==
+ [["PEPE","1000PEPEUSDT"],["1000PEPE","1000PEPEUSDT"],["MOG","1000000MOGUSDT"],["BABYDOGE","1MBABYDOGEUSDT"]]' >/dev/null
+# Known aliases must still respect current availability.
+cp "$fixture_dir/hl-metas.json" "$fixture_dir/hl-alias.backup"
+cp "$fixture_dir/lighter.json" "$fixture_dir/lighter-alias.backup"
+jq '.[1].universe |= map(if .name=="xyz:SKHX" then .isDelisted=true else . end)' "$fixture_dir/hl-metas.json" >"$fixture_dir/aliases.tmp"
+mv "$fixture_dir/aliases.tmp" "$fixture_dir/hl-metas.json"
+jq '.order_books |= map(if .market_id==161 then .status="inactive" else . end)' "$fixture_dir/lighter.json" >"$fixture_dir/aliases.tmp"
+mv "$fixture_dir/aliases.tmp" "$fixture_dir/lighter.json"
+run SKHYNIX | jq -e '(.results[0].markets|map(.symbol))==["SKHYNIXUSDT"]' >/dev/null
+mv "$fixture_dir/hl-alias.backup" "$fixture_dir/hl-metas.json"
+mv "$fixture_dir/lighter-alias.backup" "$fixture_dir/lighter.json"
 partial BTC --quote USDC | jq -e '[.results[0].markets[]|select(.venue=="bitget")]|length==2 and any(.[];.symbol=="BTCPERP")' >/dev/null
 partial BTC --quote USDT | jq -e '[.results[0].markets[]|select(.venue=="kraken")]|length==1 and .[0].symbol=="XBTUSDT"' >/dev/null
 run BTC --quote ALL | jq -e '[.results[0].markets[]|select(.venue=="hyperliquid")]|length==4 and any(.[];.symbol=="late:BTC" and .assetId==120000)' >/dev/null

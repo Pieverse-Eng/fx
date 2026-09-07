@@ -32,6 +32,11 @@ jq '{code:200,c:map({t:.[0],o:.[1],h:.[2],l:.[3],c:.[4],v:.[5]})}' "$fixture/row
 normalize_candles "$m" 15m "$fixture/input.json" "$now" | jq -e '.closed[0][1:]==[0.1,0.103,0.098,0.102,12000]' >/dev/null
 m='{"ticker":"PEPE","baseAsset":"1000PEPE","venue":"binance","product":"perpetual"}'
 normalize_candles "$m" 15m "$fixture/rows.json" "$now" | jq -e '.closed[0][1:]==[0.1,0.103,0.098,0.102,12000]' >/dev/null
+for pair in 'PEPE 1000PEPE 1000' 'MOG 1000000MOG 1000000' 'BABYDOGE 1MBABYDOGE 1000000' '1000PEPE 1000PEPE 1'; do
+  read -r ticker base scale <<<"$pair"
+  m=$(jq -cn --arg ticker "$ticker" --arg base "$base" '{ticker:$ticker,baseAsset:$base,venue:"aster",product:"perpetual"}')
+  normalize_candles "$m" 15m "$fixture/rows.json" "$now" | jq -e --argjson scale "$scale" '.closed[0][1:]==[100/$scale,103/$scale,98/$scale,102/$scale,12*$scale]' >/dev/null
+done
 m='{"ticker":"BTC","baseAsset":"BTC","venue":"gate","product":"perpetual","contractSize":"0.01"}'
 jq 'map({t:(.[0]/1000),o:.[1],h:.[2],l:.[3],c:.[4],v:.[5]})' "$fixture/rows.json" >"$fixture/input.json"
 normalize_candles "$m" 15m "$fixture/input.json" "$now" | jq -e '.closed[0][5]==0.12' >/dev/null
