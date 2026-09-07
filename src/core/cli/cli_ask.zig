@@ -74,6 +74,7 @@ const command_output_content = @import("../tooling/command_output_content.zig");
 const tool_mcp_runtime = @import("../tooling/tool_mcp_runtime.zig");
 const tool_presentation = @import("../tooling/tool_presentation.zig");
 const tool_result_errors = @import("../tooling/tool_result_errors.zig");
+const result_refs = @import("result_refs.zig");
 const tool_runtime = @import("../tooling/tool_runtime.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
 const tool_specs = @import("../tooling/tool_specs.zig");
@@ -585,6 +586,7 @@ const AskContext = struct {
     command_output_line_open: bool = false,
     assistant_output: std.ArrayList(u8) = .empty,
     final_output: std.ArrayList(u8) = .empty,
+    result_store: result_refs.Store = .{},
     tool_call_records: std.ArrayList(ToolCallRecord) = .empty,
     tool_call_records_mutex: std.Io.Mutex = .init,
     web_search_progress_mutex: std.Io.Mutex = .init,
@@ -752,6 +754,7 @@ const AskContext = struct {
         }
         self.assistant_output.deinit(self.alloc);
         self.final_output.deinit(self.alloc);
+        self.result_store.deinit(self.alloc);
         for (self.pending_tool_progress.items) |progress| progress.deinit(self.alloc);
         self.pending_tool_progress.deinit(self.alloc);
         for (self.deferred_tool_progress.items) |progress| self.alloc.free(progress);
@@ -1488,7 +1491,14 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
 
     var owned_resumed_model: ?[]u8 = null;
     defer if (owned_resumed_model) |model| alloc.free(model);
-    var ctx = AskContext.init(alloc, cfg, options.deps, startup.workspace_root);
+    const reference_system_prompt = if (options.output_mode == .json)
+        try std.fmt.allocPrint(alloc, "{s}\n\n{s}", .{ cfg.prompt_policy.system_prompt, result_refs.prompt })
+    else
+        null;
+    defer if (reference_system_prompt) |value| alloc.free(value);
+    var effective_cfg = cfg;
+    if (reference_system_prompt) |value| effective_cfg.prompt_policy.system_prompt = value;
+    var ctx = AskContext.init(alloc, effective_cfg, options.deps, startup.workspace_root);
     defer ctx.deinit();
     if (options.save_session) {
         _ = try ctx.session.initializeProfileUsage(alloc, io_mod.getenv("HOME"));
@@ -1787,7 +1797,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         false;
     ctx.retain_external_root_user_turn = current_prompt_is_root_authority;
     options.deps.process_queued_prompt(&ctx.session.agent, &deps, semantic_presentation, ctx.lifecycleContext(), .{
-        .system_prompt = cfg.prompt_policy.system_prompt,
+        .system_prompt = ctx.cfg.prompt_policy.system_prompt,
         .model_prompt_overlay = cfg.prompt_policy.modelPromptOverlay(ctx.model),
         .skill_catalog = .{ .skills = loaded_skills.skills, .diagnostics = loaded_skills.diagnostics },
         .gateway_retry_count = cfg.gateway_retry_count,
@@ -2534,7 +2544,7 @@ fn executeToolCallAuthorized(
     tool_ctx.session_grants = request.session_grants;
     tool_ctx.advertised_dynamic_tool_names = request.advertised_dynamic_tool_names;
     tool_ctx.max_tool_result_bytes = request.max_tool_result_bytes;
-    const result = tool_runtime.executeToolCallAuthorized(
+    var result = tool_runtime.executeToolCallAuthorized(
         tool_ctx,
         request,
     ) catch |err| {
@@ -2542,6 +2552,13 @@ fn executeToolCallAuthorized(
         return err;
     };
     captureToolExecutionResult(ctx, request, result);
+    if (ctx.output_mode == .json) {
+        ctx.tool_call_records_mutex.lockUncancelable(io_mod.getIo());
+        defer ctx.tool_call_records_mutex.unlock(io_mod.getIo());
+        if (try ctx.result_store.captureForModel(ctx.alloc, request.result_allocator, request.call.id, result.model_output)) |annotated| {
+            result.model_output = annotated;
+        }
+    }
     return result;
 }
 
@@ -2935,8 +2952,21 @@ fn pushEvent(raw_ctx: *anyopaque, event: WorkerEvent) !void {
         .clear_route_recovery_status => ctx.last_recovery_status = null,
         .finish_prompt => |finished| {
             ctx.final_output.clearRetainingCapacity();
+            if (ctx.output_mode == .json and (ctx.failed or ctx.processInterruptRequested())) return;
             if (finished.terminal_outcome == .completed) switch (finished.turn) {
                 .assistant => |turn| {
+                    if (ctx.output_mode == .json) {
+                        const resolved = ctx.result_store.resolve(ctx.alloc, turn.assistant) catch |err| {
+                            ctx.failed = true;
+                            ctx.typed_error_code = @errorName(err);
+                            return;
+                        };
+                        if (resolved) |json| {
+                            defer ctx.alloc.free(json);
+                            try ctx.final_output.appendSlice(ctx.alloc, json);
+                            return;
+                        }
+                    }
                     const presentation = @import("../agent/runtime/assistant_stream.zig");
                     const text = finished.presentation_text orelse turn.assistant;
                     const normalized = try presentation.normalizeAssistantTextForDisplay(ctx.alloc, text);
@@ -9077,6 +9107,29 @@ test "fx ask raw output still propagates prompt failure" {
     );
     try std.testing.expectEqualStrings("partial résumé", stdout_capture.bytes.items);
     try std.testing.expectEqualStrings("", stderr_capture.bytes.items);
+}
+
+test "CLI result references resolve only completed JSON responses" {
+    const alloc = std.testing.allocator;
+    for ([_]types.TurnPresentationOutcome{ .completed, .interrupted, .failed, .paused }) |outcome| {
+        var stdout_capture: TestCapture = .{};
+        defer stdout_capture.deinit(alloc);
+        var stderr_capture: TestCapture = .{};
+        defer stderr_capture.deinit(alloc);
+        var ctx = AskContext.init(alloc, testConfig(), testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup), "/tmp/workspace");
+        defer ctx.deinit();
+        ctx.output_mode = .json;
+        ctx.result_store.capture(alloc, "call", "{\"errors\":[\"missing venue\"]}");
+        const finished = try types.dupeFinishedPrompt(std.heap.c_allocator, .{
+            .turn = .{ .assistant = .{
+                .user = .{ .text = @constCast("prompt") },
+                .assistant = @constCast("{\"result_refs\":[\"call\"]}"),
+            } },
+            .terminal_outcome = outcome,
+        });
+        try pushEvent(&ctx, .{ .finish_prompt = finished });
+        try std.testing.expectEqualStrings(if (outcome == .completed) "{\"errors\":[\"missing venue\"]}" else "", ctx.final_output.items);
+    }
 }
 
 test "CLI tagged stream routes source output rendering and diagnostics by mode" {
