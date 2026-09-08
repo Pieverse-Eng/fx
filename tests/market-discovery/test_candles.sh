@@ -102,3 +102,33 @@ candle_asset BTC "$scratch_root/ranked.json"
 jq -e '.errors==[] and (.result|has("source")|not) and (.result.timeframes|all(.[];.closed|length==50))' "$scratch_root/candles-BTC/result.json" >/dev/null
 jq -se '.[0].venue=="binance" and .[0].usableTimeframes==0 and .[1].venue=="bitget" and .[1].usableTimeframes==3' "$cache_dir/candle-source-BTC.jsonl" >/dev/null
 echo 'Volume adapters and whole-market fallback passed.'
+# A failed diagnostic copy must not invalidate already-normalized candles.
+rm -rf "$scratch_root/candles-BTC"
+cp() {
+  if [[ $2 == "$cache_dir/candle-source-BTC.jsonl" ]]; then
+    echo 'cp: Permission denied (fixture)' >&2
+    return 1
+  fi
+  command cp "$@"
+}
+candle_asset BTC "$scratch_root/ranked.json" 2>"$fixture/cache-warning"
+unset -f cp
+jq -e '.errors==[] and (.result.timeframes|all(.[];.closed|length==50))' "$scratch_root/candles-BTC/result.json" >/dev/null
+grep -q 'Permission denied' "$fixture/cache-warning"
+grep -q 'keeping market result' "$fixture/cache-warning"
+# Real worker failures retain exit status and stderr, including failures before mkdir.
+scratch_root="$fixture/worker-failure"; mkdir -p "$scratch_root"; tickers=(BTC)
+echo '{"venue":"binance","results":[{"ticker":"BTC","markets":[{"symbol":"BTCUSD","product":"perpetual","quoteAsset":"USD"}]}],"errors":[]}' >"$fixture/discovery.json"
+fetch_volumes() {
+  mkdir -p "$scratch_root/stats"
+  echo '[]' >"$scratch_root/stats/kraken-pairs.json"
+  echo '{}' >"$scratch_root/stats/kraken-spot.json"
+  echo '[]' >"$scratch_root/stats/binance-spot.json"
+}
+load_volume() { echo '{"volume":100}'; }
+candle_asset() { echo 'worker-specific failure (fixture)' >&2; exit 23; }
+run_candles "$fixture/discovery.json" >"$fixture/failed-result.json" 2>"$fixture/worker-stderr"
+jq -e '.results[0].timeframes["15m"]==null and any(.errors[];.ticker=="BTC" and .exitCode==23)' "$fixture/failed-result.json" >/dev/null
+grep -q 'worker-specific failure' "$fixture/worker-stderr"
+grep -q 'BTC (exit 23)' "$fixture/worker-stderr"
+echo 'Diagnostic cache failure isolation and worker error reporting passed.'

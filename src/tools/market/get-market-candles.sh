@@ -254,7 +254,12 @@ candle_asset() (
   else
     jq -n --arg ticker "$ticker" --argjson now "$(date +%s%3N)" '{result:{ticker:$ticker,quote:null,asOf:$now,lastTrade:null,timeframes:{"15m":null,"1h":null,"4h":null}},errors:[{ticker:$ticker,query:"candles",message:"No reference market with usable candles and comparable volume"}]}' >"$dir/result.json"
   fi
-  if [[ -n $cache_dir && -f $dir/sources.jsonl ]]; then cp "$dir/sources.jsonl" "$cache_dir/candle-source-$ticker.jsonl"; fi
+  # Source diagnostics are optional; a cache permission failure must not discard candles.
+  if [[ -n $cache_dir && -f $dir/sources.jsonl ]]; then
+    if ! cp "$dir/sources.jsonl" "$cache_dir/candle-source-$ticker.jsonl"; then
+      printf 'Warning: could not save candle source diagnostics for %s; keeping market result\n' "$ticker" >&2
+    fi
+  fi
 )
 
 # Keep milliseconds for arithmetic; expose directly readable UTC times to the agent.
@@ -303,12 +308,18 @@ run_candles() {
   done < <(jq -c '.[]' "$candidates")
   jq -s '.' "$scratch_root/ranked.jsonl" >"$scratch_root/ranked.json"
   workers=()
-  for ticker in "${tickers[@]}"; do candle_asset "$ticker" "$scratch_root/ranked.json" & workers+=("$!"); done
-  local index
+  for ticker in "${tickers[@]}"; do
+    candle_asset "$ticker" "$scratch_root/ranked.json" 2>"$scratch_root/candle-worker-$ticker.stderr" & workers+=("$!")
+  done
+  local index worker_status
   for index in "${!workers[@]}"; do
     ticker=${tickers[$index]}
-    if ! wait "${workers[$index]}"; then
-      jq -n --arg ticker "$ticker" '{result:{ticker:$ticker,quote:null,asOf:null,lastTrade:null,timeframes:{"15m":null,"1h":null,"4h":null}},errors:[{ticker:$ticker,query:"candles",message:"Candle worker failed"}]}' >"$scratch_root/candles-$ticker/result.json"
+    if wait "${workers[$index]}"; then worker_status=0; else worker_status=$?; fi
+    cat "$scratch_root/candle-worker-$ticker.stderr" >&2
+    if (( worker_status != 0 )); then
+      printf 'Candle worker failed for %s (exit %s)\n' "$ticker" "$worker_status" >&2
+      mkdir -p "$scratch_root/candles-$ticker"
+      jq -n --arg ticker "$ticker" --argjson status "$worker_status" '{result:{ticker:$ticker,quote:null,asOf:null,lastTrade:null,timeframes:{"15m":null,"1h":null,"4h":null}},errors:[{ticker:$ticker,query:"candles",message:"Candle worker failed",exitCode:$status}]}' >"$scratch_root/candles-$ticker/result.json"
     fi
   done
   workers=()
