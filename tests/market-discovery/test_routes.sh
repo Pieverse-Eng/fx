@@ -124,7 +124,7 @@ for venue in aster binance bitget gate hyperliquid kraken lighter okx-cex; do
   m=$(jq -cn --arg venue "$venue" '{ticker:"BTC",baseAsset:"BTC",quoteAsset:"USDT",venue:$venue,symbol:"BTCUSDT",product:"perpetual",status:"online",dex:"default",szDecimals:4,category:"USDT-FUTURES"}')
   echo '{"asks":[[100,20]],"bids":[[99,20]]}' >"$scratch_root/book-fixture.json"
   case "$venue" in
-    aster) echo '{"symbols":[{"symbol":"BTCUSDT","filters":[]}]}' >"$scratch_root/aster/catalog.json";;
+    aster) echo '{"symbols":[{"symbol":"BTCUSDT","quoteAsset":"USDT","marginAsset":"USDT","contractType":"PERPETUAL","filters":[]}]}' >"$scratch_root/aster/catalog.json";;
     binance) echo '{"symbols":[{"symbol":"BTCUSDT","filters":[]}]}' >"$scratch_root/binance/futures.json";;
     bitget)
       echo '{"data":[{"symbol":"BTCUSDT","takerFeeRate":"0.0006","quantityMultiplier":"0.001"}]}' >"$scratch_root/bitget/USDT-FUTURES.json"
@@ -148,6 +148,45 @@ for venue in aster binance bitget gate hyperliquid kraken lighter okx-cex; do
   if [[ $venue == hyperliquid || $venue == lighter ]]; then jq -e '.extraFee==0.0005' "$scratch_root/routes/test-$venue/candidate.json" >/dev/null; fi
 done
 echo 'All eight order-book adapter shapes and platform fees passed.'
+
+# Exercise the production adapter, not a copy of the fee classification.
+echo '{"USDTUSD":"1","USD1USDT":"1","UUSDT":"1"}' >"$scratch_root/routes/rates.json"
+echo '{"asks":[[100,20]],"bids":[[99,20]]}' >"$scratch_root/book-fixture.json"
+while read -r symbol quote tags symbol_type expected; do
+  m=$(jq -cn --arg symbol "$symbol" --arg quote "$quote" --argjson tags "$tags" --argjson type "$symbol_type" '
+    {venue:"aster",ticker:"ASSET",symbol:$symbol,baseAsset:"ASSET",quoteAsset:$quote,marginAsset:$quote,
+     product:"perpetual",contractType:"PERPETUAL",status:"TRADING",underlyingSubType:$tags,symbolType:$type,filters:[]}')
+  jq -n --argjson m "$m" '{symbols:[$m]}' >"$scratch_root/aster/catalog.json"
+  route_book "$m" "fee-$symbol"
+  if [[ $expected == null ]]; then
+    jq -e '.message=="Applicable public fee or base-size unit unavailable"' "$scratch_root/routes/fee-$symbol/error.json" >/dev/null
+    [[ ! -e $scratch_root/routes/fee-$symbol/candidate.json ]]
+  else
+    jq -e --argjson fee "$expected" '.fee==$fee' "$scratch_root/routes/fee-$symbol/candidate.json" >/dev/null
+  fi
+done <<'CASES'
+TRXUSDT USDT ["Top"] 0 0.0004
+TSLAUSDT USDT ["STOCK"] 1 0.00009
+SPYUSDT USDT ["ETF"] 1 0.00009
+XAUUSDT USDT ["Commodities"] 1 0.00009
+BTCUSD1 USD1 [] 0 0.00005
+SNDKUSD1 USD1 ["STOCK","AOS2","USD1-RWA"] 1 0.00009
+XAUUSD1 USD1 ["Commodities","USD1-RWA"] 1 0.00009
+UNKNOWNUSD1 USD1 [] 2 null
+BTCU U ["AOS2"] 0 null
+OPENAIUSDT USDT ["pre-launch","STOCK"] 1 null
+CASES
+# At equal books, correcting the RWA fee changes the long AND short winner.
+jq -ne --slurpfile a "$scratch_root/routes/fee-TSLAUSDT/candidate.json" "$math"'
+  $a[0] as $aster | ($aster+{venue:"binance",fee:0.0005}) as $binance |
+  ([perpetual($aster;2;"long"),perpetual($binance;2;"long")]|sort_by(.effectivePrice)) as $long |
+  ([perpetual($aster;2;"short"),perpetual($binance;2;"short")]|sort_by(.effectivePrice)|reverse) as $short |
+  (comparison_result($long;[]).bestRoute.venue=="aster") and
+  (comparison_result($short;[]).bestRoute.venue=="aster") and
+  (($long[0].fees-0.018)|fabs<1e-12) and
+  (perpetual($aster+{fee:0.002};2;"long").effectivePrice > $long[1].effectivePrice)
+' >/dev/null
+echo 'Aster crypto, RWA, USD1, unknown fee exclusions and cost ranking regressions passed.'
 
 jq -ne "$math"'
  live_rates([{symbol:"USDTUSD",count:2,closeTime:10000},{symbol:"GBPUSD",count:0,closeTime:10000},{symbol:"OLDUSD",count:10,closeTime:1}];

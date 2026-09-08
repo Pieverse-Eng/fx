@@ -17,7 +17,18 @@ route_book() (
     aster)
       source='https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees'
       meta=$(jq -c --arg s "$symbol" '.symbols[]|select(.symbol==$s)' "$scratch_root/aster/catalog.json")
-      fee=$(jq -nr --argjson m "$meta" 'if (($m.underlyingSubType//[])|index("STOCK"))!=null then 0.002 else 0.0004 end')
+      # Public default-tier schedule checked 2026-09-08. RWA classification
+      # precedes quote currency: USD1 stock/commodity contracts are not crypto.
+      fee=$(jq -nr --argjson m "$meta" '
+        ($m.underlyingSubType // []) as $tags |
+        if $m.contractType!="PERPETUAL" or $m.marginAsset!=$m.quoteAsset then null
+        elif ($tags|index("pre-launch"))!=null then null
+        elif ($m.quoteAsset=="USDT" or $m.quoteAsset=="USD1") and
+          any($tags[]; .=="STOCK" or .=="ETF" or .=="Commodities" or .=="USD1-RWA") then 0.00009
+        elif ($m.symbolType//0)!=0 then null
+        elif $m.quoteAsset=="USDT" then 0.0004
+        elif $m.quoteAsset=="USD1" then 0.00005
+        else null end')
       market_read "$dir/book.json" curl -fsS --max-time 20 "https://fapi.asterdex.com/fapi/v1/depth?symbol=$symbol&limit=100"
       ;;
     binance)
