@@ -9,7 +9,7 @@ const public_command = @import("public_market_command.zig");
 
 const endpoint = "https://copenapi.bgwapi.io/market/v3/coin/search";
 const path = "/market/v3/coin/search";
-const Params = struct { query: []const u8, chain: ?[]const u8 = null, limit: u8 = 1 };
+const Params = struct { query: []const u8, chain: ?[]const u8 = null };
 const Input = struct {
     parsed: std.json.Parsed(Params),
 
@@ -22,12 +22,12 @@ const Input = struct {
 
 pub fn decode(ctx: dispatch.DispatchContext, arguments: []const u8) dispatch.DispatchError!dispatch.DecodeResult {
     const parsed = std.json.parseFromSlice(Params, ctx.allocator, arguments, .{ .allocate = .alloc_always }) catch {
-        return .{ .failure = try ctx.allocator.dupe(u8, "Pass query, optional chain, and optional integer limit (1–20).") };
+        return .{ .failure = try ctx.allocator.dupe(u8, "Pass query and optional chain.") };
     };
     errdefer parsed.deinit();
     const params = parsed.value;
     const query = std.mem.trim(u8, params.query, " \t\r\n");
-    var valid = query.len > 0 and params.query.len <= 256 and std.unicode.utf8ValidateSlice(params.query) and params.limit >= 1 and params.limit <= 20;
+    var valid = query.len > 0 and params.query.len <= 256 and std.unicode.utf8ValidateSlice(params.query);
     for (params.query) |char| if (char < 0x20 or char == 0x7f) {
         valid = false;
     };
@@ -38,7 +38,7 @@ pub fn decode(ctx: dispatch.DispatchContext, arguments: []const u8) dispatch.Dis
         };
     }
     if (!valid) {
-        const failure = try ctx.allocator.dupe(u8, "Use a nonempty query (up to 256 bytes), a chain code, and limit 1–20.");
+        const failure = try ctx.allocator.dupe(u8, "Use a nonempty query (up to 256 bytes) and an optional chain code.");
         parsed.deinit();
         return .{ .failure = failure };
     }
@@ -48,7 +48,7 @@ pub fn decode(ctx: dispatch.DispatchContext, arguments: []const u8) dispatch.Dis
 }
 
 fn command(alloc: std.mem.Allocator, params: Params, timestamp: i64) ![]u8 {
-    const body = try std.json.Stringify.valueAlloc(alloc, .{ .keyword = params.query, .limit = params.limit, .chain = params.chain }, .{ .emit_null_optional_fields = false });
+    const body = try std.json.Stringify.valueAlloc(alloc, .{ .keyword = params.query, .limit = 1, .chain = params.chain }, .{ .emit_null_optional_fields = false });
     defer alloc.free(body);
     const signed = try std.fmt.allocPrint(alloc, "POST{s}{s}{d}", .{ path, body, timestamp });
     defer alloc.free(signed);
@@ -102,7 +102,7 @@ fn response(alloc: std.mem.Allocator, text: []const u8, params: Params) ![]u8 {
     if (list != .array) return error.InvalidResponse;
     var tokens: std.ArrayList(Token) = .empty;
     defer tokens.deinit(alloc);
-    for (list.array.items[0..@min(list.array.items.len, params.limit)]) |entry| {
+    for (list.array.items[0..@min(list.array.items.len, 1)]) |entry| {
         const token = Token{
             .name = try tokenField(entry, "name"),
             .symbol = try tokenField(entry, "symbol"),
@@ -172,30 +172,25 @@ pub fn isIrreversible(_: dispatch.ToolInput) bool {
 
 test "search_tokens validates input and defaults" {
     const alloc = std.testing.allocator;
-    for ([_][]const u8{ "{}", "{\"query\":\" \"}", "{\"query\":\"btc\",\"limit\":0}", "{\"query\":\"btc\",\"limit\":21}", "{\"query\":\"btc\",\"limit\":1.5}", "{\"query\":\"btc\",\"chain\":\"\"}", "{\"query\":\"btc\",\"venue\":\"bnb\"}" }) |invalid| {
+    for ([_][]const u8{ "{}", "{\"query\":\" \"}", "{\"query\":\"btc\",\"limit\":1}", "{\"query\":\"btc\",\"limit\":21}", "{\"query\":\"btc\",\"limit\":1.5}", "{\"query\":\"btc\",\"chain\":\"\"}", "{\"query\":\"btc\",\"venue\":\"bnb\"}" }) |invalid| {
         const decoded = try decode(.{ .allocator = alloc }, invalid);
         try std.testing.expect(decoded == .failure);
         alloc.free(decoded.failure);
     }
     const decoded = try decode(.{ .allocator = alloc }, "{\"query\":\"cashcat\"}");
     defer decoded.input.deinit(alloc);
-    try std.testing.expectEqual(@as(u8, 1), decoded.input.as(Input).parsed.value.limit);
     try std.testing.expect(decoded.input.as(Input).parsed.value.chain == null);
     const cmd = try command(alloc, decoded.input.as(Input).parsed.value, 123);
     defer alloc.free(cmd);
     try std.testing.expect(std.mem.endsWith(u8, cmd, "--data-raw '{\"keyword\":\"cashcat\",\"limit\":1}'"));
 }
 
-test "search_tokens preserves ranking limits and addresses and rejects incomplete responses" {
+test "search_tokens returns only the first match and preserves addresses and rejects incomplete responses" {
     const alloc = std.testing.allocator;
     const fixture = "{\"status\":0,\"data\":{\"list\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\",\"twitter\":\"https://x.com/example\",\"website\":\"https://example.com\",\"telegram\":\"https://t.me/example\",\"price\":1},{\"name\":\"Second\",\"symbol\":\"B\",\"chain\":\"bnb\",\"contract\":\"0xAB\",\"twitter\":\"\",\"website\":null,\"telegram\":42}]}}";
     const output = try response(alloc, fixture, .{ .query = "A" });
     defer alloc.free(output);
     try std.testing.expectEqualStrings("{\"results\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\",\"twitter\":\"https://x.com/example\",\"website\":\"https://example.com\",\"telegram\":\"https://t.me/example\"}]}", output);
-    const multi = try response(alloc, fixture, .{ .query = "A", .limit = 2 });
-    defer alloc.free(multi);
-    try std.testing.expect(std.mem.find(u8, multi, "Second") != null);
-    try std.testing.expect(std.mem.find(u8, multi, "\"twitter\":null,\"website\":null,\"telegram\":null") != null);
     const empty = try response(alloc, "{\"status\":0,\"data\":{\"list\":[]}}", .{ .query = "A" });
     defer alloc.free(empty);
     try std.testing.expectEqualStrings("{\"results\":[]}", empty);

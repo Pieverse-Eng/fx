@@ -921,7 +921,7 @@ pub const compare_trade_routes = ToolSpec{
 };
 
 const search_tokens_description =
-    "This tool allows you to find onchain memecoins and long-tail tokens by name, ticker, or contract address. Stocks, stock-linked tokens, and major cryptocurrencies are out of scope. Returns name, symbol, chain, contract, and social links in provider order.";
+    "This tool allows you to find onchain memecoins and long-tail tokens by name, ticker, or contract address. Stocks, stock-linked tokens, and major cryptocurrencies are out of scope. Returns at most one token: the provider's first match, with name, symbol, chain, contract, and social links.";
 
 pub const search_tokens = ToolSpec{
     .name = "search_tokens",
@@ -933,7 +933,6 @@ pub const search_tokens = ToolSpec{
             .properties = &.{
                 .{ .name = "query", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 256 }, .description = "Token name, ticker, or contract address, e.g. cashcat." },
                 .{ .name = "chain", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Optional Bitget Wallet chain code, e.g. bnb, sol, or robinhood. Omit to search all chains." },
-                .{ .name = "limit", .json_type = .integer, .bounds = &.{ .minimum = 1, .maximum = 20 }, .description = "Maximum results (1–20). Omit by default; the tool returns the first result. Set only when additional candidates are needed." },
             },
             .required = &.{"query"},
             .additional_properties = false,

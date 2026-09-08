@@ -68,7 +68,7 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
                         if kind != "denied":
                             spec = tools["search_tokens"]
                             assert "Stocks, stock-linked tokens, and major cryptocurrencies are out of scope" in spec["description"]
-                            assert set(spec["parameters"]["properties"]) == {"query", "chain", "limit"}
+                            assert set(spec["parameters"]["properties"]) == {"query", "chain"}
                             assert spec["parameters"]["required"] == ["query"]
                         delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "search-1", "type": "function", "function": {"name": "search_tokens", "arguments": json.dumps(arguments)}}]}
                         reason = "tool_calls"
@@ -131,7 +131,7 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
                         pass
                 assert payload is not None, content
                 results = payload["results"]
-                assert len(results) <= arguments.get("limit", 1), payload
+                assert len(results) <= 1, payload
                 if LIVE:
                     assert results, payload
                     assert all(set(t) == {"name", "symbol", "chain", "contract", "twitter", "website", "telegram"} for t in results), payload
@@ -139,7 +139,7 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
                         assert all(t["chain"] == arguments["chain"] for t in results), payload
                     print("Live result:", json.dumps(payload))
                 else:
-                    expected_body = {"keyword": arguments["query"], "limit": arguments.get("limit", 1)}
+                    expected_body = {"keyword": arguments["query"], "limit": 1}
                     if "chain" in arguments:
                         expected_body["chain"] = arguments["chain"]
                     assert json.loads((root / "request.json").read_text()) == expected_body
@@ -148,9 +148,7 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
                         assert results == [], payload
                     else:
                         assert results[0] == TOKEN, payload
-                        assert len(results) == arguments.get("limit", 1), payload
-                        if len(results) > 1:
-                            assert all(results[1][key] is None for key in ("twitter", "website", "telegram")), payload
+                        assert len(results) == 1, payload
             print(f"Registered search_tokens: {kind} passed")
         finally:
             server.shutdown()
@@ -159,12 +157,12 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
 
 
 exercise("default", {"query": "cashcat"})
-exercise("filtered", {"query": "cashcat", "chain": "robinhood", "limit": 2})
+exercise("filtered", {"query": "cashcat", "chain": "robinhood"})
 if LIVE:
-    exercise("bnb", {"query": "marscoin", "chain": "bnb", "limit": 3})
-    exercise("sol", {"query": "bonk", "chain": "sol", "limit": 1})
+    exercise("bnb", {"query": "marscoin", "chain": "bnb"})
+    exercise("sol", {"query": "bonk", "chain": "sol"})
 else:
     exercise("escaping", {"query": "Cash Cat';touch INJECTED; $(touch INJECTED) `touch INJECTED`"})
     for case in ("empty", "transport", "provider", "malformed", "denied"):
         exercise(case, {"query": "cashcat"})
-    exercise("invalid", {"query": "cashcat", "limit": 0})
+    exercise("invalid", {"query": "cashcat", "limit": 1})
