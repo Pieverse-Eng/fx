@@ -364,11 +364,13 @@ run BTC CRCL >/dev/null
 echo 'Unified discovery fixtures passed: all eight workers overlap, one fetch per catalog, multi-ticker results, filters, restrictions, and partial failures.'
 
 # Empty Lighter books are absent assets; failed queries retain coverage errors.
-unset FX_MARKET_CACHE_DIR
+# Keep the persistent cache enabled: book changes must be visible immediately.
+partial ETH --quote ALL | jq -e 'any(.results[].markets[];.venue=="lighter")' >/dev/null
 cp "$fixture_dir/route-lighter-book.json" "$fixture_dir/book.saved"
 echo '{"code":200,"asks":[],"bids":[]}' >"$fixture_dir/route-lighter-book.json"
 partial ETH --quote ALL | jq -e 'all(.results[].markets[];.venue!="lighter")' >/dev/null
 echo '{"code":500}' >"$fixture_dir/route-lighter-book.json"
 partial ETH --quote ALL | jq -e 'any(.errors[];.venue=="lighter") and all(.results[].markets[];.venue!="lighter")' >/dev/null
 mv "$fixture_dir/book.saved" "$fixture_dir/route-lighter-book.json"
+partial ETH --quote ALL | jq -e 'any(.results[].markets[];.venue=="lighter")' >/dev/null
 echo 'Lighter empty-book exclusion and failed-book coverage passed.'

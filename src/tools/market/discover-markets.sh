@@ -328,7 +328,8 @@ jq --arg ticker "$ticker" --arg currency "$quote" --arg product "$product" \
     id=$(jq -r .marketId <<<"$market"); kind=$(jq -r .product <<<"$market")
     name="book-$id"
     if [[ ! -f $scratch/$name.json && ! -f $scratch/$name.error ]]; then
-      fetch "$name" '.code==200 and (.asks|type=="array") and (.bids|type=="array")' \
+      # Books are live snapshots: reuse only this invocation's scratch file.
+      cache_dir='' fetch "$name" '.code==200 and (.asks|type=="array") and (.bids|type=="array")' \
         "https://mainnet.zklighter.elliot.ai/api/v1/orderBookOrders?market_id=$id" \
         purr lighter order-book-depth --market "$(jq -r .symbol <<<"$market")" \
         --market-type "$(if [[ $kind == spot ]]; then echo spot; else echo perp; fi)" --limit 100
