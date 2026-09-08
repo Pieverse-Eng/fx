@@ -921,7 +921,7 @@ pub const compare_trade_routes = ToolSpec{
 };
 
 const search_tokens_description =
-    "This tool allows you to find onchain memecoins and long-tail tokens by name, ticker, or contract address. Stocks, stock-linked tokens, and major cryptocurrencies are out of scope. Returns at most one token: the provider's first match, with name, symbol, chain, contract, and social links.";
+    "This tool allows you to find onchain memecoins and long-tail tokens by name, ticker, or contract address. Stocks, stock-linked tokens, and major cryptocurrencies are out of scope. Returns at most one token with name, symbol, chain, contract, and social links. Prefers exact name/ticker matches, then highest reported liquidity among retrieved candidates; not identity verification.";
 
 pub const search_tokens = ToolSpec{
     .name = "search_tokens",

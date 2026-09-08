@@ -38,7 +38,7 @@ headers = dict(args[i+1].split(': ', 1) for i, arg in enumerate(args) if arg == 
 signed = 'POST/market/v3/coin/search' + raw + headers['X-TIMESTAMP']
 assert headers['X-SIGN'] == '0x' + hashlib.sha256(signed.encode()).hexdigest()
 assert headers['token'] == 'toc_agent'
-Path('request.json').write_text(raw)
+with Path('requests.jsonl').open('a') as log: log.write(raw + '\\n')
 kind = os.environ['TOKEN_TEST_KIND']
 if kind == 'transport': sys.exit(28)
 if kind == 'malformed':
@@ -47,9 +47,21 @@ if kind == 'malformed':
 if kind == 'provider':
     print('{"status":429,"msg":"rate limited"}')
     sys.exit(0)
-first = {"name":"Cash Cat","symbol":"CASHCAT","chain":"robinhood","contract":"0x020bfC650A365f8BB26819deAAbF3E21291018b4","price":123,"icon":"unused","twitter":"https://x.com/cashcat_token","website":"https://cashcat.cc/","telegram":"https://t.me/cashcat_robinhood"}
-second = {"name":"Second","symbol":"CASHCAT","chain":"robinhood","contract":"0xOther"}
-print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, second]}}))
+first = {"name":"Cash Cat","symbol":"CASHCAT","chain":"robinhood","contract":"0x020bfC650A365f8BB26819deAAbF3E21291018b4","liquidity":1000,"twitter":"https://x.com/cashcat_token","website":"https://cashcat.cc/","telegram":"https://t.me/cashcat_robinhood"}
+second = {"name":"Second","symbol":"CASHCAT","chain":"robinhood","contract":"0xOther","liquidity":10}
+fuzzy = {"name":"Cash Cat Wrapper","symbol":"CASHCAT2","chain":"robinhood","contract":"0xFuzzy","liquidity":1000000}
+rows = [second, first, fuzzy] if body.get('chain') == 'robinhood' else []
+if 'chain' not in body: rows = [dict(second, chain='eth')]
+if kind == 'escaping': rows = [first] if body.get('chain') == 'robinhood' else []
+if kind == 'string_liquidity':
+    for t in rows: t['liquidity'] = str(t['liquidity'])
+if kind == 'missing_liquidity':
+    for t in rows: t.pop('liquidity', None)
+if kind == 'invalid_liquidity':
+    for t in rows: t['liquidity'] = 'NaN'
+if kind == 'chain_mismatch' and body.get('chain'): rows = [dict(first, chain='eth')]
+if kind == 'partial_failure' and body.get('chain') == 'sol': sys.exit(28)
+print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else rows}}))
 ''')
             stub.chmod(0o755)
 
@@ -112,9 +124,9 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
             assert [call["name"] for call in output["tool_calls"]] == ["search_tokens"], output
             content = [m["content"] for m in requests[1]["messages"] if m.get("role") == "tool"][-1]
             if kind in ("invalid", "denied"):
-                assert not (root / "request.json").exists()
+                assert not (root / "requests.jsonl").exists()
                 assert "results" not in content, content
-            elif kind in ("transport", "provider", "malformed"):
+            elif kind in ("transport", "provider", "malformed", "missing_liquidity", "invalid_liquidity", "chain_mismatch", "partial_failure"):
                 assert "failed" in content.lower(), content
                 assert '"results":[]' not in content, content
             else:
@@ -137,12 +149,18 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
                     assert all(set(t) == {"name", "symbol", "chain", "contract", "twitter", "website", "telegram"} for t in results), payload
                     if "chain" in arguments:
                         assert all(t["chain"] == arguments["chain"] for t in results), payload
+                    if kind in ("ai", "ai_name"):
+                        assert results[0]["chain"] == "robinhood", payload
+                        assert results[0]["contract"].lower() == "0x2e8c31162b855a2ffa90f6f8634643ad6f111e18", payload
                     print("Live result:", json.dumps(payload))
                 else:
-                    expected_body = {"keyword": arguments["query"], "limit": 1}
-                    if "chain" in arguments:
-                        expected_body["chain"] = arguments["chain"]
-                    assert json.loads((root / "request.json").read_text()) == expected_body
+                    scopes = [arguments["chain"]] if "chain" in arguments else [None, "bnb", "sol", "robinhood"]
+                    expected = []
+                    for scope in scopes:
+                        body = {"keyword": arguments["query"], "limit": 20, "order_by": "liquidity"}
+                        if scope is not None: body["chain"] = scope
+                        expected.append(body)
+                    assert [json.loads(line) for line in (root / "requests.jsonl").read_text().splitlines()] == expected
                     assert not (root / "INJECTED").exists()
                     if kind == "empty":
                         assert results == [], payload
@@ -159,10 +177,15 @@ print(json.dumps({"status":0,"data":{"list": [] if kind == 'empty' else [first, 
 exercise("default", {"query": "cashcat"})
 exercise("filtered", {"query": "cashcat", "chain": "robinhood"})
 if LIVE:
+    exercise("ai", {"query": "AI"})
+    exercise("ai_name", {"query": "Artificial Inu"})
     exercise("bnb", {"query": "marscoin", "chain": "bnb"})
     exercise("sol", {"query": "bonk", "chain": "sol"})
 else:
+    exercise("exact_name", {"query": "Cash Cat", "chain": "robinhood"})
+    exercise("exact_address", {"query": TOKEN["contract"], "chain": "robinhood"})
+    exercise("string_liquidity", {"query": "cashcat"})
     exercise("escaping", {"query": "Cash Cat';touch INJECTED; $(touch INJECTED) `touch INJECTED`"})
-    for case in ("empty", "transport", "provider", "malformed", "denied"):
+    for case in ("empty", "transport", "provider", "malformed", "denied", "missing_liquidity", "invalid_liquidity", "chain_mismatch", "partial_failure"):
         exercise(case, {"query": "cashcat"})
     exercise("invalid", {"query": "cashcat", "limit": 1})

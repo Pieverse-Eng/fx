@@ -9,6 +9,8 @@ const public_command = @import("public_market_command.zig");
 
 const endpoint = "https://copenapi.bgwapi.io/market/v3/coin/search";
 const path = "/market/v3/coin/search";
+const candidate_limit = 20;
+const supplemental_chains = [_][]const u8{ "bnb", "sol", "robinhood" };
 const Params = struct { query: []const u8, chain: ?[]const u8 = null };
 const Input = struct {
     parsed: std.json.Parsed(Params),
@@ -48,7 +50,7 @@ pub fn decode(ctx: dispatch.DispatchContext, arguments: []const u8) dispatch.Dis
 }
 
 fn command(alloc: std.mem.Allocator, params: Params, timestamp: i64) ![]u8 {
-    const body = try std.json.Stringify.valueAlloc(alloc, .{ .keyword = params.query, .limit = 1, .chain = params.chain }, .{ .emit_null_optional_fields = false });
+    const body = try std.json.Stringify.valueAlloc(alloc, .{ .keyword = params.query, .limit = candidate_limit, .chain = params.chain, .order_by = "liquidity" }, .{ .emit_null_optional_fields = false });
     defer alloc.free(body);
     const signed = try std.fmt.allocPrint(alloc, "POST{s}{s}{d}", .{ path, body, timestamp });
     defer alloc.free(signed);
@@ -89,20 +91,49 @@ fn tokenField(value: std.json.Value, key: []const u8) ![]const u8 {
     return field.string;
 }
 
-// Returns an owned compact response, preserving provider ranking and native addresses.
-fn response(alloc: std.mem.Allocator, text: []const u8, params: Params) ![]u8 {
-    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, text, .{});
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidResponse;
-    const status = parsed.value.object.get("status") orelse return error.InvalidResponse;
+// Provider ordering can prioritize unrelated matches. Rank exact identities first,
+// then reported liquidity, without treating missing liquidity as zero.
+fn candidateList(value: std.json.Value) ![]std.json.Value {
+    if (value != .object) return error.InvalidResponse;
+    const status = value.object.get("status") orelse return error.InvalidResponse;
     if (status != .integer or status.integer != 0) return error.ProviderError;
-    const data = parsed.value.object.get("data") orelse return error.InvalidResponse;
+    const data = value.object.get("data") orelse return error.InvalidResponse;
     if (data != .object) return error.InvalidResponse;
     const list = data.object.get("list") orelse return error.InvalidResponse;
     if (list != .array) return error.InvalidResponse;
-    var tokens: std.ArrayList(Token) = .empty;
-    defer tokens.deinit(alloc);
-    for (list.array.items[0..@min(list.array.items.len, 1)]) |entry| {
+    return list.array.items;
+}
+
+fn liquidity(value: std.json.Value) ?f64 {
+    const field = value.object.get("liquidity") orelse return null;
+    const amount: f64 = switch (field) {
+        .integer => @floatFromInt(field.integer),
+        .float => field.float,
+        .string => std.fmt.parseFloat(f64, field.string) catch return null,
+        else => return null,
+    };
+    return if (std.math.isFinite(amount) and amount >= 0) amount else null;
+}
+
+fn matchRank(token: Token, query: []const u8) u8 {
+    const q = std.mem.trim(u8, query, " $\t\r\n");
+    const evm_address = q.len == 42 and std.mem.startsWith(u8, q, "0x");
+    if (std.mem.eql(u8, q, token.contract) or
+        (evm_address and std.ascii.eqlIgnoreCase(q, token.contract))) return 3;
+    // Never replace an explicitly supplied EVM address with a name match.
+    if (evm_address) return 0;
+    if (std.ascii.eqlIgnoreCase(q, token.symbol) or std.ascii.eqlIgnoreCase(q, token.name)) return 2;
+    return 1;
+}
+
+fn response(alloc: std.mem.Allocator, text: []const u8, params: Params) ![]u8 {
+    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, text, .{});
+    defer parsed.deinit();
+    const list = try candidateList(parsed.value);
+    var best: ?Token = null;
+    var best_rank: u8 = 0;
+    var best_liquidity: f64 = -1;
+    for (list) |entry| {
         const token = Token{
             .name = try tokenField(entry, "name"),
             .symbol = try tokenField(entry, "symbol"),
@@ -113,9 +144,22 @@ fn response(alloc: std.mem.Allocator, text: []const u8, params: Params) ![]u8 {
             .telegram = socialLink(entry, "telegram"),
         };
         if (params.chain) |chain| if (!std.ascii.eqlIgnoreCase(chain, token.chain)) return error.ChainFilterMismatch;
-        try tokens.append(alloc, token);
+        const rank = matchRank(token, params.query);
+        if (rank == 0 or rank < best_rank) continue;
+        if (rank > best_rank) {
+            best_rank = rank;
+            best = null;
+            best_liquidity = -1;
+        }
+        const amount = liquidity(entry) orelse continue;
+        if (amount > best_liquidity) {
+            best = token;
+            best_liquidity = amount;
+        }
     }
-    return std.json.Stringify.valueAlloc(alloc, .{ .results = tokens.items }, .{});
+    if (best) |token| return std.json.Stringify.valueAlloc(alloc, .{ .results = [_]Token{token} }, .{});
+    if (best_rank > 0) return error.LiquidityUnavailable;
+    return alloc.dupe(u8, "{\"results\":[]}");
 }
 
 const Capture = struct {
@@ -138,25 +182,44 @@ pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.
         defer arena.deinit();
         const alloc = arena.allocator();
         const params = erased.as(Input).parsed.value;
-        const cmd = command(alloc, params, io_mod.milliTimestamp()) catch return error.OutOfMemory;
-        var capture = Capture{ .stdout = .init(alloc) };
-        const result = runner.executeCommandInEnvironment(.{
-            .max_command_output_bytes = 4096,
-            .timeout_ms = 35_000,
-            .cancel_flag = ctx.cancel_flag,
-            .callback_projection = .raw,
-            .output_chunk_ctx = &capture,
-            .on_output_chunk = Capture.append,
-        }, alloc, cmd, ctx.workspace_root, .{ .clean = "/bin/bash" }) catch |err| {
-            if (err == error.Cancelled) return error.Cancelled;
-            return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "Token search failed: {s}.", .{@errorName(err)}) };
-        };
-        if (result.cancelled) return error.Cancelled;
-        const status = result.command_result orelse return .{ .failure = try ctx.allocator.dupe(u8, "Token search returned no execution status.") };
-        if (status.timed_out or status.output_incomplete or status.termination_indeterminate or status.signal != null or status.exit_code != 0) {
-            return .{ .failure = try ctx.allocator.dupe(u8, "Token search request failed or timed out; results are unavailable.") };
+        var candidates: std.ArrayList(std.json.Value) = .empty;
+        // The global catalog can omit platform-chain matches even with a larger
+        // limit. Supplement those chains internally; never expose a result limit.
+        const count: usize = if (params.chain != null) 1 else 1 + supplemental_chains.len;
+        for (0..count) |index| {
+            const scope = if (index == 0) params.chain else supplemental_chains[index - 1];
+            const cmd = command(alloc, .{ .query = params.query, .chain = scope }, io_mod.milliTimestamp()) catch return error.OutOfMemory;
+            var capture = Capture{ .stdout = .init(alloc) };
+            const result = runner.executeCommandInEnvironment(.{
+                .max_command_output_bytes = 4096,
+                .timeout_ms = 35_000,
+                .cancel_flag = ctx.cancel_flag,
+                .callback_projection = .raw,
+                .output_chunk_ctx = &capture,
+                .on_output_chunk = Capture.append,
+            }, alloc, cmd, ctx.workspace_root, .{ .clean = "/bin/bash" }) catch |err| {
+                if (err == error.Cancelled) return error.Cancelled;
+                return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "Token search failed: {s}.", .{@errorName(err)}) };
+            };
+            if (result.cancelled) return error.Cancelled;
+            const status = result.command_result orelse return .{ .failure = try ctx.allocator.dupe(u8, "Token search returned no execution status.") };
+            if (status.timed_out or status.output_incomplete or status.termination_indeterminate or status.signal != null or status.exit_code != 0) {
+                return .{ .failure = try ctx.allocator.dupe(u8, "Token search request failed or timed out; liquidity ranking is unavailable.") };
+            }
+            const parsed = std.json.parseFromSlice(std.json.Value, alloc, capture.stdout.written(), .{}) catch {
+                return .{ .failure = try ctx.allocator.dupe(u8, "Token search response failed: invalid JSON.") };
+            };
+            const list = candidateList(parsed.value) catch |err| {
+                return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "Token search response failed: {s}.", .{@errorName(err)}) };
+            };
+            if (scope) |chain| for (list) |entry| {
+                const actual_chain = tokenField(entry, "chain") catch return .{ .failure = try ctx.allocator.dupe(u8, "Token search response failed: missing chain.") };
+                if (!std.ascii.eqlIgnoreCase(chain, actual_chain)) return .{ .failure = try ctx.allocator.dupe(u8, "Token search response failed: chain filter mismatch.") };
+            };
+            try candidates.appendSlice(alloc, list);
         }
-        const output = response(ctx.allocator, capture.stdout.written(), params) catch |err| {
+        const combined = try std.json.Stringify.valueAlloc(alloc, .{ .status = 0, .data = .{ .list = candidates.items } }, .{});
+        const output = response(ctx.allocator, combined, params) catch |err| {
             return .{ .failure = try std.fmt.allocPrint(ctx.allocator, "Token search response failed: {s}.", .{@errorName(err)}) };
         };
         return .{ .success = output };
@@ -182,12 +245,12 @@ test "search_tokens validates input and defaults" {
     try std.testing.expect(decoded.input.as(Input).parsed.value.chain == null);
     const cmd = try command(alloc, decoded.input.as(Input).parsed.value, 123);
     defer alloc.free(cmd);
-    try std.testing.expect(std.mem.endsWith(u8, cmd, "--data-raw '{\"keyword\":\"cashcat\",\"limit\":1}'"));
+    try std.testing.expect(std.mem.endsWith(u8, cmd, "--data-raw '{\"keyword\":\"cashcat\",\"limit\":20,\"order_by\":\"liquidity\"}'"));
 }
 
-test "search_tokens returns only the first match and preserves addresses and rejects incomplete responses" {
+test "search_tokens prefers exact matches and preserves addresses and rejects incomplete responses" {
     const alloc = std.testing.allocator;
-    const fixture = "{\"status\":0,\"data\":{\"list\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\",\"twitter\":\"https://x.com/example\",\"website\":\"https://example.com\",\"telegram\":\"https://t.me/example\",\"price\":1},{\"name\":\"Second\",\"symbol\":\"B\",\"chain\":\"bnb\",\"contract\":\"0xAB\",\"twitter\":\"\",\"website\":null,\"telegram\":42}]}}";
+    const fixture = "{\"status\":0,\"data\":{\"list\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\",\"twitter\":\"https://x.com/example\",\"website\":\"https://example.com\",\"telegram\":\"https://t.me/example\",\"price\":1,\"liquidity\":100},{\"name\":\"Second\",\"symbol\":\"B\",\"chain\":\"bnb\",\"contract\":\"0xAB\",\"twitter\":\"\",\"website\":null,\"telegram\":42,\"liquidity\":200}]}}";
     const output = try response(alloc, fixture, .{ .query = "A" });
     defer alloc.free(output);
     try std.testing.expectEqualStrings("{\"results\":[{\"name\":\"First\",\"symbol\":\"A\",\"chain\":\"sol\",\"contract\":\"CaSe\",\"twitter\":\"https://x.com/example\",\"website\":\"https://example.com\",\"telegram\":\"https://t.me/example\"}]}", output);
