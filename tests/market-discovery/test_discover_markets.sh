@@ -211,6 +211,7 @@ jq '.symbols += (["SKHYNIX","SAMSUNG","SKHY","SKHYNIX5L"]|map({symbol:(.+"USDT")
  quoteAsset:"USDT",marginAsset:"USDT",status:"TRADING",contractType:"PERPETUAL"})) +
  [{symbol:"SKHXUSDT",baseAsset:"SKHX",quoteAsset:"USDT",marginAsset:"USDT",status:"PENDING_TRADING",contractType:""}]' "$fixture_dir/aster.json" >"$fixture_dir/aliases.tmp"
 mv "$fixture_dir/aliases.tmp" "$fixture_dir/aster.json"
+echo '{"code":200,"asks":[{"price":"100","remaining_base_amount":"20"}],"bids":[{"price":"99","remaining_base_amount":"20"}]}' >"$fixture_dir/route-lighter-book.json"
 if [[ $# == 1 ]]; then
   echo '[{"symbol":"USDTUSD","bidPrice":"0.9999","askPrice":"1.0001","bidQty":"100","askQty":"100"},{"symbol":"USDCUSD","bidPrice":"0.9989","askPrice":"0.9991","bidQty":"100","askQty":"100"}]' >"$fixture_dir/route-rates.json"
   echo '{"asks":[["100","20"]],"bids":[["99","20"]]}' >"$fixture_dir/route-book.json"
@@ -220,7 +221,7 @@ if [[ $# == 1 ]]; then
   echo '[{"asks":[["100","2000"]],"bids":[["99","2000"]]}]' >"$fixture_dir/route-okx.json"
   echo '{"levels":[[{"px":"99","sz":"20"}],[{"px":"100","sz":"20"}]]}' >"$fixture_dir/route-hl.json"
   echo '{"taker_fee":"0.0000","supported_size_decimals":3,"min_base_amount":"0.007","min_quote_amount":"10"}' >"$fixture_dir/route-lighter-meta.json"
-  echo '{"asks":[{"price":"100","remaining_base_amount":"20"}],"bids":[{"price":"99","remaining_base_amount":"20"}]}' >"$fixture_dir/route-lighter-book.json"
+  echo '{"code":200,"asks":[{"price":"100","remaining_base_amount":"20"}],"bids":[{"price":"99","remaining_base_amount":"20"}]}' >"$fixture_dir/route-lighter-book.json"
   echo '{"error":"asset not found"}' >"$fixture_dir/route-no-asset.json"
   echo '{"assets":[]}' >"$fixture_dir/route-rh.json"
   echo '{"data":[]}' >"$fixture_dir/route-networks.json"
@@ -250,7 +251,7 @@ run() { bash "$script" "$@"; }
 WAIT_FOR_ALL=1 run BTC CRCL PEPE ETH >"$fixture_dir/result.json"
 jq -e '(keys==["errors","results"]) and .errors==[] and (.results|map(.ticker))==["BTC","CRCL","PEPE","ETH"]' "$fixture_dir/result.json" >/dev/null
 # Every required catalog was fetched once despite four tickers.
-jq -Rsc 'split("\n")[:-1] | length==19 and (group_by(.)|all(.[];length==1))' "$fixture_dir/calls" | jq -e . >/dev/null
+jq -Rsc 'split("\n")[:-1] | map(select(.!="route-lighter-book")) | length==19 and (group_by(.)|all(.[];length==1))' "$fixture_dir/calls" | jq -e . >/dev/null
 jq -e '[.results[]|select(.ticker=="CRCL")|.markets[]] as $m |
  any($m[];.venue=="aster" and .symbol=="CRCLUSDT") and
  any($m[];.venue=="binance" and .symbol=="CRCLBUSDT" and .product=="spot") and
@@ -361,3 +362,15 @@ done
 run BTC CRCL >/dev/null
 [[ $(wc -l <"$fixture_dir/calls") -gt "$first_calls" ]]
 echo 'Unified discovery fixtures passed: all eight workers overlap, one fetch per catalog, multi-ticker results, filters, restrictions, and partial failures.'
+
+# Empty Lighter books are absent assets; failed queries retain coverage errors.
+# Keep the persistent cache enabled: book changes must be visible immediately.
+partial ETH --quote ALL | jq -e 'any(.results[].markets[];.venue=="lighter")' >/dev/null
+cp "$fixture_dir/route-lighter-book.json" "$fixture_dir/book.saved"
+echo '{"code":200,"asks":[],"bids":[]}' >"$fixture_dir/route-lighter-book.json"
+partial ETH --quote ALL | jq -e 'all(.results[].markets[];.venue!="lighter")' >/dev/null
+echo '{"code":500}' >"$fixture_dir/route-lighter-book.json"
+partial ETH --quote ALL | jq -e 'any(.errors[];.venue=="lighter") and all(.results[].markets[];.venue!="lighter")' >/dev/null
+mv "$fixture_dir/book.saved" "$fixture_dir/route-lighter-book.json"
+partial ETH --quote ALL | jq -e 'any(.results[].markets[];.venue=="lighter")' >/dev/null
+echo 'Lighter empty-book exclusion and failed-book coverage passed.'

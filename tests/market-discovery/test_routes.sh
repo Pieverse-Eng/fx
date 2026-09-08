@@ -218,3 +218,17 @@ jq -e '.[0].expectedQuantity==8 and .[0].gas==1 and .[0].spend<=1000' "$scratch_
 sol_bad_mint=1; quote_sol_stock "$d" sol-bad
 [[ -s $scratch_root/routes/chain-sol-bad/error.json && ! -e $scratch_root/routes/chain-sol-bad/routes.json ]]
 echo 'Solana gas budget, re-quote, mint identity and raw-token multiplier tests passed.'
+
+# HIP-3 official positive-fee examples, including growth scales above one.
+market_read() { cp "$scratch_root/book-fixture.json" "$1"; }
+route_input='{"ticker":"QCOM","product":"perp","direction":"long","amount":"1000"}'
+echo '{"levels":[[{"px":99,"sz":20}],[{"px":100,"sz":20}]]}' >"$scratch_root/book-fixture.json"
+for example in 'disabled 0 0.00045' 'disabled 0.5 0.000675' 'disabled 1 0.0009' 'disabled 3 0.0027' 'enabled 1 0.00009' 'enabled 3.01 0.0002709'; do
+  read -r growth scale expected <<<"$example"
+  m=$(jq -cn --arg g "$growth" --arg s "$scale" '{ticker:"QCOM",venue:"hyperliquid",symbol:"xyz:QCOM",product:"perpetual",status:"active",dex:"xyz",collateralAsset:"USDC",quoteAsset:"USDT",baseAsset:"QCOM",szDecimals:2,growthMode:$g,deployerFeeScale:$s}')
+  route_book "$m" "hip3-$growth-$scale"
+  jq -e --argjson f "$expected" '((.fee-$f)|fabs)<0.0000000001 and .extraFee==0.0005' "$scratch_root/routes/hip3-$growth-$scale/candidate.json" >/dev/null
+done
+route_book "$(jq 'del(.growthMode)' <<<"$m")" hip3-missing
+jq -e '.message=="HIP-3 fee scale or growth mode unavailable"' "$scratch_root/routes/hip3-missing/error.json" >/dev/null
+echo 'HIP-3 scale, growth mode and missing metadata passed.'

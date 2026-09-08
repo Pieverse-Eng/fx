@@ -115,7 +115,15 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                 if tool_name == "discover_markets" and not multiple:
                     # CRCL needs one extra Gate stock metadata query.
                     expected_calls = 18 if kind == "aliases" else 19
-                    assert len(calls) == expected_calls and len(set(calls)) == expected_calls, calls
+                    catalogs = [call for call in calls if call != "route-lighter-book"]
+                    assert len(catalogs) == expected_calls and len(set(catalogs)) == expected_calls, calls
+                    book_commands = [line for line in (fixtures / "commands").read_text().splitlines()
+                                     if line.startswith("purr:lighter order-book-depth ")]
+                    expected_books = ([f"purr:lighter order-book-depth --market {symbol} --market-type perp --limit 100"
+                                       for symbol in ("SKHYNIXUSD", "SAMSUNGUSD")]
+                                      if kind == "aliases" else [])
+                    assert sorted(book_commands) == sorted(expected_books), book_commands
+                    assert calls.count("route-lighter-book") == len(expected_books), calls
                 messages = [message for message in requests[1]["messages"] if message.get("role") == "tool"]
                 # Tool result presentation may add an envelope; locate the JSON payload.
                 content = messages[-1]["content"]
