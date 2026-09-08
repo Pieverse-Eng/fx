@@ -297,6 +297,7 @@ fetch_lighter() {
 }
 
 match_lighter() {
+local candidates="$scratch/lighter-$ticker.json"
 jq --arg ticker "$ticker" --arg currency "$quote" --arg product "$product" \
   --arg queriedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson errors "$errors" "$perp_alias_jq"'
   {venue:"lighter",ticker:$ticker,currencyFilter:(if $currency=="" then null else $currency end),
@@ -321,7 +322,24 @@ jq --arg ticker "$ticker" --arg currency "$quote" --arg product "$product" \
       quoteDecimals:.supported_quote_decimals,minBaseAmount:.min_base_amount,
       minQuoteAmount:.min_quote_amount,orderQuoteLimit:.order_quote_limit,
       multiplier:.multiplier} ] | unique_by(.marketId),errors:$errors}
-  ' "$scratch/catalog.json"
+  ' "$scratch/catalog.json" >"$candidates"
+  local market id kind name
+  while IFS= read -r market; do
+    id=$(jq -r .marketId <<<"$market"); kind=$(jq -r .product <<<"$market")
+    name="book-$id"
+    if [[ ! -f $scratch/$name.json && ! -f $scratch/$name.error ]]; then
+      fetch "$name" '.code==200 and (.asks|type=="array") and (.bids|type=="array")' \
+        "https://mainnet.zklighter.elliot.ai/api/v1/orderBookOrders?market_id=$id" \
+        purr lighter order-book-depth --market "$(jq -r .symbol <<<"$market")" \
+        --market-type "$(if [[ $kind == spot ]]; then echo spot; else echo perp; fi)" --limit 100
+    fi
+    # Query failures remain coverage errors, never a successful empty result.
+    if [[ -f $scratch/$name.error ]] || jq -e '(.asks|length)==0 and (.bids|length)==0' "$scratch/$name.json" >/dev/null; then
+      jq --argjson id "$id" '.markets |= map(select(.marketId!=$id))' "$candidates" >"$candidates.tmp"
+      mv "$candidates.tmp" "$candidates"
+    fi
+  done < <(jq -c '.markets[]' "$candidates")
+  cat "$candidates"
 }
 
 
@@ -409,6 +427,7 @@ def spot_matches($token):
    select($currency=="" or (.collateral.name|ascii_upcase)==$currency) |
    {symbol:.asset.name,dex,assetId,product:"perpetual",baseAsset:(.asset.name|split(":")|last),
     quoteAsset:null,collateralAsset:.collateral.name,szDecimals:.asset.szDecimals,maxLeverage:.asset.maxLeverage,
+    growthMode:.asset.growthMode,deployerFeeScale:.asset.deployerFeeScale,
     onlyIsolated:(.asset.onlyIsolated // false),marginMode:(.asset.marginMode // null),status:"active"}
  ] | unique_by(.product,.assetId)),
  errors:($errors + [

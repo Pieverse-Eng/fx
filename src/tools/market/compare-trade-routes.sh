@@ -85,8 +85,25 @@ route_book() (
       fi ;;
     hyperliquid)
       source='https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees'; extra=0.0005
-      if [[ $kind == perpetual && $(jq -r .dex <<<"$m") != default ]]; then fail 'HIP-3 fee scale and growth-mode fee not verified'; exit 0; fi
       if [[ $kind == spot ]]; then fee=0.0007; else fee=0.00045; fi
+      if [[ $kind == perpetual && $(jq -r .dex <<<"$m") != default ]]; then
+        # USDC is non-aligned collateral. Do not guess alignment for other tokens.
+        if [[ $(jq -r .collateralAsset <<<"$m") != USDC ]]; then
+          fail 'HIP-3 collateral fee alignment not verified'; exit 0
+        fi
+        # Official SetDeployerFees: protocol=max(1,scale), deployer=scale;
+        # growth mode reduces both by 90%. Keep platform fees separate.
+        fee=$(jq -nr --argjson m "$m" '
+          try (
+            ($m.deployerFeeScale|tonumber) as $s |
+            $m.growthMode as $g |
+            if ($g!="enabled" and $g!="disabled") or $s<0 or
+              (if $g=="enabled" then $s>=10 else $s>3 end) then null
+            else 0.00045 * ([1,$s]|max) + 0.00045 * $s |
+              . * (if $g=="enabled" then 0.1 else 1 end) end
+          ) catch null')
+        if [[ $fee == null ]]; then fail 'HIP-3 fee scale or growth mode unavailable'; exit 0; fi
+      fi
       step=$(jq -nr --argjson m "$m" 'pow(10;-($m.szDecimals//0))')
       market_read "$dir/book.json" purr hyperliquid l2 --coin "$(jq -r '.pairId//.symbol' <<<"$m")"
       ;;
@@ -98,7 +115,14 @@ route_book() (
       fee=$(jq -nr --arg f "$fee" 'try (($f|tonumber)/100) catch null')
       step=$(jq -nr --argjson m "$meta" 'pow(10;-($m.supported_size_decimals//0))')
       minq=$(jq -r '.min_base_amount//0' <<<"$meta"); minv=$(jq -r '.min_quote_amount//0' <<<"$meta")
+      local cached_book="$scratch_root/lighter/book-$(jq -r .marketId <<<"$m").json"
+      if [[ -f $cached_book ]]; then cp "$cached_book" "$dir/book.json"
+      else
       market_read "$dir/book.json" purr lighter order-book-depth --market "$symbol" --market-type "$(if [[ $kind == spot ]]; then echo spot; else echo perp; fi)" --limit 100
+      fi
+      if jq -e '(.asks|type)=="array" and (.bids|type)=="array" and (.asks|length)==0 and (.bids|length)==0' "$dir/book.json" >/dev/null; then
+        fail 'Order book is empty'; exit 0
+      fi
       ;;
     okx-cex)
       source='https://www.okx.com/help/trading-fee-rules-faq'
