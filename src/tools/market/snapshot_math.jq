@@ -21,8 +21,8 @@ def book_summary($book):
    bidDepth1Pct:([$book.bids[]|select(.price >= $bid*0.99)|.price*.quantity]|add//0),
    askDepth1Pct:([$book.asks[]|select(.price <= $ask*1.01)|.price*.quantity]|add//0),
    bidLevels:($book.bids|length),askLevels:($book.asks|length),
-   bidBandComplete:(($book.bids|length)<100 or $book.bids[-1].price < $bid*0.99),
-   askBandComplete:(($book.asks|length)<100 or $book.asks[-1].price > $ask*1.01),
+   bidBandComplete:(($book.bids|length)==0 or $book.bids[-1].price < $bid*0.99),
+   askBandComplete:(($book.asks|length)==0 or $book.asks[-1].price > $ask*1.01),
    coverage:"returned_levels_only; depth amounts are in quoteCurrency"};
 def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
   (if $m.venue=="okx-cex" and ($f|type)!="array" then []

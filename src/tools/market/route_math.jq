@@ -74,7 +74,7 @@ def spot($c;$budget):
     if $q<$c.minQuantity or $f.value<$c.minValue or $net<=0 then error("Below minimum order") else
       ($c|route_identity)+{expectedQuantity:$net,spend:$total,unspent:($budget-$total),
        fees:($f.value*($c.fee+$c.extraFee)),estimatedFillPrice:($f.value/$q),
-       depthSlippageBps:(($f.value/$q)/$c.asks[0].price-1)*10000,
+       depthSlippageBps:((($f.value/$q)/$c.asks[0].price-1)*10000),
        spreadCostBps:(($c.asks[0].price-$c.bids[0].price)/($c.asks[0].price+$c.bids[0].price)*10000),effectivePrice:($total/$net),feeSource:$c.feeSource}
     end
   end;

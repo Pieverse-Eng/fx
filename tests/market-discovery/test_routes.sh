@@ -301,3 +301,9 @@ jq -ne "$candle_jq $math $snapshot_math"'
   (displayed_fill($s;$input+{currency:"USD"};{})|.status=="unknown")
 ' >/dev/null
 echo 'All derivative field mappings and fee-independent displayed-fill estimates passed.'
+jq -ne "$candle_jq $math $snapshot_math"'
+  {asks:[{price:101,quantity:1}],bids:[{price:100,quantity:1}]} as $book |
+  (book_summary($book)|.bidBandComplete==false and .askBandComplete==false) and
+  (book_summary($book+{bids:($book.bids+[{price:98,quantity:1}])})|.bidBandComplete==true and .bidDepth1Pct==100)
+' >/dev/null
+echo 'Depth band coverage does not assume a common venue level limit.'
