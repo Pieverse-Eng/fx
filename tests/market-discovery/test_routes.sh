@@ -116,8 +116,15 @@ fixture_mode=missinggas; quote_bg_stock "$d" 2
 [[ -s $scratch_root/routes/chain-2/error.json && ! -e $scratch_root/routes/chain-2/routes.json ]]
 echo 'Route arithmetic, budget re-quote, missing gas and forbidden route tests passed.'
 # Adapter tests exercise full normalization, including array-shaped OKX and Kraken success envelopes.
+snapshot_math=$(cat "$root/src/tools/market/snapshot_math.jq")
+source "$root/src/tools/market/market-snapshots.sh"
 source "$root/src/tools/market/compare-trade-routes.sh"
-market_read() { cp "$scratch_root/book-fixture.json" "$1"; }
+market_read() {
+  if [[ $1 == */funding.json || $1 == */oi.json ]]; then echo null >"$1"
+  elif [[ $1 == */meta.json && $2 == curl && $* == *gateio* ]]; then
+    jq '.[0]' "$scratch_root/gate/perpetual.json" >"$1"
+  else cp "$scratch_root/book-fixture.json" "$1"; fi
+}
 route_input='{"ticker":"BTC","product":"perp","direction":"long","amount":"1000"}'
 for venue in aster binance bitget gate hyperliquid kraken lighter okx-cex; do
   mkdir -p "$scratch_root/$venue"
@@ -220,7 +227,12 @@ sol_bad_mint=1; quote_sol_stock "$d" sol-bad
 echo 'Solana gas budget, re-quote, mint identity and raw-token multiplier tests passed.'
 
 # HIP-3 official positive-fee examples, including growth scales above one.
-market_read() { cp "$scratch_root/book-fixture.json" "$1"; }
+market_read() {
+  if [[ $1 == */funding.json || $1 == */oi.json ]]; then echo null >"$1"
+  elif [[ $1 == */meta.json && $2 == curl && $* == *gateio* ]]; then
+    jq '.[0]' "$scratch_root/gate/perpetual.json" >"$1"
+  else cp "$scratch_root/book-fixture.json" "$1"; fi
+}
 route_input='{"ticker":"QCOM","product":"perp","direction":"long","amount":"1000"}'
 echo '{"levels":[[{"px":99,"sz":20}],[{"px":100,"sz":20}]]}' >"$scratch_root/book-fixture.json"
 for example in 'disabled 0 0.00045' 'disabled 0.5 0.000675' 'disabled 1 0.0009' 'disabled 3 0.0027' 'enabled 1 0.00009' 'enabled 3.01 0.0002709'; do
@@ -232,3 +244,60 @@ done
 route_book "$(jq 'del(.growthMode)' <<<"$m")" hip3-missing
 jq -e '.message=="HIP-3 fee scale or growth mode unavailable"' "$scratch_root/routes/hip3-missing/error.json" >/dev/null
 echo 'HIP-3 scale, growth mode and missing metadata passed.'
+
+# Snapshots preserve liquidity evidence independently from fees and missing data.
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"bitget",symbol:"H100USDT",product:"perpetual",quoteAsset:"USDT",ticker:"H100",category:"USDT-FUTURES"} as $m |
+  snapshot($m;{data:{a:[[2.655,75]],b:[[2.652,1430]]}};
+    {data:[{fundingRate:"0",fundingRateInterval:"8",nextUpdate:"1789056000000"}]};
+    {data:{openInterestList:[{size:"8408"}]}};null;1;false;"fixture") as $s |
+  ($s.funding.status=="available" and $s.funding.value==0 and $s.funding.intervalHours==8) and
+  ($s.openInterest.value==8408 and $s.openInterest.unit=="base") and
+  ($s.book.bidDepth1Pct>3000 and $s.book.bestBid==2.652) and
+  (snapshot($m;null;null;null;null;1;false;"fixture")|.book.status=="unknown" and .funding.status=="unknown") and
+  (snapshot($m;{data:{a:[],b:[]}};null;null;null;1;false;"fixture")|.book.status=="empty" and .book.bidDepth1Pct==0) and
+  (snapshot($m;{data:{a:[[2.655,75]],b:[[2.652,"bad"]]}};null;null;null;1;false;"fixture")|.book.status=="unknown") and
+  (snapshot($m+{product:"spot"};{data:{a:[],b:[]}};null;null;null;1;false;"fixture")|.funding.status=="not_applicable" and .openInterest.status=="not_applicable")
+' >/dev/null
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"gate",symbol:"H100_USDT",product:"perpetual",quoteAsset:"USDT",ticker:"H100"} as $m |
+  snapshot($m;{asks:[{p:2.675,s:156}],bids:[{p:2.632,s:4}]};null;null;
+    {funding_rate:"0",funding_interval:28800,position_size:795};0.01;false;"fixture") as $s |
+  ($s.funding.intervalHours==8 and $s.openInterest.unit=="contracts" and $s.openInterest.contractMultiplier==0.01) and
+  (($s.nativeBook.bids[0].quantity-0.04)|fabs<0.000001) and
+  (snapshot($m;null;null;null;{funding_rate:"0",position_size:795};null;true;"fixture")|.funding.value==0 and .openInterest.value==795 and .book.status=="unknown")
+' >/dev/null
+# A $3000 sale fits Bitget best bid, while Gate partial depth must not produce a full-fill estimate.
+jq -ne "$math"'
+  {id:"H100",venue:"bitget",symbol:"H100USDT",product:"perp",quote:"USDT",quotedAt:"fixture",
+   step:1,minQuantity:1,minValue:0,fee:0.0006,extraFee:0,feeAsset:"quote",feeSource:"fixture",
+   asks:[{price:2.655,quantity:75}],bids:[{price:2.652,quantity:1430}]} as $c |
+  (perpetual($c;1130;"short")|.estimatedFillPrice==2.652 and (.depthSlippageBps|fabs)<0.000001) and
+  (try perpetual($c+{bids:[{price:2.632,quantity:4}]};1130;"short") catch .)=="Insufficient displayed depth"
+' >/dev/null
+echo 'Funding units, zero versus unknown, malformed and empty books, contract multipliers and H100 fill regressions passed.'
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"hyperliquid",symbol:"xyz:H100",product:"perpetual",collateralAsset:"USDC",ticker:"H100"} as $m |
+  snapshot($m;{levels:[[],[]]};null;null;
+    [{universe:[{name:"BTC"},{name:"xyz:H100"}]},[{funding:"9",openInterest:"9"},{funding:"0.00001",openInterest:"100",markPx:"2.65"}]];
+    1;false;"fixture") as $hl |
+  ($hl.funding.value==0.00001 and $hl.funding.intervalHours==1 and $hl.openInterest.quoteValue==265) and
+  (snapshot($m+{venue:"lighter",marketId:182};{asks:[],bids:[]};
+    {funding_rates:[{market_id:182,exchange:"other",rate:9},{market_id:182,exchange:"lighter",rate:-0.02}]};null;{open_interest:500};1;false;"fixture")|
+    .funding.value== -0.02 and .funding.unit=="provider_native" and .openInterest.value==500) and
+  (snapshot($m+{venue:"kraken",symbol:"PF_XBTUSD",quoteAsset:"USD"};{result:"success",orderBook:{asks:[],bids:[]}};null;null;
+    {tickers:[{symbol:"PF_XBTUSD",fundingRate:1.36,fundingRatePrediction:0.87,openInterest:2155}]};1;false;"fixture")|
+    .funding.value==1.36 and .funding.unit=="provider_native" and .funding.prediction==0.87 and .openInterest.value==2155) and
+  (snapshot($m+{venue:"okx-cex",quoteAsset:"USDT"};[{asks:[[100,100]],bids:[[99,100]]}];
+    [{fundingRate:"0.0001",fundingTime:"100000000",nextFundingTime:"128800000"}];[{oi:"1000",oiCcy:"10",oiUsd:"1000"}];[{markPx:"100"}];0.01;false;"fixture")|
+    .funding.intervalHours==8 and .openInterest.usdValue==1000 and .book.bidDepth1Pct==99 and .markPrice==100)
+' >/dev/null
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"bitget",symbol:"H100USDT",product:"perpetual",quoteAsset:"USDT",ticker:"H100"} as $m |
+  {product:"perp",amount:"3000",direction:"short",currency:"USDT"} as $input |
+  snapshot($m;{data:{a:[[2.655,75]],b:[[2.652,1430]]}};null;null;null;1;false;"fixture") as $s |
+  (displayed_fill($s;$input;{})|.fullyFillable and .depthSlippageBps==0) and
+  (displayed_fill($s+{nativeBook:{asks:[{price:2.655,quantity:75}],bids:[{price:2.652,quantity:4}]}};$input;{})|.fullyFillable==false) and
+  (displayed_fill($s;$input+{currency:"USD"};{})|.status=="unknown")
+' >/dev/null
+echo 'All derivative field mappings and fee-independent displayed-fill estimates passed.'

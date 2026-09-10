@@ -27,6 +27,9 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         args = {"tickers": ["BTC", "CRCL"]}
         if tool_name == "compare_trade_routes":
             args = {"ticker": "BTC", "product": "perp", "direction": "long", "amount": "1000"}
+            if kind == "snapshot":
+                args.pop("amount")
+                args.pop("direction")
             if kind.startswith("quote_"):
                 args["quote"] = kind.removeprefix("quote_").upper()
             if kind == "currency_usdc":
@@ -57,7 +60,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                         if kind != "denied":
                             schema = tools[tool_name]["parameters"]
                             assert set(schema["properties"]) == ({"ticker", "product", "amount", "currency", "quote", "direction"} if tool_name == "compare_trade_routes" else {"tickers", "product", "quote"} if tool_name == "discover_markets" else {"tickers"}), schema
-                            assert schema["required"] == (["ticker", "product", "amount"] if tool_name == "compare_trade_routes" else ["tickers"])
+                            assert schema["required"] == (["ticker", "product"] if tool_name == "compare_trade_routes" else ["tickers"])
                         delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": call_ids[0], "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
                         if multiple:
                             delta["tool_calls"].append({"index": 1, "id": call_ids[1], "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}})
@@ -134,7 +137,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                         continue
                     try:
                         candidate, _ = decoder.raw_decode(content[offset:])
-                        if isinstance(candidate, dict) and set(candidate) == ({"bestRoute", "rankedRoutes", "gaps"} if tool_name == "compare_trade_routes" else {"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
+                        if isinstance(candidate, dict) and set(candidate) == ({"bestRoute", "rankedRoutes", "gaps", "markets"} if tool_name == "compare_trade_routes" else {"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
                             payload = candidate
                             break
                     except ValueError:
@@ -176,7 +179,18 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
                     assert "lighter" in calls
                     assert bool(payload["errors"]) == (kind == "partial"), payload
+                elif tool_name == "compare_trade_routes" and kind == "snapshot":
+                    assert payload["bestRoute"] is None and payload["rankedRoutes"] == [], payload
+                    assert len(payload["markets"]) >= 7, payload
+                    assert all("entryEstimate" not in m and "nativeBook" not in m for m in payload["markets"]), payload
+                    by_venue = {m["venue"]: m for m in payload["markets"]}
+                    assert by_venue["bitget"]["funding"]["value"] == 0, payload
+                    assert by_venue["okx-cex"]["openInterest"]["usdValue"] == 10000, payload
+                    assert by_venue["gate"]["book"]["bestBid"] == 99, payload
+                    assert "route-rates" not in calls, calls
                 elif tool_name == "compare_trade_routes":
+                    assert all("nativeBook" not in m for m in payload["markets"]), payload
+                    assert any(m.get("entryEstimate", {}).get("estimatedFillPrice") for m in payload["markets"]), payload
                     route = payload["bestRoute"]
                     assert route["venue"] and route["symbol"] and route["product"] == "perp", payload
                     assert set(route) <= {"venue", "symbol", "product", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset"}, payload
@@ -235,3 +249,5 @@ exercise("partial", references=True)
 exercise("success", "get_market_candles", references=True)
 exercise("success", "compare_trade_routes", references=True)
 exercise("success", references=True, multiple=True)
+
+exercise("snapshot", "compare_trade_routes")

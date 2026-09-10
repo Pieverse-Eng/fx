@@ -1,7 +1,7 @@
 const std = @import("std");
 const dispatch = @import("../../core/tooling/tool_dispatch.zig");
 const public_command = @import("public_market_command.zig");
-const script = "route_math=$(cat <<'FX_ROUTE_MATH'\n" ++ @embedFile("route_math.jq") ++ "\nFX_ROUTE_MATH\n)\n" ++ @embedFile("get-market-candles.sh") ++ "\n" ++ @embedFile("onchain-routes.sh") ++ "\n" ++ @embedFile("compare-trade-routes.sh") ++ "\nFX_MARKET_MODE=routes\n" ++ @embedFile("discover-markets.sh");
+const script = "snapshot_math=$(cat <<'FX_SNAPSHOT_MATH'\n" ++ @embedFile("snapshot_math.jq") ++ "\nFX_SNAPSHOT_MATH\n)\n" ++ "route_math=$(cat <<'FX_ROUTE_MATH'\n" ++ @embedFile("route_math.jq") ++ "\nFX_ROUTE_MATH\n)\n" ++ @embedFile("get-market-candles.sh") ++ "\n" ++ @embedFile("onchain-routes.sh") ++ "\n" ++ @embedFile("market-snapshots.sh") ++ "\n" ++ @embedFile("compare-trade-routes.sh") ++ "\nFX_MARKET_MODE=routes\n" ++ @embedFile("discover-markets.sh");
 const Input = struct {
     parsed: std.json.Parsed(std.json.Value),
     fn deinit(ptr: *anyopaque, alloc: std.mem.Allocator) void {
@@ -30,16 +30,19 @@ fn inputError(value: std.json.Value) ?[]const u8 {
     for (ticker.string) |c| if (!std.ascii.isAlphanumeric(c)) return "Use one alphanumeric base ticker.";
     const product = a.get("product") orelse return "product is required: spot or perp.";
     if (!choice(product, &.{ "spot", "perp" })) return "product must be spot or perp.";
-    const amount = a.get("amount") orelse return "amount is required.";
-    if (amount != .string or amount.string.len == 0 or amount.string.len > 32) return "amount must be a positive decimal string.";
-    for (amount.string) |c| if (!std.ascii.isDigit(c) and c != '.') return "amount must be a positive decimal string.";
-    const n = std.fmt.parseFloat(f64, amount.string) catch return "Invalid amount.";
-    if (!std.math.isFinite(n) or n <= 0 or n > 1_000_000_000) return "amount must be positive and no greater than 1000000000.";
     if (a.get("currency")) |c| if (!choice(c, &.{ "USD", "USDT", "USDC" })) return "currency must be USD, USDT, or USDC; default USDT.";
     if (a.get("quote")) |q| {
         if (q != .string or q.string.len == 0 or q.string.len > 32) return "quote must be a currency ticker or ALL.";
         for (q.string) |c| if (!std.ascii.isAlphanumeric(c)) return "quote must be a currency ticker or ALL.";
     }
+    const amount = a.get("amount") orelse {
+        if (a.get("direction") != null) return "Direction requires an amount.";
+        return null;
+    };
+    if (amount != .string or amount.string.len == 0 or amount.string.len > 32) return "amount must be a positive decimal string.";
+    for (amount.string) |c| if (!std.ascii.isDigit(c) and c != '.') return "amount must be a positive decimal string.";
+    const n = std.fmt.parseFloat(f64, amount.string) catch return "Invalid amount.";
+    if (!std.math.isFinite(n) or n <= 0 or n > 1_000_000_000) return "amount must be positive and no greater than 1000000000.";
     if (std.mem.eql(u8, product.string, "perp")) {
         if (!choice(a.get("direction") orelse return "Perps require direction: long or short.", &.{ "long", "short" })) return "Perps require direction: long or short.";
     } else if (a.get("direction") != null) return "Spot comparison supports buys only; omit direction.";
@@ -93,5 +96,21 @@ test "comparison validates budget product and direction" {
         const r = try decode(.{ .allocator = alloc }, s);
         try std.testing.expect(r == .input);
         r.input.deinit(alloc);
+    }
+}
+
+test "snapshots omit sizing but still validate filters" {
+    const alloc = std.testing.allocator;
+    const good = try decode(.{ .allocator = alloc }, "{\"ticker\":\"H100\",\"product\":\"perp\"}");
+    try std.testing.expect(good == .input);
+    good.input.deinit(alloc);
+    for ([_][]const u8{
+        "{\"ticker\":\"H100\",\"product\":\"perp\",\"quote\":\"USDT;id\"}",
+        "{\"ticker\":\"H100\",\"product\":\"perp\",\"currency\":\"BAD\"}",
+        "{\"ticker\":\"H100\",\"product\":\"perp\",\"direction\":\"short\"}",
+    }) |args| {
+        const bad = try decode(.{ .allocator = alloc }, args);
+        try std.testing.expect(bad == .failure);
+        alloc.free(bad.failure);
     }
 }

@@ -72,7 +72,7 @@ pub fn execute(ctx: dispatch.DispatchContext, cmd: []const u8, shape: enum { mar
                     const route = object.get("bestRoute") orelse break :valid false;
                     const ranked_routes = object.get("rankedRoutes") orelse break :valid false;
                     const gaps = object.get("gaps") orelse break :valid false;
-                    break :valid object.count() == 3 and (route == .object or route == .null) and ranked_routes == .array and gaps == .array;
+                    break :valid object.get("markets") != null and (route == .object or route == .null) and ranked_routes == .array and gaps == .array;
                 },
             }
         };

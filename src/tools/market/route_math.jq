@@ -73,7 +73,9 @@ def spot($c;$budget):
     ($f.value*(if $c.feeAsset=="base" then 1 else 1+$c.fee+$c.extraFee end)) as $total |
     if $q<$c.minQuantity or $f.value<$c.minValue or $net<=0 then error("Below minimum order") else
       ($c|route_identity)+{expectedQuantity:$net,spend:$total,unspent:($budget-$total),
-       fees:($f.value*($c.fee+$c.extraFee)),effectivePrice:($total/$net),feeSource:$c.feeSource}
+       fees:($f.value*($c.fee+$c.extraFee)),estimatedFillPrice:($f.value/$q),
+       depthSlippageBps:(($f.value/$q)/$c.asks[0].price-1)*10000,
+       spreadCostBps:(($c.asks[0].price-$c.bids[0].price)/($c.asks[0].price+$c.bids[0].price)*10000),effectivePrice:($total/$net),feeSource:$c.feeSource}
     end
   end;
 def perpetual($c;$quantity;$direction):
@@ -85,7 +87,10 @@ def perpetual($c;$quantity;$direction):
     elif $q<$c.minQuantity or $f.value<$c.minValue then error("Below minimum order") else
       ($f.value*($c.fee+$c.extraFee)) as $fee |
       ($f.value+(if $direction=="short" then -$fee else $fee end)) as $total |
-      ($c|route_identity)+{expectedQuantity:$q,openingValue:$f.value,fees:$fee,effectivePrice:($total/$q),feeSource:$c.feeSource}
+      ($c|route_identity)+{expectedQuantity:$q,openingValue:$f.value,fees:$fee,
+        estimatedFillPrice:($f.value/$q),
+        depthSlippageBps:(if $direction=="short" then (1-($f.value/$q)/$c.bids[0].price)*10000 else (($f.value/$q)/$c.asks[0].price-1)*10000 end),
+        spreadCostBps:(($c.asks[0].price-$c.bids[0].price)/($c.asks[0].price+$c.bids[0].price)*10000),effectivePrice:($total/$q),feeSource:$c.feeSource}
     end
   end;
 
