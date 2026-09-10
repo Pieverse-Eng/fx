@@ -9,6 +9,18 @@ cat >"$fixture_dir/cli" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}:$*" in
+ curl:*premiumIndex*) venue=derivatives; key=snapshot-premium;;
+ curl:*fundingInfo*) venue=derivatives; key=snapshot-interval;;
+ curl:*fapi/v1/openInterest*) venue=derivatives; key=snapshot-oi;;
+ curl:*current-fund-rate*) venue=derivatives; key=snapshot-bitget-funding;;
+ curl:*mix/market/open-interest*) venue=derivatives; key=snapshot-bitget-oi;;
+ curl:*gateio.ws*/contracts/*) venue=derivatives; key=snapshot-gate;;
+ curl:*metaAndAssetCtxs*) venue=derivatives; key=snapshot-hl;;
+ curl:*api/v1/funding-rates*) venue=derivatives; key=snapshot-lighter-funding;;
+ curl:*orderBookDetails\?market_id=*) venue=lighter; key=snapshot-lighter-details;;
+ curl:*kraken.com/derivatives/api/v3/tickers*) venue=derivatives; key=kraken-tickers;;
+ okx:*'market funding-rate'*) venue=derivatives; key=snapshot-okx-funding;;
+ okx:*'market open-interest'*) venue=derivatives; key=snapshot-okx-oi;;
  curl:*api/v3/ticker/bookTicker*) venue=binance; key=route-rates;;
  curl:*fapi.asterdex.com*/depth*) venue=aster; key=route-book;;
  binance-cli:*depth*|binance-cli:*order-book*) venue=binance; key=route-book;;
@@ -213,6 +225,16 @@ jq '.symbols += (["SKHYNIX","SAMSUNG","SKHY","SKHYNIX5L"]|map({symbol:(.+"USDT")
 mv "$fixture_dir/aliases.tmp" "$fixture_dir/aster.json"
 echo '{"code":200,"asks":[{"price":"100","remaining_base_amount":"20"}],"bids":[{"price":"99","remaining_base_amount":"20"}]}' >"$fixture_dir/route-lighter-book.json"
 if [[ $# == 1 ]]; then
+  echo '{"lastFundingRate":"0.0001","markPrice":"100","nextFundingTime":1789056000000}' >"$fixture_dir/snapshot-premium.json"
+  echo '[{"symbol":"BTCUSDT","fundingIntervalHours":4}]' >"$fixture_dir/snapshot-interval.json"
+  echo '{"openInterest":"10000"}' >"$fixture_dir/snapshot-oi.json"
+  echo '{"data":[{"fundingRate":"0","fundingRateInterval":"8"}]}' >"$fixture_dir/snapshot-bitget-funding.json"
+  echo '{"data":{"openInterestList":[{"size":"10000"}]}}' >"$fixture_dir/snapshot-bitget-oi.json"
+  echo '{"type":"direct","quanto_multiplier":"0.0001","funding_rate":"0.0001","funding_interval":28800,"position_size":10000}' >"$fixture_dir/snapshot-gate.json"
+  echo '[{"universe":[{"name":"BTC"},{"name":"xyz:SKHX"}]},[{"funding":"0.00001","openInterest":"200","markPx":"100"},{"funding":"0.00002","openInterest":"300","markPx":"100"}]]' >"$fixture_dir/snapshot-hl.json"
+  echo '{"funding_rates":[{"market_id":161,"exchange":"lighter","rate":0.001}]}' >"$fixture_dir/snapshot-lighter-funding.json"
+  echo '[{"fundingRate":"0.0001","fundingTime":"1789056000000","nextFundingTime":"1789084800000"}]' >"$fixture_dir/snapshot-okx-funding.json"
+  echo '[{"oi":"10000","oiCcy":"100","oiUsd":"10000"}]' >"$fixture_dir/snapshot-okx-oi.json"
   echo '[{"symbol":"USDTUSD","bidPrice":"0.9999","askPrice":"1.0001","bidQty":"100","askQty":"100"},{"symbol":"USDCUSD","bidPrice":"0.9989","askPrice":"0.9991","bidQty":"100","askQty":"100"}]' >"$fixture_dir/route-rates.json"
   echo '{"asks":[["100","20"]],"bids":[["99","20"]]}' >"$fixture_dir/route-book.json"
   echo '{"data":{"a":[["100","20"]],"b":[["99","20"]]}}' >"$fixture_dir/route-bitget.json"
@@ -221,6 +243,7 @@ if [[ $# == 1 ]]; then
   echo '[{"asks":[["100","2000"]],"bids":[["99","2000"]]}]' >"$fixture_dir/route-okx.json"
   echo '{"levels":[[{"px":"99","sz":"20"}],[{"px":"100","sz":"20"}]]}' >"$fixture_dir/route-hl.json"
   echo '{"taker_fee":"0.0000","supported_size_decimals":3,"min_base_amount":"0.007","min_quote_amount":"10"}' >"$fixture_dir/route-lighter-meta.json"
+  echo '{"code":200,"order_book_details":[{"market_id":161,"open_interest":500,"mark_price":"100"},{"market_id":162,"open_interest":600,"mark_price":"101"}]}' >"$fixture_dir/snapshot-lighter-details.json"
   echo '{"code":200,"asks":[{"price":"100","remaining_base_amount":"20"}],"bids":[{"price":"99","remaining_base_amount":"20"}]}' >"$fixture_dir/route-lighter-book.json"
   echo '{"error":"asset not found"}' >"$fixture_dir/route-no-asset.json"
   echo '{"assets":[]}' >"$fixture_dir/route-rh.json"

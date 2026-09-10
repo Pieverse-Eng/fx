@@ -73,21 +73,30 @@ def spot($c;$budget):
     ($f.value*(if $c.feeAsset=="base" then 1 else 1+$c.fee+$c.extraFee end)) as $total |
     if $q<$c.minQuantity or $f.value<$c.minValue or $net<=0 then error("Below minimum order") else
       ($c|route_identity)+{expectedQuantity:$net,spend:$total,unspent:($budget-$total),
-       fees:($f.value*($c.fee+$c.extraFee)),effectivePrice:($total/$net),feeSource:$c.feeSource}
+       fees:($f.value*($c.fee+$c.extraFee)),estimatedFillPrice:($f.value/$q),
+       depthSlippageBps:((($f.value/$q)/$c.asks[0].price-1)*10000),
+       spreadCostBps:(($c.asks[0].price-$c.bids[0].price)/($c.asks[0].price+$c.bids[0].price)*10000),effectivePrice:($total/$net),feeSource:$c.feeSource}
     end
   end;
 def perpetual($c;$quantity;$direction):
-  # The same exposure is used across candidates; inverse contracts are excluded upstream.
+  # Simulate the supplied underlying quantity; inverse contracts are excluded upstream.
   round_down($quantity;$c.step) as $q |
-  if $q<=0 or (($quantity-$q)/$quantity)>1e-8 then error("Lot step prevents matching the common comparison quantity") else
+  if $q<=0 or (($quantity-$q)/$quantity)>1e-8 then error("Lot step prevents matching the requested quantity") else
     walk_quantity((if $direction=="short" then $c.bids else $c.asks end);$q) as $f |
     if $f.remaining>$q*1e-9 then error("Insufficient displayed depth")
     elif $q<$c.minQuantity or $f.value<$c.minValue then error("Below minimum order") else
       ($f.value*($c.fee+$c.extraFee)) as $fee |
       ($f.value+(if $direction=="short" then -$fee else $fee end)) as $total |
-      ($c|route_identity)+{expectedQuantity:$q,openingValue:$f.value,fees:$fee,effectivePrice:($total/$q),feeSource:$c.feeSource}
+      ($c|route_identity)+{expectedQuantity:$q,openingValue:$f.value,fees:$fee,
+        estimatedFillPrice:($f.value/$q),
+        depthSlippageBps:(if $direction=="short" then (1-($f.value/$q)/$c.bids[0].price)*10000 else (($f.value/$q)/$c.asks[0].price-1)*10000 end),
+        spreadCostBps:(($c.asks[0].price-$c.bids[0].price)/($c.asks[0].price+$c.bids[0].price)*10000),effectivePrice:($total/$q),feeSource:$c.feeSource}
     end
   end;
+
+def perpetual_notional($c;$amount;$direction):
+  (($c.asks[0].price+$c.bids[0].price)/2) as $mid |
+  perpetual($c;round_down($amount/$mid;$c.step);$direction);
 
 def live_rates($stats;$books;$now):
   [$stats|if type=="array" then .[] else empty end|select(.count>0 and (.closeTime|type)=="number" and ($now-.closeTime|fabs)<300000)|.symbol] as $active |
