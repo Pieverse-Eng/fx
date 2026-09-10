@@ -79,9 +79,9 @@ def spot($c;$budget):
     end
   end;
 def perpetual($c;$quantity;$direction):
-  # The same exposure is used across candidates; inverse contracts are excluded upstream.
+  # Simulate the supplied underlying quantity; inverse contracts are excluded upstream.
   round_down($quantity;$c.step) as $q |
-  if $q<=0 or (($quantity-$q)/$quantity)>1e-8 then error("Lot step prevents matching the common comparison quantity") else
+  if $q<=0 or (($quantity-$q)/$quantity)>1e-8 then error("Lot step prevents matching the requested quantity") else
     walk_quantity((if $direction=="short" then $c.bids else $c.asks end);$q) as $f |
     if $f.remaining>$q*1e-9 then error("Insufficient displayed depth")
     elif $q<$c.minQuantity or $f.value<$c.minValue then error("Below minimum order") else
@@ -93,6 +93,10 @@ def perpetual($c;$quantity;$direction):
         spreadCostBps:(($c.asks[0].price-$c.bids[0].price)/($c.asks[0].price+$c.bids[0].price)*10000),effectivePrice:($total/$q),feeSource:$c.feeSource}
     end
   end;
+
+def perpetual_notional($c;$amount;$direction):
+  (($c.asks[0].price+$c.bids[0].price)/2) as $mid |
+  perpetual($c;round_down($amount/$mid;$c.step);$direction);
 
 def live_rates($stats;$books;$now):
   [$stats|if type=="array" then .[] else empty end|select(.count>0 and (.closeTime|type)=="number" and ($now-.closeTime|fabs)<300000)|.symbol] as $active |

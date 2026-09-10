@@ -318,3 +318,20 @@ jq -ne "$candle_jq $math $snapshot_math"'
     .quantity==100000 and ((.price-0.000012)|fabs)<1e-12)
 ' >/dev/null
 echo 'Native versus underlying units and object/array book timestamps passed.'
+
+jq -ne "$math"'
+  {id:"sized",venue:"binance",symbol:"TESTUSDT",product:"perp",quote:"USDT",quotedAt:"fixture",
+   step:0.1,minQuantity:0,minValue:0,fee:0.001,extraFee:0,feeAsset:"quote",feeSource:"fixture",
+   asks:[{price:101,quantity:100}],bids:[{price:99,quantity:100}]} as $a |
+  ($a+{venue:"bitget",step:0.01,asks:[{price:121,quantity:100}],bids:[{price:119,quantity:100}]}) as $b |
+  all(["long","short"][]; . as $direction |
+    perpetual_notional($a;3000;$direction) as $ra |
+    perpetual_notional($b;3000;$direction) as $rb |
+    $ra.expectedQuantity==30 and $rb.expectedQuantity==25 and
+    $ra.expectedQuantity*100==3000 and $rb.expectedQuantity*120==3000 and
+    $ra.estimatedFillPrice==(if $direction=="short" then 99 else 101 end) and
+    (($ra.effectivePrice-($ra.estimatedFillPrice*(if $direction=="short" then 0.999 else 1.001 end)))|fabs)<1e-10) and
+  (perpetual_notional($b+{step:3};3000;"short")|.expectedQuantity==24) and
+  ((try perpetual_notional($b+{step:30};3000;"short") catch {error:.})|has("error"))
+' >/dev/null
+echo 'Each venue sizes its own notional, rounds its own lots, and separates fill from fee-adjusted price.'

@@ -213,13 +213,8 @@ run_routes() {
   jq -n --argjson input "$route_input" --slurpfile c "$scratch_root/routes/books.json" --slurpfile chains "$scratch_root/routes/onchain.json" \
     --slurpfile snapshots "$scratch_root/routes/snapshots.json" --slurpfile errors "$scratch_root/routes/errors.json" --slurpfile coverage <(jq -s '[.[]|.venue as $v|.errors[]|.+{venue:$v}]' "$@") "$route_math"'
     ($input.amount|tonumber) as $amount |
-    ([$c[0][]|(.asks[0].price+.bids[0].price)/2]|sort) as $mids |
-    (if ($mids|length)>0 then $mids[(($mids|length)/2|floor)] else null end) as $mark |
-    (if $mark!=null then $amount/$mark else null end) as $target |
-    ([$c[0][]|select(.step<=$target)|.step]|max//0) as $grid |
-    (if $input.product=="perp" and $mark!=null then round_down($target;$grid) else null end) as $quantity |
     [$c[0][]|. as $candidate | try
-       (if $input.product=="spot" then spot(.;$amount) else perpetual(.;$quantity;$input.direction) end)
+       (if $input.product=="spot" then spot(.;$amount) else perpetual_notional(.;$amount;$input.direction) end)
        catch {error:{venue:$candidate.venue,symbol:$candidate.symbol,message:.}}] as $computed |
     ([$computed[]|select(.error==null)] + $chains[0].routes | sort_by(.effectivePrice) |
       if $input.direction=="short" then reverse else . end) as $routes |
