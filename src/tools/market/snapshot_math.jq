@@ -40,6 +40,7 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
    elif $m.venue=="kraken" then ([$meta.tickers[]?|select(.symbol==$m.symbol)][0]//{})
    elif $m.venue=="bitget" then (try $meta.data[0] catch null)//{}
    elif $m.venue=="okx-cex" then (try $meta[0] catch null)//{}
+   elif $m.venue=="lighter" then ([$o.order_book_details[]?|select(.market_id==$m.marketId)][0]//{})
    else $meta end) as $ctx |
   (if $m.product=="spot" then {status:"not_applicable"}
    elif $m.venue=="bitget" then ($f.data[0]//{}) as $v |
@@ -48,7 +49,7 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
      {intervalHours:(if ($ctx.funding_interval|n)!=null then ($ctx.funding_interval|n)/3600 else null end),nextSettlementTime:(if ($ctx.funding_next_apply|n)!=null then ($ctx.funding_next_apply|n)*1000 else null end)}
    elif $m.venue=="hyperliquid" then observation($ctx.funding;"ratio";"metaAndAssetCtxs") + {intervalHours:1}
    elif $m.venue=="lighter" then ([$f.funding_rates[]?|select(.exchange=="lighter" and .market_id==$m.marketId)][0]//{}) as $v |
-     observation($v.rate;"provider_native";"funding-rates") + {intervalHours:null,reason:"Rate unit and period require provider verification; do not compare numerically"}
+     observation($v.rate;"provider_native";"funding-rates") + {intervalHours:null,settlementIntervalHours:1,reason:"Hourly settlement is verified; this comparison endpoint rate unit and period are unverified, so do not compare numerically"}
    elif $m.venue=="kraken" then observation($ctx.fundingRate;"provider_native";"tickers") +
      {prediction:($ctx.fundingRatePrediction|n),intervalHours:null,reason:"Cash funding rate depends on contract specification; not a percentage"}
    elif $m.venue=="okx-cex" then ($f[0]//{}) as $v |

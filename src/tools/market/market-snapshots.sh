@@ -49,6 +49,7 @@ market_snapshot() (
       if [[ -f $cached_book ]]; then cp "$cached_book" "$dir/book.json"
       else market_read "$dir/book.json" purr lighter order-book-depth --market "$symbol" --market-type "$(if [[ $kind == spot ]]; then echo spot; else echo perp; fi)" --limit 100; fi
       if [[ $kind != spot ]]; then
+        market_read "$dir/oi.json" curl -fsS --max-time 15 "https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails?market_id=$(jq -r .marketId <<<"$m")"
         market_read "$dir/funding.json" curl -fsS --max-time 15 https://mainnet.zklighter.elliot.ai/api/v1/funding-rates
       fi ;;
     kraken)

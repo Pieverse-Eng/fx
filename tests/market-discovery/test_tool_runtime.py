@@ -173,6 +173,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     else:
                         assert payload["bestRoute"]["venue"] == "lighter" and payload["bestRoute"]["symbol"] == "SKHYNIXUSD", payload
                         assert payload["bestRoute"]["marketId"] == 161, payload
+                        lighter = next(m for m in payload["markets"] if m["venue"] == "lighter")
+                        assert lighter["openInterest"]["value"] == 500 and lighter["markPrice"] == 100, lighter
                         assert "--market SKHYNIXUSD --market-type perp" in commands, commands
                         assert any("xyz:SKHX" in gap and "HIP-3" in gap for gap in payload["gaps"]), payload
                 elif tool_name == "discover_markets":

@@ -17,6 +17,7 @@ case "${0##*/}:$*" in
  curl:*gateio.ws*/contracts/*) venue=derivatives; key=snapshot-gate;;
  curl:*metaAndAssetCtxs*) venue=derivatives; key=snapshot-hl;;
  curl:*api/v1/funding-rates*) venue=derivatives; key=snapshot-lighter-funding;;
+ curl:*orderBookDetails\?market_id=*) venue=lighter; key=snapshot-lighter-details;;
  curl:*kraken.com/derivatives/api/v3/tickers*) venue=derivatives; key=kraken-tickers;;
  okx:*'market funding-rate'*) venue=derivatives; key=snapshot-okx-funding;;
  okx:*'market open-interest'*) venue=derivatives; key=snapshot-okx-oi;;
@@ -242,6 +243,7 @@ if [[ $# == 1 ]]; then
   echo '[{"asks":[["100","2000"]],"bids":[["99","2000"]]}]' >"$fixture_dir/route-okx.json"
   echo '{"levels":[[{"px":"99","sz":"20"}],[{"px":"100","sz":"20"}]]}' >"$fixture_dir/route-hl.json"
   echo '{"taker_fee":"0.0000","supported_size_decimals":3,"min_base_amount":"0.007","min_quote_amount":"10"}' >"$fixture_dir/route-lighter-meta.json"
+  echo '{"code":200,"order_book_details":[{"market_id":161,"open_interest":500,"mark_price":"100"},{"market_id":162,"open_interest":600,"mark_price":"101"}]}' >"$fixture_dir/snapshot-lighter-details.json"
   echo '{"code":200,"asks":[{"price":"100","remaining_base_amount":"20"}],"bids":[{"price":"99","remaining_base_amount":"20"}]}' >"$fixture_dir/route-lighter-book.json"
   echo '{"error":"asset not found"}' >"$fixture_dir/route-no-asset.json"
   echo '{"assets":[]}' >"$fixture_dir/route-rh.json"

@@ -283,8 +283,10 @@ jq -ne "$candle_jq $math $snapshot_math"'
     1;false;"fixture") as $hl |
   ($hl.funding.value==0.00001 and $hl.funding.intervalHours==1 and $hl.openInterest.quoteValue==265) and
   (snapshot($m+{venue:"lighter",marketId:182};{asks:[],bids:[]};
-    {funding_rates:[{market_id:182,exchange:"other",rate:9},{market_id:182,exchange:"lighter",rate:-0.02}]};null;{open_interest:500};1;false;"fixture")|
-    .funding.value== -0.02 and .funding.unit=="provider_native" and .openInterest.value==500) and
+    {funding_rates:[{market_id:182,exchange:"other",rate:9},{market_id:182,exchange:"lighter",rate:-0.02}]};
+    {order_book_details:[{market_id:999,open_interest:99,mark_price:"99"},{market_id:182,open_interest:500,mark_price:"2.8040"}]};
+    {taker_fee:"0.0000"};1;false;"fixture")|
+    .funding.value== -0.02 and .funding.unit=="provider_native" and .funding.settlementIntervalHours==1 and .openInterest.value==500 and .markPrice==2.804) and
   (snapshot($m+{venue:"kraken",symbol:"PF_XBTUSD",quoteAsset:"USD"};{result:"success",orderBook:{asks:[],bids:[]}};null;null;
     {tickers:[{symbol:"PF_XBTUSD",fundingRate:1.36,fundingRatePrediction:0.87,openInterest:2155}]};1;false;"fixture")|
     .funding.value==1.36 and .funding.unit=="provider_native" and .funding.prediction==0.87 and .openInterest.value==2155) and
