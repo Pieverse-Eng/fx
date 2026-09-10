@@ -228,6 +228,7 @@ run_routes() {
       ([$routes[]|select(.venue==$s.venue and .symbol==$s.symbol)][0]//null) as $r |
       . + {entryEstimate:(if $r==null then {status:"unavailable",reasons:[$errors[0][], $computed[]|(.error//.)|select(.venue==$s.venue and .symbol==$s.symbol)|.message]} else
         {status:"available",referenceCurrency:($input.currency//"USDT"),requestedNotional:$amount,direction:($input.direction//"buy"),
+         quantityUnit:"underlying",underlying:$s.underlying,exposureMultiplier:$s.exposureMultiplier,priceUnit:"reference_currency_per_underlying",
          quantity:$r.expectedQuantity,estimatedFillPrice:$r.estimatedFillPrice,depthSlippageBps:$r.depthSlippageBps,
          spreadCostBps:$r.spreadCostBps,fees:$r.fees,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} end)}]}'
 }

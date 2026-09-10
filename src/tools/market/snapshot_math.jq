@@ -63,6 +63,7 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
    elif $m.venue=="okx-cex" then observation($o[0].oi;"contracts";"open-interest") + {baseAmount:($o[0].oiCcy|n),usdValue:($o[0].oiUsd|n)}
    else observation($o.openInterest;"base";"openInterest") end) as $oi |
   ($m|comparison_route_identity) + {observedAt:$now,marketStatus:($m.status//"unknown"),quoteCurrency:$quote,
+    nativeBaseAsset:$m.baseAsset,underlying:$m.ticker,exposureMultiplier:exposure($m),
     product:(if $m.product=="perpetual" then "perp" else $m.product end),
     funding:($funding + (if $funding.unit=="ratio" then {positiveRatePays:"long_to_short"} else {} end)),openInterest:$oi,
     markPrice:(try (if $m.venue=="aster" or $m.venue=="binance" then $f.markPrice
@@ -71,7 +72,7 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
       elif $m.venue=="hyperliquid" then $ctx.markPx
       elif $m.venue=="kraken" then $ctx.markPrice else $ctx.mark_price end|n) catch null),
     book:(if $book==null then {status:"unknown",reason:"Book query failed or contract units are unverified"} else book_summary($book) + {
-      sourceTime:(try ($raw.ts // $raw.time // $raw.data.ts // $raw[0].ts // null) catch null)
+      sourceTime:(try (if ($raw|type)=="array" then $raw[0].ts else $raw.ts // $raw.time // $raw.data.ts // null end) catch null)
     } end),
     gaps:([if $funding.status=="unknown" then "Funding unavailable" else empty end,
            if $oi.status=="unknown" then "Open interest unavailable" else empty end,

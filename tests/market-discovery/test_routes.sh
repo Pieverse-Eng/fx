@@ -288,9 +288,9 @@ jq -ne "$candle_jq $math $snapshot_math"'
   (snapshot($m+{venue:"kraken",symbol:"PF_XBTUSD",quoteAsset:"USD"};{result:"success",orderBook:{asks:[],bids:[]}};null;null;
     {tickers:[{symbol:"PF_XBTUSD",fundingRate:1.36,fundingRatePrediction:0.87,openInterest:2155}]};1;false;"fixture")|
     .funding.value==1.36 and .funding.unit=="provider_native" and .funding.prediction==0.87 and .openInterest.value==2155) and
-  (snapshot($m+{venue:"okx-cex",quoteAsset:"USDT"};[{asks:[[100,100]],bids:[[99,100]]}];
+  (snapshot($m+{venue:"okx-cex",quoteAsset:"USDT"};[{ts:"1789056000000",asks:[[100,100]],bids:[[99,100]]}];
     [{fundingRate:"0.0001",fundingTime:"100000000",nextFundingTime:"128800000"}];[{oi:"1000",oiCcy:"10",oiUsd:"1000"}];[{markPx:"100"}];0.01;false;"fixture")|
-    .funding.intervalHours==8 and .openInterest.usdValue==1000 and .book.bidDepth1Pct==99 and .markPrice==100)
+    .funding.intervalHours==8 and .openInterest.usdValue==1000 and .book.bidDepth1Pct==99 and .markPrice==100 and .book.sourceTime=="1789056000000")
 ' >/dev/null
 jq -ne "$candle_jq $math $snapshot_math"'
   {venue:"bitget",symbol:"H100USDT",product:"perpetual",quoteAsset:"USDT",ticker:"H100"} as $m |
@@ -307,3 +307,12 @@ jq -ne "$candle_jq $math $snapshot_math"'
   (book_summary($book+{bids:($book.bids+[{price:98,quantity:1}])})|.bidBandComplete==true and .bidDepth1Pct==100)
 ' >/dev/null
 echo 'Depth band coverage does not assume a common venue level limit.'
+
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"binance",symbol:"1000SHIBUSDT",baseAsset:"1000SHIB",ticker:"SHIB",product:"perpetual",quoteAsset:"USDT"} as $m |
+  snapshot($m;{time:1789056000000,asks:[[0.012,100]],bids:[[0.011,100]]};null;null;null;1;false;"fixture") as $s |
+  ($s.nativeBaseAsset=="1000SHIB" and $s.underlying=="SHIB" and $s.exposureMultiplier==1000 and $s.book.bestAsk==0.012 and $s.book.sourceTime==1789056000000) and
+  (depth([[$s.nativeBook.asks[0].price,$s.nativeBook.asks[0].quantity]];1;$s.exposureMultiplier;1;false)[0] |
+    .quantity==100000 and ((.price-0.000012)|fabs)<1e-12)
+' >/dev/null
+echo 'Native versus underlying units and object/array book timestamps passed.'

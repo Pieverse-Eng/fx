@@ -191,6 +191,13 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                 elif tool_name == "compare_trade_routes":
                     assert all("nativeBook" not in m for m in payload["markets"]), payload
                     assert any(m.get("entryEstimate", {}).get("estimatedFillPrice") for m in payload["markets"]), payload
+                    for market in payload["markets"]:
+                        estimate = market.get("entryEstimate", {})
+                        if estimate.get("status") == "available":
+                            assert estimate["quantityUnit"] == "underlying", market
+                            assert estimate["underlying"] == market["underlying"], market
+                            assert estimate["exposureMultiplier"] == market["exposureMultiplier"], market
+                            assert estimate["priceUnit"] == "reference_currency_per_underlying", market
                     route = payload["bestRoute"]
                     assert route["venue"] and route["symbol"] and route["product"] == "perp", payload
                     assert set(route) <= {"venue", "symbol", "product", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset"}, payload
