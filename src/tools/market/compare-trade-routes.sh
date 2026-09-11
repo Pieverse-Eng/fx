@@ -19,8 +19,16 @@ route_book() (
   fi
   case "$venue" in
     orderly)
-      fail 'Orderly account/builder trading fee is unverified; market data and displayed depth remain available'
-      exit 0 ;;
+      # Pieverse broker pricing: maker 0 bps, taker 3 bps (2026-09-11).
+      # This is the total user trading fee, not an additional builder fee.
+      source='Pieverse Orderly broker pricing (2026-09-11)'; fee=0.0003; fee_asset=quote
+      if ! jq -e 'all(.base_tick,.base_min,.min_notional; (try tonumber catch null) as $v | $v!=null and $v>=0) and (.base_tick|tonumber)>0' <<<"$m" >/dev/null; then
+        fail 'Orderly order size constraints unavailable'; exit 0
+      fi
+      step=$(jq -r .base_tick <<<"$m")
+      minq=$(jq -r .base_min <<<"$m")
+      minv=$(jq -r .min_notional <<<"$m")
+      ;;
     aster)
       source='https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees'
       meta=$(jq -c --arg s "$symbol" '.symbols[]|select(.symbol==$s)' "$scratch_root/aster/catalog.json")

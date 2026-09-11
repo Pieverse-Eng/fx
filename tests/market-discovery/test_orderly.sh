@@ -44,3 +44,27 @@ jq -ne "$candle_jq $math $snap"'
  (snapshot($m;{asks:[],bids:[]};null;null;$meta;1;false;"now").book.status=="empty")
 ' >/dev/null
 echo 'Orderly native symbols, suffixes, exact matching, multipliers, funding, OI and depth passed.'
+# Exercise the actual fee branch and route math, including native order limits.
+source "$root/src/tools/market/compare-trade-routes.sh"
+route_math=$math
+mkdir -p "$scratch_root/routes"; echo '{}' >"$scratch_root/routes/rates.json"
+route_input='{"product":"perp","amount":1000,"currency":"USDC","direction":"long"}'
+market_snapshot() {
+ mkdir -p "$2"
+ echo '{"nativeBook":{"asks":[{"price":100,"quantity":100}],"bids":[{"price":100,"quantity":100}]}}' >"$2/snapshot.json"
+}
+for symbol in PERP_ETH_USDC PERP_HOOD_USDC_mythos PERP_1000BONK_USDC; do
+ m=$(jq -cn --arg s "$symbol" '{venue:"orderly",symbol:$s,ticker:($s|split("_")[1]|sub("^1000";"")),baseAsset:($s|split("_")[1]),quoteAsset:"USDC",product:"perpetual",status:"ACTIVE",base_tick:0.001,base_min:0.001,min_notional:10}')
+ route_book "$m" 0
+ jq -e '.fee==0.0003 and .extraFee==0 and .minValue==10' "$scratch_root/routes/0/candidate.json" >/dev/null
+ jq -e "$math"'
+   . as $c | perpetual_notional($c;1000;"long") as $long |
+   perpetual_notional($c;1000;"short") as $short |
+   $long.fees==0.3 and $short.fees==0.3 and
+   (comparison_result([$long];[]).rankedRoutes[0].venue=="orderly") and
+   (try perpetual_notional($c;1;"long") catch "minimum") == "minimum"
+ ' "$scratch_root/routes/0/candidate.json" >/dev/null
+done
+route_book "$(jq 'del(.base_tick)' <<<"$m")" 1
+jq -e '.message=="Orderly order size constraints unavailable"' "$scratch_root/routes/1/error.json" >/dev/null
+echo 'Orderly 3 bps fees, route inclusion, multiplier contracts and minimum orders passed.'

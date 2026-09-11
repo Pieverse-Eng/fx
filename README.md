@@ -231,8 +231,11 @@ snapshots. Native symbols, including builder suffixes such as
 `PERP_HOOD_USDC_mythos`, are preserved. Funding estimates retain the market's
 4h/8h period and last settled rate; open interest is reported in native base
 units with its quote value. REST futures data supplies 24h quote turnover.
-Orderly fee-inclusive route ranking remains unavailable until an account/builder
-fee is verified; displayed depth and size-specific slippage are still returned.
+Orderly fee-inclusive route ranking uses Pieverse's configured total taker fee
+of 3 bps (0.03%), with no additional platform fee. The broker's maker fee is
+0 bps; this tool compares taker entries only. Order quantity increments and
+minimum notional come from the market catalog. These rates describe Pieverse's
+broker, not every Orderly frontend or account-specific fee override.
 Use a purr CLI release containing commit
 `ddda2d3067cb669fdc87c2f16e42d2ca96a93759` for correct orderbook depth and candle
 window parameters. Public research does not require an Orderly account.
