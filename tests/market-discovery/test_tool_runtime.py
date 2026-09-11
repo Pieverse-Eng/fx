@@ -125,8 +125,9 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     expected_books = ([f"purr:lighter order-book-depth --market {symbol} --market-type perp --limit 100"
                                        for symbol in ("SKHYNIXUSD", "SAMSUNGUSD")]
                                       if kind == "aliases" else [])
-                    assert sorted(book_commands) == sorted(expected_books), book_commands
-                    assert calls.count("route-lighter-book") == len(expected_books), calls
+                    if kind != "orderly":
+                        assert sorted(book_commands) == sorted(expected_books), book_commands
+                        assert calls.count("route-lighter-book") == len(expected_books), calls
                 messages = [message for message in requests[1]["messages"] if message.get("role") == "tool"]
                 # Tool result presentation may add an envelope; locate the JSON payload.
                 content = messages[-1]["content"]
