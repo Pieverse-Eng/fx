@@ -260,7 +260,7 @@ if [[ $# == 1 ]]; then
   echo '{"order_book_details":[{"market_id":161,"daily_quote_token_volume":"1000000"},{"market_id":162,"daily_quote_token_volume":"1000000"}]}' >"$fixture_dir/stats-lighter.json"
   jq -n --argjson now "$(date +%s%3N)" '[{symbol:"BTCUSDT",quoteVolume:"10",lastPrice:"100"},{symbol:"USDTUSD",count:100,closeTime:$now},{symbol:"USDCUSD",count:100,closeTime:$now}]' >"$fixture_dir/stats-binance-spot.json"
   echo '[{"symbol":"BTCUSDT","quoteVolume":"1000000","lastPrice":"100"},{"symbol":"CRCLUSDT","quoteVolume":"1000000","lastPrice":"100"}]' >"$fixture_dir/stats-binance-perp.json"
-  echo '{"USDTZUSD":{"c":["0.99"]},"USDCUSD":{"c":["1.001"]}}' >"$fixture_dir/stats-kraken.json"
+  echo '{"USDTZUSD":{"c":["0.99"],"a":["0.99"],"b":["0.99"],"v":["1","1"]},"USDCUSD":{"c":["1.001"],"a":["1.001"],"b":["1.001"],"v":["1","1"]}}' >"$fixture_dir/stats-kraken.json"
   jq '.+{USDTZUSD:{altname:"USDTUSD",wsname:"USDT/USD",base:"USDT",aclass_base:"currency",status:"online"},USDCUSD:{altname:"USDCUSD",wsname:"USDC/USD",base:"USDC",aclass_base:"currency",status:"online"}}' "$fixture_dir/kraken-spot.json" >"$fixture_dir/kraken-spot.tmp"
   mv "$fixture_dir/kraken-spot.tmp" "$fixture_dir/kraken-spot.json"
   now=$(date +%s%3N)

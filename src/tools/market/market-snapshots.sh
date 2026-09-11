@@ -65,7 +65,10 @@ market_snapshot() (
         if [[ $(jq -r '.assetClass//""' <<<"$m") == tokenized_asset ]]; then args+=(--asset-class tokenized_asset); fi
         market_read "$dir/book.json" "${args[@]}"
       else
-        [[ $symbol == PF_* || $symbol == pf_* ]] || unsupported=true
+        if [[ $symbol != PF_* && $symbol != pf_* ]]; then
+          if jq -en --argjson m "$m" "$candle_jq"'kraken_inverse($m)' >/dev/null; then size=$(jq -r .contractSize <<<"$m")
+          else unsupported=true; fi
+        fi
         market_read "$dir/book.json" kraken futures orderbook "$symbol" -o json
         market_read "$dir/meta.json" curl -fsS --max-time 15 https://futures.kraken.com/derivatives/api/v3/tickers
         if [[ $unsupported == false ]]; then

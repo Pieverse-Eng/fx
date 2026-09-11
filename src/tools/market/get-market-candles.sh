@@ -27,6 +27,32 @@ def exposure($m):
   elif $base==("1000000"+$t) or $base==("1M"+$t) then 1000000
   else 1 end;
 def quote_ccy($m): $m.quoteAsset // $m.collateralAsset // $m.settlementAsset;
+def currency: ascii_upcase | if .=="XBT" then "BTC" elif .=="XDG" then "DOGE" else . end;
+def kraken_inverse($m): $m.venue=="kraken" and $m.product!="spot" and
+  ($m.symbol|ascii_upcase|startswith("PI_")) and $m.contractType=="futures_inverse" and
+  $m.quoteAsset=="USD" and ($m.contractSize|positive)!=null and
+  ($m.sizeDecimals|num)==0;
+# Direct USD and reversed USD pairs take priority over a USDT bridge.
+def reference_rates($pairs;$kr;$bn;$catalog;$now):
+  ($kr|rows) as $k |
+  reduce ($pairs[]|select(.status=="online")|. as $p|
+    (.wsname|split("/")|map(currency)) as $ccys |
+    ($k[$p.key] // $k[$p.altname] // $k[($p.wsname|gsub("/";""))]) as $v |
+    select(($v.a[0]|positive)!=null and ($v.b[0]|positive)!=null and ($v.v[1]|positive)!=null and
+      ($v.a[0]|num)>=($v.b[0]|num) and ($v.a[0]|num)/($v.b[0]|num)<1.01) |
+    ((($v.a[0]|num)+($v.b[0]|num))/2) as $mid |
+    if $ccys[1]=="USD" then {ccy:$ccys[0],rate:$mid}
+    elif $ccys[0]=="USD" then {ccy:$ccys[1],rate:(1/$mid)} else empty end) as $p
+    ({USD:1}; .[$p.ccy]=$p.rate) |
+  . as $direct |
+  ([$bn[]?|select((.count|positive)!=null and (.lastPrice|positive)!=null and
+    (.closeTime|num)!=null and (($now-(.closeTime|num))|fabs)<300000)]|INDEX(.symbol)) as $stats |
+  reduce ($catalog.symbols[]?|select(.status=="TRADING")|
+    . as $p | $stats[$p.symbol] as $v | select($v!=null and $direct.USDT!=null) |
+    if .quoteAsset=="USDT" then {ccy:(.baseAsset|currency),rate:(($v.lastPrice|num)*$direct.USDT)}
+    elif .baseAsset=="USDT" then {ccy:(.quoteAsset|currency),rate:($direct.USDT/($v.lastPrice|num))} else empty end) as $p
+    ($direct; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end);
+
 def findrow($data;$key;$symbol): first($data|rows|.[]?|select(.[$key]==$symbol)) // null;
 '
 
@@ -79,8 +105,8 @@ fetch_volumes() {
   market_launch "$scratch_root/stats/gate-perpetual.json" gate-cli cex futures market tickers --settle usdt --format json
   local spot_pairs stock_pairs
   spot_pairs=$(jq -nr --slurpfile c "$candidates" --slurpfile pairs "$scratch_root/kraken/pairs-original.json" "$candle_jq"'
-    [$c[0][]|quote_ccy(.)]|unique as $quotes |
-    ([$pairs[0][]|(.wsname|split("/")) as $pair|select($pair[1]=="USD" and ($quotes|index($pair[0]))!=null)|.altname] +
+    [$c[0][]|quote_ccy(.)|currency]|unique as $quotes |
+    ([$pairs[0][]|(.wsname|split("/")) as $pair|select(($pair[1]=="USD" and ($quotes|index($pair[0]|currency))!=null) or ($pair[0]=="USD" and ($quotes|index($pair[1]|currency))!=null))|.altname] +
      [$c[0][]|select(.venue=="kraken" and .product=="spot" and .assetClass!="tokenized_asset")|.symbol])|unique|join(",")')
   stock_pairs=$(jq -r '[.[]|select(.venue=="kraken" and .product=="spot" and .assetClass=="tokenized_asset")|.symbol]|unique|join(",")' "$candidates")
   if [[ -n $spot_pairs ]]; then market_launch "$scratch_root/stats/kraken-spot.json" kraken ticker "$spot_pairs" -o json
@@ -297,20 +323,17 @@ run_candles() {
   jq -s '[.[]|.venue as $venue|.errors[]|.+{venue:$venue,query:("discovery:"+.query)}]' "$@" >"$scratch_root/candle-errors.json"
   fetch_volumes "$candidates"
   # Rates are observed public prices, never hardcoded stablecoin parity.
-  jq -n --slurpfile pairs "$scratch_root/stats/kraken-pairs.json" --slurpfile kr "$scratch_root/stats/kraken-spot.json" --slurpfile bn "$scratch_root/stats/binance-spot.json" "$candle_jq"'
-    ($kr[0]|rows) as $k |
-    reduce ($pairs[0][]|select((.wsname|split("/")[1])=="USD")) as $p ({USD:1};
-      ($k[$p.key].c[0]|positive) as $rate | if $rate then .[($p.wsname|split("/")[0])]= $rate else . end) |
-    . as $direct |
-    reduce ($bn[0][]?|select(.symbol|endswith("USDT"))) as $p ($direct;
-      if $direct.USDT!=null and ($p.lastPrice|positive)!=null then .[($p.symbol|rtrimstr("USDT"))]=($p.lastPrice|num)*$direct.USDT else . end)
+  jq -n --argjson now "$(date +%s%3N)" --slurpfile pairs "$scratch_root/stats/kraken-pairs.json" \
+    --slurpfile kr "$scratch_root/stats/kraken-spot.json" --slurpfile bn "$scratch_root/stats/binance-spot.json" \
+    --slurpfile catalog "$scratch_root/binance/spot.json" "$candle_jq"'
+    reference_rates($pairs[0];$kr[0];$bn[0];$catalog[0];$now)
   ' >"$scratch_root/rates.json" 2>/dev/null || echo '{"USD":1}' >"$scratch_root/rates.json"
   : >"$scratch_root/ranked.jsonl"; : >"$scratch_root/rank-errors.jsonl"
   while IFS= read -r m; do
     venue=$(jq -r '.venue' <<<"$m"); ticker=$(jq -r '.ticker' <<<"$m")
     volume=$(load_volume "$m")
     [[ -n $volume ]] || volume='{"volume":null}'
-    rate=$(jq -r --argjson m "$m" "$candle_jq"' .[quote_ccy($m)] // null' "$scratch_root/rates.json")
+    rate=$(jq -r --argjson m "$m" "$candle_jq"' .[quote_ccy($m)|currency] // null' "$scratch_root/rates.json")
     if jq -ne --argjson v "$volume" --argjson rate "$rate" '($v.volume|type)=="number" and $v.volume>=0 and ($v.volume|isfinite) and ($rate|type)=="number" and $rate>0' >/dev/null; then
       jq -cn --argjson m "$m" --argjson v "$volume" --argjson rate "$rate" "$candle_jq"'$m+{volumeUSD:($v.volume*$rate),volumeEstimated:($v.estimated // false),exposureMultiplier:exposure($m)}' >>"$scratch_root/ranked.jsonl"
     else

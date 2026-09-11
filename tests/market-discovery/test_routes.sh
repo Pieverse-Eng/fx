@@ -447,3 +447,34 @@ jq -ne "$candle_jq $math $snapshot_math"'
   (snapshot($m+{product:"spot"};null;$f;null;null;1;false;$now)|.funding.status=="not_applicable")
 ' >/dev/null
 echo 'Lighter hourly funding and single-sided OI; Kraken relative funding freshness and failure regressions passed.'
+
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"kraken",symbol:"PI_XBTUSD",ticker:"BTC",baseAsset:"XBT",quoteAsset:"USD",product:"perpetual",contractType:"futures_inverse",contractSize:1,sizeDecimals:0} as $m |
+  snapshot($m;{result:"success",orderBook:{asks:[[100,100],[200,100]],bids:[[100,100],[50,100]]}};null;null;
+    {tickers:[{symbol:"PI_XBTUSD",markPrice:100,openInterest:200}]};1;false;"fixture") as $s |
+  {inverse:true,contractValue:1,contractStep:1,settlementAsset:"XBT",fee:0.0005,extraFee:0,asks:$s.nativeBook.asks,bids:$s.nativeBook.bids} as $c |
+  ($s.book.askDepth1Pct==100 and $s.book.bidDepth1Pct==100 and
+   $s.nativeBook.asks[1].quantity==0.5 and $s.openInterest.quoteValue==200 and $s.openInterest.baseAmount==2 and $s.settlementAsset=="XBT") and
+  (snapshot($m;null;null;null;{tickers:[{symbol:"PI_XBTUSD",markPrice:100}]};1;false;"fixture")|.openInterest.status=="unknown" and .openInterest.quoteValue==null) and
+  (perpetual_notional($c;200.9;"long")|.contracts==200 and .expectedQuantity==1.5 and .openingValue==200 and .fees==0.1 and ((.estimatedFillPrice-200/1.5)|fabs)<1e-9 and .settlementFee==0.00075) and
+  (perpetual_notional($c;200;"short")|.contracts==200 and .expectedQuantity==3 and .fees==0.1 and .effectivePrice<.estimatedFillPrice) and
+  ((try perpetual_notional($c;201;"long") catch {error:.})|has("error")) and
+  ((try perpetual_notional($c;0.9;"short") catch {error:.})|has("error")) and
+  (perpetual_notional($c+{contractValue:0.99,asks:[{price:99,quantity:2}],bids:[{price:98,quantity:2}]};100;"long")|.contracts==101 and .openingValue==99.99) and
+  (kraken_inverse($m+{contractSize:null})|not) and (kraken_inverse($m+{contractType:"unknown"})|not)
+' >/dev/null
+jq -ne "$candle_jq"'
+  [{key:"USDTZUSD",altname:"USDTUSD",wsname:"USDT/USD",status:"online"},
+   {key:"ZEURZUSD",altname:"EURUSD",wsname:"EUR/USD",status:"online"},
+   {key:"USDJPY",altname:"USDJPY",wsname:"USD/JPY",status:"online"},
+   {key:"XXBTZUSD",altname:"XBTUSD",wsname:"XBT/USD",status:"online"}] as $pairs |
+  {USDTZUSD:{a:[0.99],b:[0.99],v:[1,1]},EURUSD:{a:[1.1],b:[1.1],v:[1,1]},USDJPY:{a:[150],b:[150],v:[1,1]},XXBTZUSD:{a:[100],b:[100],v:[1,1]}} as $kr |
+  [{symbol:"BNBUSDT",lastPrice:500,count:1,closeTime:1000000},{symbol:"USDTBRL",lastPrice:5,count:1,closeTime:1000000},{symbol:"OLDUSDT",lastPrice:9,count:1,closeTime:1}] as $bn |
+  {symbols:[{symbol:"BNBUSDT",baseAsset:"BNB",quoteAsset:"USDT",status:"TRADING"},{symbol:"USDTBRL",baseAsset:"USDT",quoteAsset:"BRL",status:"TRADING"},{symbol:"OLDUSDT",baseAsset:"OLD",quoteAsset:"USDT",status:"TRADING"}]} as $catalog |
+  reference_rates($pairs;$kr;$bn;$catalog;1000000) as $r |
+  ($r.USD==1 and $r.USDT==0.99 and $r.EUR==1.1 and $r.JPY==1/150 and $r.BTC==100 and $r.BNB==495 and $r.BRL==0.198 and $r.OLD==null and $r.USDC==null) and
+  (reference_rates($pairs;($kr|.USDJPY.b=[151]);$bn;$catalog;1000000)|.JPY==null) and
+  (reference_rates($pairs;($kr|.USDTZUSD.v=[0,0]);$bn;$catalog;1000000)|.USDT==null and .BNB==null) and
+  (reference_rates(($pairs|map(.status="cancel_only"));$kr;$bn;$catalog;1000000)=={USD:1})
+' >/dev/null
+echo 'Inverse quote-contract fills and direct/reversed currency conversions passed.'

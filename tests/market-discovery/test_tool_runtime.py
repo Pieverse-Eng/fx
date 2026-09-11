@@ -203,6 +203,12 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert "snapshot-kraken-funding" in calls, calls
                     assert "route-rates" not in calls, calls
                 elif tool_name == "compare_trade_routes":
+                    if kind == "inverse":
+                        inverse = next(m for m in payload["markets"] if m["symbol"] == "PI_XBTUSD")
+                        assert inverse["book"]["status"] == "available", inverse
+                        assert inverse["funding"]["unit"] == "ratio", inverse
+                        assert inverse["entryEstimate"]["contracts"] == 1000, inverse
+                        assert inverse["entryEstimate"]["settlementFee"] == 0.005, inverse
                     if kind == "gate_fractional":
                         gate = next(m for m in payload["markets"] if m["venue"] == "gate")
                         assert gate["entryEstimate"]["status"] == "available", gate
@@ -218,12 +224,12 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                             assert estimate["priceUnit"] == "reference_currency_per_underlying", market
                     route = payload["bestRoute"]
                     assert route["venue"] and route["symbol"] and route["product"] == "perp", payload
-                    assert set(route) <= {"venue", "symbol", "product", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset"}, payload
+                    assert set(route) <= {"venue", "symbol", "product", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset", "contractType"}, payload
                     ranked = payload["rankedRoutes"]
                     assert ranked and ranked[0] == {**route, "costRank": 1}, payload
                     assert len({r["venue"] for r in ranked}) == len(ranked), payload
                     assert [r["costRank"] for r in ranked] == sorted(r["costRank"] for r in ranked), payload
-                    assert all(set(r) <= set(route) | {"costRank", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset"} for r in ranked), payload
+                    assert all(set(r) <= set(route) | {"costRank", "category", "assetId", "pairId", "dex", "marketId", "assetClass", "settlementAsset", "contractType"} for r in ranked), payload
                     configured = [r for r in ranked if r["venue"] in {"binance", "hyperliquid"}]
                     assert len(configured) == 2 and configured[0]["costRank"] <= configured[1]["costRank"], payload
                     assert isinstance(payload["gaps"], list) and all(isinstance(gap, str) for gap in payload["gaps"]), payload
@@ -282,3 +288,17 @@ exercise("snapshot", "compare_trade_routes")
     ["PERP_ETH_USDC", "PERP_HOOD_USDC_mythos", "PERP_MSTR_USDC_mythos", "PERP_XAU_USDC", "PERP_1000BONK_USDC"]
 ]))
 exercise("orderly")
+
+# An active inverse instrument must exercise the real quote-contract path.
+originals = {name: (fixtures / name).read_text() for name in ("kraken-perp.json", "route-kraken.json")}
+try:
+    instruments = json.loads(originals["kraken-perp.json"])
+    for instrument in instruments["instruments"]:
+        if instrument["symbol"] == "PI_XBTUSD":
+            instrument.update(postOnly=False, contractSize=1, contractValueTradePrecision=0)
+    (fixtures / "kraken-perp.json").write_text(json.dumps(instruments))
+    (fixtures / "route-kraken.json").write_text(json.dumps({"result":"success", "orderBook":{"asks":[[100,10000]],"bids":[[99,10000]]}}))
+    exercise("inverse", "compare_trade_routes")
+finally:
+    for name, content in originals.items():
+        (fixtures / name).write_text(content)

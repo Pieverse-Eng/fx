@@ -41,7 +41,7 @@ def round_down($x;$step):
 def route_identity: {id,venue,symbol,product,quote,quotedAt} + (.routing // {});
 def comparison_route_identity:
   if .chain!=null then {issuer,chain,symbol,contract}
-  else {venue,symbol,product,category,assetId,pairId,dex,marketId,assetClass,settlementAsset}
+  else {venue,symbol,product,category,assetId,pairId,dex,marketId,assetClass,settlementAsset} + (if .contractType=="inverse" then {contractType} else {} end)
     | with_entries(select(.value!=null)) end;
 def ranked_routes($routes):
   # The caller already sorts by effective entry price, descending for shorts.
@@ -79,7 +79,7 @@ def spot($c;$budget):
     end
   end;
 def perpetual($c;$quantity;$direction):
-  # Simulate the supplied underlying quantity; inverse contracts are excluded upstream.
+  # Simulate a linear contract in underlying quantity.
   round_down($quantity;$c.step) as $q |
   if $q<=0 or (($quantity-$q)/$quantity)>1e-8 then error("Lot step prevents matching the requested quantity") else
     walk_quantity((if $direction=="short" then $c.bids else $c.asks end);$q) as $f |
@@ -94,9 +94,26 @@ def perpetual($c;$quantity;$direction):
     end
   end;
 
+# Inverse orders are rounded in fixed quote-value contracts. Each fill level
+# contributes contracts * quote value / price in base; entry price is harmonic.
+def inverse_notional($c;$amount;$direction):
+  round_down($amount/$c.contractValue;$c.contractStep) as $contracts |
+  ($contracts*$c.contractValue) as $notional |
+  if $contracts<=0 then error("Below minimum order") else
+    walk_budget((if $direction=="short" then $c.bids else $c.asks end);$notional) as $f |
+    if $f.remaining>$notional*1e-9 then error("Insufficient displayed depth") else
+      ($notional/$f.quantity) as $price | ($c.fee+$c.extraFee) as $fee |
+      ($c|route_identity)+{contracts:$contracts,expectedQuantity:$f.quantity,openingValue:$notional,
+        fees:($notional*$fee),settlementFee:($f.quantity*$fee),settlementAsset:$c.settlementAsset,
+        estimatedFillPrice:$price,effectivePrice:($price*(if $direction=="short" then 1-$fee else 1+$fee end)),
+        depthSlippageBps:(if $direction=="short" then (1-$price/$c.bids[0].price)*10000 else ($price/$c.asks[0].price-1)*10000 end),
+        spreadCostBps:(($c.asks[0].price-$c.bids[0].price)/($c.asks[0].price+$c.bids[0].price)*10000),feeSource:$c.feeSource}
+    end
+  end;
 def perpetual_notional($c;$amount;$direction):
+  if $c.inverse==true then inverse_notional($c;$amount;$direction) else
   (($c.asks[0].price+$c.bids[0].price)/2) as $mid |
-  perpetual($c;round_down($amount/$mid;$c.step);$direction);
+  perpetual($c;round_down($amount/$mid;$c.step);$direction) end;
 
 def live_rates($stats;$books;$now):
   [$stats|if type=="array" then .[] else empty end|select(.count>0 and (.closeTime|type)=="number" and ($now-.closeTime|fabs)<300000)|.symbol] as $active |

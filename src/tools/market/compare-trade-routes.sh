@@ -110,7 +110,9 @@ route_book() (
         if [[ $(jq -r '.assetClass//""' <<<"$m") == tokenized_asset ]]; then args+=(--asset-class tokenized_asset); fi
       else
         meta=$(jq -c --arg s "$symbol" '.[]|select(.symbol==$s)' "$scratch_root/kraken/perpetual.json")
-        if [[ $symbol != PF_* && $symbol != pf_* ]]; then fail 'Inverse or unverified contract size'; exit 0; fi
+        if [[ $symbol != PF_* && $symbol != pf_* ]]; then
+          if ! jq -en --argjson m "$m" "$candle_jq"'kraken_inverse($m)' >/dev/null; then fail 'Unverified contract size'; exit 0; fi
+        fi
         # Flexible futures order size is base units, contractSize is not a multiplier for this book.
         fee=0.0005; size=1
         step=$(jq -nr --argjson m "$meta" 'pow(10;-($m.contractValueTradePrecision//0))')
@@ -186,7 +188,11 @@ route_book() (
       {id:($m.venue+":"+$m.symbol+":"+$m.product),venue:$m.venue,symbol:$m.symbol,product:$input.product,
        quote:$quote,quotedAt:$now,fee:$fee,extraFee:$extra,feeAsset:$feeAsset,feeSource:$feeSource,
        step:($step*$exp),minQuantity:($minq*$exp),minValue:($minv*$rate),asks:$asks,bids:$bids,
-       routing:($m|{category,assetId,pairId,dex,marketId,assetClass,settlementAsset}|with_entries(select(.value!=null)))}' >"$dir/candidate.json" 2>"$dir/normalize.stderr"; then
+       routing:($m|{category,assetId,pairId,dex,marketId,assetClass,settlementAsset}|with_entries(select(.value!=null)))} |
+      if kraken_inverse($m) then . + {inverse:true,contractValue:(($m.contractSize|num)*$rate),
+        contractStep:1,settlementAsset:$m.baseAsset,step:0} |
+        .routing += {contractType:"inverse",settlementAsset:$m.baseAsset}
+      else . end' >"$dir/candidate.json" 2>"$dir/normalize.stderr"; then
     rm -f "$dir/candidate.json"; fail 'Order book, currency rate, or product units could not be verified'
   fi
 )
@@ -261,5 +267,5 @@ run_routes() {
         {status:"available",referenceCurrency:($input.currency//"USDT"),requestedNotional:$amount,direction:($input.direction//"buy"),
          quantityUnit:"underlying",underlying:$s.underlying,exposureMultiplier:$s.exposureMultiplier,priceUnit:"reference_currency_per_underlying",
          quantity:$r.expectedQuantity,estimatedFillPrice:$r.estimatedFillPrice,depthSlippageBps:$r.depthSlippageBps,
-         spreadCostBps:$r.spreadCostBps,fees:$r.fees,feeSource:$r.feeSource,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} end)}]}'
+         spreadCostBps:$r.spreadCostBps,fees:$r.fees,feeSource:$r.feeSource,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} + (if $r.contracts!=null then {contracts:$r.contracts,settlementAsset:$r.settlementAsset,settlementFee:$r.settlementFee} else {} end) end)}]}'
 }
