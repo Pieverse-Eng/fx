@@ -20,6 +20,7 @@ case "${0##*/}:$*" in
  curl:*metaAndAssetCtxs*) venue=derivatives; key=snapshot-hl;;
  curl:*api/v1/funding-rates*) venue=derivatives; key=snapshot-lighter-funding;;
  curl:*orderBookDetails\?market_id=*) venue=lighter; key=snapshot-lighter-details;;
+ curl:*kraken.com/api/charts/v1/analytics/*/funding*) venue=derivatives; key=snapshot-kraken-funding;;
  curl:*kraken.com/derivatives/api/v3/tickers*) venue=derivatives; key=kraken-tickers;;
  okx:*'market funding-rate'*) venue=derivatives; key=snapshot-okx-funding;;
  okx:*'market open-interest'*) venue=derivatives; key=snapshot-okx-oi;;
@@ -121,7 +122,7 @@ jq -n '[{id:"BTC_USDT",base:"BTC",quote:"USDT",trade_status:"tradable"},
  {id:"BUY_USDT",base:"BUY",quote:"USDT",trade_status:"buyable"},
  {id:"SELL_USDT",base:"SELL",quote:"USDT",trade_status:"sellable"},
  {id:"OLD_USDT",base:"OLD",quote:"USDT",trade_status:"untradable"}]' >"$fixture_dir/gate-spot.json"
-jq -n '[{name:"BTC_USDT",type:"direct",status:"trading",quanto_multiplier:"0.0001"},
+jq -n '[{name:"BTC_USDT",type:"direct",status:"trading",quanto_multiplier:"0.0001",order_size_min:"0.1",enable_decimal:true,taker_fee_rate:"0.00075"},
  {name:"CRCL_USDT",type:"direct",status:"trading",contract_type:"stocks"},
  {name:"CRCLX_USDT",type:"direct",status:"trading",contract_type:"stocks"},
  {name:"PEPEX_USDT",type:"direct",status:"trading",contract_type:"crypto"},
@@ -236,6 +237,7 @@ if [[ $# == 1 ]]; then
   echo '{"data":{"openInterestList":[{"size":"10000"}]}}' >"$fixture_dir/snapshot-bitget-oi.json"
   echo '{"type":"direct","quanto_multiplier":"0.0001","funding_rate":"0.0001","funding_interval":28800,"position_size":10000}' >"$fixture_dir/snapshot-gate.json"
   echo '[{"universe":[{"name":"BTC"},{"name":"xyz:SKHX"}]},[{"funding":"0.00001","openInterest":"200","markPx":"100"},{"funding":"0.00002","openInterest":"300","markPx":"100"}]]' >"$fixture_dir/snapshot-hl.json"
+  jq -n '{errors:[],result:{timestamp:[(now|floor)*1000],data:{relativeRate:[[0,0,0,"-0.000003"]]}}}' >"$fixture_dir/snapshot-kraken-funding.json"
   echo '{"funding_rates":[{"market_id":161,"exchange":"lighter","rate":0.001}]}' >"$fixture_dir/snapshot-lighter-funding.json"
   echo '[{"fundingRate":"0.0001","fundingTime":"1789056000000","nextFundingTime":"1789084800000"}]' >"$fixture_dir/snapshot-okx-funding.json"
   echo '[{"oi":"10000","oiCcy":"100","oiUsd":"10000"}]' >"$fixture_dir/snapshot-okx-oi.json"
@@ -258,7 +260,7 @@ if [[ $# == 1 ]]; then
   echo '{"order_book_details":[{"market_id":161,"daily_quote_token_volume":"1000000"},{"market_id":162,"daily_quote_token_volume":"1000000"}]}' >"$fixture_dir/stats-lighter.json"
   jq -n --argjson now "$(date +%s%3N)" '[{symbol:"BTCUSDT",quoteVolume:"10",lastPrice:"100"},{symbol:"USDTUSD",count:100,closeTime:$now},{symbol:"USDCUSD",count:100,closeTime:$now}]' >"$fixture_dir/stats-binance-spot.json"
   echo '[{"symbol":"BTCUSDT","quoteVolume":"1000000","lastPrice":"100"},{"symbol":"CRCLUSDT","quoteVolume":"1000000","lastPrice":"100"}]' >"$fixture_dir/stats-binance-perp.json"
-  echo '{"USDTZUSD":{"c":["0.99"]},"USDCUSD":{"c":["1.001"]}}' >"$fixture_dir/stats-kraken.json"
+  echo '{"USDTZUSD":{"c":["0.99"],"a":["0.99"],"b":["0.99"],"v":["1","1"]},"USDCUSD":{"c":["1.001"],"a":["1.001"],"b":["1.001"],"v":["1","1"]}}' >"$fixture_dir/stats-kraken.json"
   jq '.+{USDTZUSD:{altname:"USDTUSD",wsname:"USDT/USD",base:"USDT",aclass_base:"currency",status:"online"},USDCUSD:{altname:"USDCUSD",wsname:"USDC/USD",base:"USDC",aclass_base:"currency",status:"online"}}' "$fixture_dir/kraken-spot.json" >"$fixture_dir/kraken-spot.tmp"
   mv "$fixture_dir/kraken-spot.tmp" "$fixture_dir/kraken-spot.json"
   now=$(date +%s%3N)

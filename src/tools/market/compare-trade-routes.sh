@@ -71,21 +71,48 @@ route_book() (
       else
         meta=$(jq -c --arg s "$symbol" '.[]|select(.name==$s)' "$scratch_root/gate/perpetual.json")
         if [[ $(jq -r .type <<<"$meta") != direct ]]; then fail 'Only linear base-denominated contracts can be compared'; exit 0; fi
-        fee=$(jq -r '.taker_fee_rate // null' <<<"$meta"); size=$(jq -r '.quanto_multiplier // null' <<<"$meta"); step=$size
-        minq=$(jq -nr --argjson m "$meta" 'try (($m.order_size_min|tonumber)*($m.quanto_multiplier|tonumber)) catch 0')
+        fee=$(jq -r '.taker_fee_rate // null' <<<"$meta"); size=$(jq -r '.quanto_multiplier // null' <<<"$meta")
+        if ! jq -e '(.order_size_min|tonumber)>0' <<<"$meta" >/dev/null 2>&1; then
+          fail 'Gate contract quantity constraints unavailable'; exit 0
+        fi
+        minq=$(jq -nr --argjson m "$meta" '($m.order_size_min|tonumber)*($m.quanto_multiplier|tonumber)')
+        # Fractional contracts use the published minimum lot; integer contracts retain a one-lot step.
+        step=$(jq -nr --argjson m "$meta" '([1,($m.order_size_min|tonumber)]|min)*($m.quanto_multiplier|tonumber)')
       fi ;;
     kraken)
       source='https://www.kraken.com/features/fee-schedule'; fee_asset=quote
       if [[ $kind == spot ]]; then
         meta=$(jq -c --arg s "$symbol" '[.[]|select(.altname==$s)]|unique_by(.fees,.lot_decimals,.ordermin,.costmin,.status)|if length==1 then .[0] else {} end' "$scratch_root/kraken/pairs-original.json")
         fee=$(jq -r 'try ((.fees[0][1]|tonumber)/100) catch null' <<<"$meta")
+        if [[ $fee == null ]]; then
+          # Public entry-tier estimates, verified 2026-09-11; not account-specific fees.
+          fee=$(jq -r '
+            (.wsname // "" | split("/") | map(ascii_upcase)) as $pair |
+            $pair[0] as $base | $pair[1] as $quote |
+            ["USD","EUR","GBP","CAD","AUD","CHF","JPY"] as $fiat |
+            ["USDT","USDC","DAI","USDS","TUSD","PYUSD","RLUSD","EURC","EURCV","EUROP","EURQ","USDQ","USDR"] as $stable |
+            if ($pair|length)!=2 or $base=="" or $quote=="" then null
+            elif .aclass_base=="tokenized_asset" then 0.001
+            elif .aclass_base!="currency" then null
+            elif $base=="USDE" then null # Published zero-fee campaign has expired.
+            elif $base=="USDG" then 0.0001
+            elif ($stable|index($base))!=null or
+              (($fiat|index($base))!=null and ($fiat|index($quote))!=null) or
+              ((["WBTC","TBTC"]|index($base))!=null and (["BTC","XBT"]|index($quote))!=null)
+              then 0.002
+            elif ($base|test("USD|EUR")) or ($fiat|index($base))!=null then null
+            else 0.008 end' <<<"$meta")
+          source+=' (public entry-tier taker estimate, 2026-09-11)'
+        fi
         step=$(jq -nr --argjson m "$meta" 'pow(10;-($m.lot_decimals//0))')
         minq=$(jq -r '.ordermin // 0' <<<"$meta"); minv=$(jq -r '.costmin // 0' <<<"$meta")
         args=(kraken orderbook "$symbol" --count 100 -o json)
         if [[ $(jq -r '.assetClass//""' <<<"$m") == tokenized_asset ]]; then args+=(--asset-class tokenized_asset); fi
       else
         meta=$(jq -c --arg s "$symbol" '.[]|select(.symbol==$s)' "$scratch_root/kraken/perpetual.json")
-        if [[ $symbol != PF_* && $symbol != pf_* ]]; then fail 'Inverse or unverified contract size'; exit 0; fi
+        if [[ $symbol != PF_* && $symbol != pf_* ]]; then
+          if ! jq -en --argjson m "$m" "$candle_jq"'kraken_inverse($m)' >/dev/null; then fail 'Unverified contract size'; exit 0; fi
+        fi
         # Flexible futures order size is base units, contractSize is not a multiplier for this book.
         fee=0.0005; size=1
         step=$(jq -nr --argjson m "$meta" 'pow(10;-($m.contractValueTradePrecision//0))')
@@ -161,7 +188,11 @@ route_book() (
       {id:($m.venue+":"+$m.symbol+":"+$m.product),venue:$m.venue,symbol:$m.symbol,product:$input.product,
        quote:$quote,quotedAt:$now,fee:$fee,extraFee:$extra,feeAsset:$feeAsset,feeSource:$feeSource,
        step:($step*$exp),minQuantity:($minq*$exp),minValue:($minv*$rate),asks:$asks,bids:$bids,
-       routing:($m|{category,assetId,pairId,dex,marketId,assetClass,settlementAsset}|with_entries(select(.value!=null)))}' >"$dir/candidate.json" 2>"$dir/normalize.stderr"; then
+       routing:($m|{category,assetId,pairId,dex,marketId,assetClass,settlementAsset}|with_entries(select(.value!=null)))} |
+      if kraken_inverse($m) then . + {inverse:true,contractValue:(($m.contractSize|num)*$rate),
+        contractStep:1,settlementAsset:$m.baseAsset,step:0} |
+        .routing += {contractType:"inverse",settlementAsset:$m.baseAsset}
+      else . end' >"$dir/candidate.json" 2>"$dir/normalize.stderr"; then
     rm -f "$dir/candidate.json"; fail 'Order book, currency rate, or product units could not be verified'
   fi
 )
@@ -236,5 +267,5 @@ run_routes() {
         {status:"available",referenceCurrency:($input.currency//"USDT"),requestedNotional:$amount,direction:($input.direction//"buy"),
          quantityUnit:"underlying",underlying:$s.underlying,exposureMultiplier:$s.exposureMultiplier,priceUnit:"reference_currency_per_underlying",
          quantity:$r.expectedQuantity,estimatedFillPrice:$r.estimatedFillPrice,depthSlippageBps:$r.depthSlippageBps,
-         spreadCostBps:$r.spreadCostBps,fees:$r.fees,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} end)}]}'
+         spreadCostBps:$r.spreadCostBps,fees:$r.fees,feeSource:$r.feeSource,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} + (if $r.contracts!=null then {contracts:$r.contracts,settlementAsset:$r.settlementAsset,settlementFee:$r.settlementFee} else {} end) end)}]}'
 }

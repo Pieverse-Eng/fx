@@ -122,6 +122,7 @@ source "$root/src/tools/market/compare-trade-routes.sh"
 market_read() {
   if [[ $1 == */funding.json || $1 == */oi.json ]]; then echo null >"$1"
   elif [[ $1 == */meta.json && $2 == curl && $* == *gateio* ]]; then
+    [[ $* == *'X-Gate-Size-Decimal: 1'* ]]
     jq '.[0]' "$scratch_root/gate/perpetual.json" >"$1"
   else cp "$scratch_root/book-fixture.json" "$1"; fi
 }
@@ -155,6 +156,80 @@ for venue in aster binance bitget gate hyperliquid kraken lighter okx-cex; do
   if [[ $venue == hyperliquid || $venue == lighter ]]; then jq -e '.extraFee==0.0005' "$scratch_root/routes/test-$venue/candidate.json" >/dev/null; fi
 done
 echo 'All eight order-book adapter shapes and platform fees passed.'
+
+# A 10 USDT PEPE request fits fractional contracts but not one whole contract.
+m='{"ticker":"PEPE","baseAsset":"PEPE","quoteAsset":"USDT","venue":"gate","symbol":"PEPE_USDT","product":"perpetual","status":"trading"}'
+echo '{"asks":[{"p":"0.00000328","s":"100.5"}],"bids":[{"p":"0.00000327","s":"100.5"}]}' >"$scratch_root/book-fixture.json"
+for minimum in '"0.1"' '0.1' '"1"' '"10"' '0' 'null'; do
+  jq -n --argjson minimum "$minimum" '[{name:"PEPE_USDT",type:"direct",quanto_multiplier:"10000000",
+    taker_fee_rate:"0.00075",order_size_min:$minimum}]' >"$scratch_root/gate/perpetual.json"
+  index="gate-lot-${minimum//\"/}"
+  route_book "$m" "$index"
+  if [[ $minimum == 0 || $minimum == null ]]; then
+    jq -e '.message=="Gate contract quantity constraints unavailable"' "$scratch_root/routes/$index/error.json" >/dev/null
+    continue
+  fi
+  jq -e --argjson minimum "$minimum" '
+    .minQuantity==(($minimum|tonumber)*10000000) and
+    .step==([1,($minimum|tonumber)]|min)*10000000 and
+    .asks[0].quantity==1005000000' "$scratch_root/routes/$index/candidate.json" >/dev/null
+  if [[ $minimum == *0.1* ]]; then
+    jq -e "$math"'perpetual_notional(.;10;"long") |
+      .expectedQuantity==3000000 and (.openingValue-9.84|fabs)<1e-10' "$scratch_root/routes/$index/candidate.json" >/dev/null
+    jq -e "$math"'perpetual_notional(.;10;"short") |
+      .expectedQuantity==3000000 and (.openingValue-9.81|fabs)<1e-10' "$scratch_root/routes/$index/candidate.json" >/dev/null
+  else
+    if jq -e "$math"'perpetual_notional(.;10;"long")' "$scratch_root/routes/$index/candidate.json" >/dev/null 2>&1; then
+      echo 'Whole-contract minimum unexpectedly accepted a fractional lot' >&2; exit 1
+    fi
+  fi
+done
+echo 'Gate fractional contracts, integer minimums and missing quantity constraints passed.'
+
+# Kraken no longer publishes fee tiers in AssetPairs. Use the correct public schedule.
+route_input='{"ticker":"BTC","product":"spot","amount":"1000","currency":"USD"}'
+echo '{"PAIR":{"asks":[[100,20,0]],"bids":[[99,20,0]]}}' >"$scratch_root/book-fixture.json"
+while read -r base quote asset_class fees expected; do
+  m=$(jq -cn --arg base "$base" --arg quote "$quote" --arg cls "$asset_class" '
+    {venue:"kraken",ticker:$base,baseAsset:$base,quoteAsset:$quote,symbol:"PAIR",product:"spot",status:"online",assetClass:$cls}')
+  route_input=$(jq --arg quote "$quote" '.currency=$quote' <<<"$route_input")
+  jq -n --arg base "$base" --arg quote "$quote" --arg cls "$asset_class" --argjson fees "$fees" '
+    [{altname:"PAIR",wsname:($base+"/"+$quote),aclass_base:$cls,fees:$fees,
+      lot_decimals:8,ordermin:"0.0001",costmin:"0.5",status:"online"}]' >"$scratch_root/kraken/pairs-original.json"
+  index="kraken-$base-$quote-$asset_class-${fees//[^a-zA-Z0-9]/}"
+  route_book "$m" "$index"
+  if [[ $expected == null ]]; then
+    [[ -s $scratch_root/routes/$index/error.json && ! -e $scratch_root/routes/$index/candidate.json ]]
+  else
+    jq -e --argjson expected "$expected" '.fee==$expected and .feeAsset=="quote"' "$scratch_root/routes/$index/candidate.json" >/dev/null
+    if [[ $fees == '[]' || $fees == null ]]; then
+      jq -e '.feeSource|contains("public entry-tier taker estimate")' "$scratch_root/routes/$index/candidate.json" >/dev/null
+    fi
+    jq -e "$math"'spot(.;1000) | .expectedQuantity>0 and .spend<=1000' "$scratch_root/routes/$index/candidate.json" >/dev/null
+  fi
+done <<'CASES'
+XBT USD currency [] 0.008
+XBT USDT currency [] 0.008
+ETH USD currency null 0.008
+USDT USD currency [] 0.002
+USDC USDT currency [] 0.002
+EUR USD currency [] 0.002
+USDG USD currency [] 0.0001
+XBT USDG currency [] 0.008
+WBTC XBT currency [] 0.002
+TBTC BTC currency [] 0.002
+WBTC USD currency [] 0.008
+AAPLx USD tokenized_asset [] 0.001
+USDE USD currency [] null
+USD1 USD currency [] null
+EURR USD currency [] null
+XBT USD unknown [] null
+XBT USD currency [[0,0.16]] 0.0016
+XBT USD currency [[0,0]] 0
+USDE USD currency [[0,0]] 0
+CASES
+echo 'Kraken public taker schedules, API fee precedence and spot budget estimates passed.'
+route_input='{"ticker":"BTC","product":"perp","direction":"long","amount":"1000"}'
 
 # Exercise the production adapter, not a copy of the fee classification.
 echo '{"USDTUSD":"1","USD1USDT":"1","UUSDT":"1"}' >"$scratch_root/routes/rates.json"
@@ -286,10 +361,10 @@ jq -ne "$candle_jq $math $snapshot_math"'
     {funding_rates:[{market_id:182,exchange:"other",rate:9},{market_id:182,exchange:"lighter",rate:-0.02}]};
     {order_book_details:[{market_id:999,open_interest:99,mark_price:"99"},{market_id:182,open_interest:500,mark_price:"2.8040"}]};
     {taker_fee:"0.0000"};1;false;"fixture")|
-    .funding.value== -0.02 and .funding.unit=="provider_native" and .funding.settlementIntervalHours==1 and .openInterest.value==500 and .markPrice==2.804) and
+    .funding.value== -0.0025 and .funding.unit=="ratio" and .funding.intervalHours==1 and .openInterest.value==500 and .openInterest.unit=="base" and .openInterest.basis=="single_sided" and .openInterest.quoteValue==1402 and .markPrice==2.804) and
   (snapshot($m+{venue:"kraken",symbol:"PF_XBTUSD",quoteAsset:"USD"};{result:"success",orderBook:{asks:[],bids:[]}};null;null;
     {tickers:[{symbol:"PF_XBTUSD",fundingRate:1.36,fundingRatePrediction:0.87,openInterest:2155}]};1;false;"fixture")|
-    .funding.value==1.36 and .funding.unit=="provider_native" and .funding.prediction==0.87 and .openInterest.value==2155) and
+    .funding.status=="unknown" and .funding.unit=="ratio" and (.funding|has("prediction")|not) and .openInterest.value==2155) and
   (snapshot($m+{venue:"okx-cex",quoteAsset:"USDT"};[{ts:"1789056000000",asks:[[100,100]],bids:[[99,100]]}];
     [{fundingRate:"0.0001",fundingTime:"100000000",nextFundingTime:"128800000"}];[{oi:"1000",oiCcy:"10",oiUsd:"1000"}];[{markPx:"100"}];0.01;false;"fixture")|
     .funding.intervalHours==8 and .openInterest.usdValue==1000 and .book.bidDepth1Pct==99 and .markPrice==100 and .book.sourceTime=="1789056000000")
@@ -335,3 +410,100 @@ jq -ne "$math"'
   ((try perpetual_notional($b+{step:30};3000;"short") catch {error:.})|has("error"))
 ' >/dev/null
 echo 'Each venue sizes its own notional, rounds its own lots, and separates fill from fee-adjusted price.'
+
+# Hourly funding ratios preserve direction and zero; OI is native-base, one-sided.
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"lighter",symbol:"1000PEPE",ticker:"PEPE",baseAsset:"1000PEPE",marketId:3,product:"perpetual",quoteAsset:"USDC",exposureMultiplier:1000} as $m |
+  all([0.000024,-0.000024,0,null][]; . as $rate |
+    snapshot($m;null;{funding_rates:[{market_id:3,exchange:"other",rate:9},{market_id:4,exchange:"lighter",rate:9},{market_id:3,exchange:"lighter",rate:$rate}]};
+      {order_book_details:[{market_id:3,open_interest:200,mark_price:0.01}]};null;1;false;"fixture") as $s |
+    $s.funding.value==(if $rate==null then null else $rate/8 end) and
+    $s.funding.status==(if $rate==null then "unknown" else "available" end) and
+    $s.funding.intervalHours==1 and $s.funding.positiveRatePays=="long_to_short" and
+    $s.openInterest.baseAmount==200 and $s.openInterest.quoteValue==2) and
+  all([0,null][]; . as $oi |
+    snapshot($m;null;null;{order_book_details:[{market_id:3,open_interest:$oi,mark_price:100}]};null;1;false;"fixture") |
+    .openInterest.value==$oi and .openInterest.quoteValue==(if $oi==null then null else 0 end)) and
+  (snapshot($m+{product:"spot"};null;null;null;null;1;false;"fixture") |
+    .funding.status=="not_applicable" and .openInterest.status=="not_applicable")
+' >/dev/null
+# Kraken relative-rate OHLC closes must be paired with a recent source timestamp.
+jq -ne "$candle_jq $math $snapshot_math"'
+  "2026-09-11T10:05:00Z" as $now | ($now|fromdateiso8601|.*1000) as $clock |
+  {errors:[],result:{timestamp:[$clock-300000,$clock-3900000],data:{relativeRate:[[9,10,-10,"-0.000003"],[8,9,0,"0.000001"]]}}} as $f |
+  {venue:"kraken",symbol:"pf_xbtusd",ticker:"BTC",product:"perpetual",quoteAsset:"USD"} as $m |
+  (snapshot($m;null;$f;null;{tickers:[{symbol:"pf_xbtusd",fundingRate:2,fundingRatePrediction:3,markPrice:100}]};1;false;$now)|
+    .funding.value== -0.000003 and .funding.intervalHours==1 and .funding.unit=="ratio" and
+    .funding.sourceTime==$clock-300000 and (.funding|has("prediction")|not)) and
+  all([0,0.000003,-0.000003][]; . as $rate |
+    kraken_relative_funding(($f|.result.data.relativeRate[0][3]=$rate);$now)|.value==$rate and .status=="available") and
+  all([null,{},($f|.errors=["unavailable"]),($f|.result.timestamp=[]),
+    ($f|.result.timestamp[0]=$clock+3600000),($f|.result.timestamp|=map(.-10800000)),
+    ($f|.result.data.relativeRate[0]=[1,2,3]),($f|.result.data.relativeRate[0][3]="bad"),
+    ($f|.result.data.relativeRate[0][3]=null)][];
+    kraken_relative_funding(.;$now)|.value==null and .status=="unknown") and
+  (snapshot($m+{symbol:"PI_XBTUSD"};null;$f;null;{tickers:[{symbol:"PI_XBTUSD",fundingRate:2}]};1;true;$now)|
+    .funding.unit=="provider_native" and .funding.intervalHours==null) and
+  (snapshot($m+{product:"spot"};null;$f;null;null;1;false;$now)|.funding.status=="not_applicable")
+' >/dev/null
+echo 'Lighter hourly funding and single-sided OI; Kraken relative funding freshness and failure regressions passed.'
+
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"kraken",symbol:"PI_XBTUSD",ticker:"BTC",baseAsset:"XBT",quoteAsset:"USD",product:"perpetual",contractType:"futures_inverse",contractSize:1,sizeDecimals:0} as $m |
+  snapshot($m;{result:"success",orderBook:{asks:[[100,100],[200,100]],bids:[[100,100],[50,100]]}};null;null;
+    {tickers:[{symbol:"PI_XBTUSD",markPrice:100,openInterest:200}]};1;false;"fixture") as $s |
+  {inverse:true,contractValue:1,contractStep:1,settlementAsset:"XBT",fee:0.0005,extraFee:0,asks:$s.nativeBook.asks,bids:$s.nativeBook.bids} as $c |
+  ($s.book.askDepth1Pct==100 and $s.book.bidDepth1Pct==100 and
+   $s.nativeBook.asks[1].quantity==0.5 and $s.openInterest.quoteValue==200 and $s.openInterest.baseAmount==2 and $s.settlementAsset=="XBT") and
+  (snapshot($m;null;null;null;{tickers:[{symbol:"PI_XBTUSD",markPrice:100}]};1;false;"fixture")|.openInterest.status=="unknown" and .openInterest.quoteValue==null) and
+  (perpetual_notional($c;200.9;"long")|.contracts==200 and .expectedQuantity==1.5 and .openingValue==200 and .fees==0.1 and ((.estimatedFillPrice-200/1.5)|fabs)<1e-9 and .settlementFee==0.00075) and
+  (perpetual_notional($c;200;"short")|.contracts==200 and .expectedQuantity==3 and .fees==0.1 and .effectivePrice<.estimatedFillPrice) and
+  ((try perpetual_notional($c;201;"long") catch {error:.})|has("error")) and
+  ((try perpetual_notional($c;0.9;"short") catch {error:.})|has("error")) and
+  (perpetual_notional($c+{contractValue:0.99,asks:[{price:99,quantity:2}],bids:[{price:98,quantity:2}]};100;"long")|.contracts==101 and .openingValue==99.99) and
+  (kraken_inverse($m+{contractSize:null})|not) and (kraken_inverse($m+{contractType:"unknown"})|not)
+' >/dev/null
+jq -ne "$candle_jq"'
+  [{key:"USDTZUSD",altname:"USDTUSD",wsname:"USDT/USD",status:"online"},
+   {key:"ZEURZUSD",altname:"EURUSD",wsname:"EUR/USD",status:"online"},
+   {key:"USDJPY",altname:"USDJPY",wsname:"USD/JPY",status:"online"},
+   {key:"XXBTZUSD",altname:"XBTUSD",wsname:"XBT/USD",status:"online"}] as $pairs |
+  {USDTZUSD:{a:[0.99],b:[0.99],v:[1,1]},EURUSD:{a:[1.1],b:[1.1],v:[1,1]},USDJPY:{a:[150],b:[150],v:[1,1]},XXBTZUSD:{a:[100],b:[100],v:[1,1]}} as $kr |
+  [{symbol:"BNBUSDT",lastPrice:500,count:1,closeTime:1000000},{symbol:"USDTBRL",lastPrice:5,count:1,closeTime:1000000},{symbol:"OLDUSDT",lastPrice:9,count:1,closeTime:1}] as $bn |
+  {symbols:[{symbol:"BNBUSDT",baseAsset:"BNB",quoteAsset:"USDT",status:"TRADING"},{symbol:"USDTBRL",baseAsset:"USDT",quoteAsset:"BRL",status:"TRADING"},{symbol:"OLDUSDT",baseAsset:"OLD",quoteAsset:"USDT",status:"TRADING"}]} as $catalog |
+  reference_rates($pairs;$kr;$bn;$catalog;1000000) as $r |
+  ($r.USD==1 and $r.USDT==0.99 and $r.EUR==1.1 and $r.JPY==1/150 and $r.BTC==100 and $r.BNB==495 and $r.BRL==0.198 and $r.OLD==null and $r.USDC==null) and
+  (reference_rates($pairs;($kr|.USDJPY.b=[151]);$bn;$catalog;1000000)|.JPY==null) and
+  (reference_rates($pairs;($kr|.USDTZUSD.v=[0,0]);$bn;$catalog;1000000)|.USDT==null and .BNB==null) and
+  (reference_rates(($pairs|map(.status="cancel_only"));$kr;$bn;$catalog;1000000)=={USD:1})
+' >/dev/null
+echo 'Inverse quote-contract fills and direct/reversed currency conversions passed.'
+
+# Cross rates use independent anchors, prefer active depth, and retain unknowns.
+jq -ne "$candle_jq"'
+  [{key:"btc",wsname:"XBT/USD",status:"online"},{key:"jpy",wsname:"XBT/JPY",status:"online"},
+   {key:"usdr",wsname:"XBT/USDR",status:"online"}] as $pairs |
+  {btc:{a:[100],b:[100],v:[1,1]},jpy:{a:[15000],b:[15000],v:[1,1]},usdr:{a:[9000],b:[1],v:[0,0]}} as $kr |
+  reference_rates($pairs;$kr;[];{symbols:[]};1000000) as $r |
+  $r.JPY==1/150 and $r.USDR==null and
+  (reference_rates($pairs;($kr|.jpy.b=[10000]);[];{symbols:[]};1000000)|.JPY==null)
+' >/dev/null
+jq -ne "$candle_jq"'
+  {USD:1,USDT:0.99,USDC:1.001,GUSD:0.8} as $rates |
+  [{id:"GUSD_USDT",base:"GUSD",quote:"USDT",trade_status:"tradable"}] as $pairs |
+  [{currency_pair:"GUSD_USDT",lowest_ask:0.999,highest_bid:0.998,quote_volume:1000}] as $tickers |
+  [{tokens:[{index:360,name:"USDH"},{index:0,name:"USDC"}],universe:[{tokens:[360,0],name:"@230"}]},
+   [{coin:"@999",midPx:9,dayNtlVlm:999},{coin:"@230",midPx:0.998,dayNtlVlm:1000}]] as $hl |
+  venue_reference_rates($rates;$pairs;$tickers;$hl) as $r |
+  ($r.GUSD==0.8 and $r.USDH==null and (($r.venues.gate.GUSD-0.9985*0.99)|fabs)<1e-12 and $r.venues.hyperliquid.USDH==0.998*1.001) and
+  ((reference_rate($r;{venue:"gate",quoteAsset:"GUSD"})-0.9985*0.99)|fabs)<1e-12 and
+  (reference_rate($r;{venue:"kraken",quoteAsset:"GUSD"})==0.8) and
+  (venue_reference_rates($rates;$pairs;($tickers|.[0].quote_volume=0);$hl)|.venues.gate.GUSD==null) and
+  (venue_reference_rates($rates;$pairs;($tickers|.[0].highest_bid=0.5);$hl)|.venues.gate.GUSD==null) and
+  (venue_reference_rates($rates;($pairs|.[0].trade_status="untradable");$tickers;$hl)|.venues.gate.GUSD==null) and
+  (venue_reference_rates($rates;$pairs;$tickers;($hl|.[1][1].midPx=null))|.venues.hyperliquid.USDH==null) and
+  (venue_reference_rates($rates;$pairs;$tickers;($hl|.[0].tokens+=[{index:999,name:"USDH"}]))|.venues.hyperliquid.USDH==null) and
+  (venue_reference_rates($rates;$pairs;$tickers;($hl|.[1][1].coin="@231"))|.venues.hyperliquid.USDH==null) and
+  (venue_reference_rates($rates;null;{error:"unavailable"};{error:"unavailable"})|.USD==1 and .USDT==0.99 and .venues=={gate:{},hyperliquid:{}})
+' >/dev/null
+echo 'Cross-quote fallback, venue token identity and invalid conversion data regressions passed.'

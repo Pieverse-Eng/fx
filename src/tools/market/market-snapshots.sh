@@ -31,7 +31,7 @@ market_snapshot() (
       if [[ $kind == spot ]]; then
         market_read "$dir/book.json" gate-cli cex spot market orderbook --pair "$symbol" --depth 100 --format json
       else
-        market_read "$dir/meta.json" curl -fsS --max-time 15 "https://api.gateio.ws/api/v4/futures/usdt/contracts/$symbol"
+        market_read "$dir/meta.json" curl -fsS --max-time 15 -H 'X-Gate-Size-Decimal: 1' "https://api.gateio.ws/api/v4/futures/usdt/contracts/$symbol"
         meta=$(cat "$dir/meta.json"); size=$(jq -r '.quanto_multiplier // null' <<<"$meta")
         [[ $(jq -r .type <<<"$meta") == direct ]] || unsupported=true
         market_read "$dir/book.json" gate-cli cex futures market orderbook --contract "$symbol" --settle usdt --depth 100 --format json
@@ -65,9 +65,18 @@ market_snapshot() (
         if [[ $(jq -r '.assetClass//""' <<<"$m") == tokenized_asset ]]; then args+=(--asset-class tokenized_asset); fi
         market_read "$dir/book.json" "${args[@]}"
       else
-        [[ $symbol == PF_* || $symbol == pf_* ]] || unsupported=true
+        if [[ $symbol != PF_* && $symbol != pf_* ]]; then
+          if jq -en --argjson m "$m" "$candle_jq"'kraken_inverse($m)' >/dev/null; then size=$(jq -r .contractSize <<<"$m")
+          else unsupported=true; fi
+        fi
         market_read "$dir/book.json" kraken futures orderbook "$symbol" -o json
         market_read "$dir/meta.json" curl -fsS --max-time 15 https://futures.kraken.com/derivatives/api/v3/tickers
+        if [[ $unsupported == false ]]; then
+          local funding_to funding_symbol
+          funding_to=$(date +%s)
+          funding_symbol=$(tr '[:upper:]' '[:lower:]' <<<"$symbol")
+          market_read "$dir/funding.json" curl -fsS --max-time 15 "https://futures.kraken.com/api/charts/v1/analytics/$funding_symbol/funding?since=$((funding_to-10800))&to=$funding_to&interval=3600"
+        fi
       fi ;;
     okx-cex)
       meta=$(jq -c --arg s "$symbol" '.[]|select(.instId==$s)' "$scratch_root/okx-cex/instruments.json")
