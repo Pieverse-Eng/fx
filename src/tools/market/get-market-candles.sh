@@ -51,7 +51,44 @@ def reference_rates($pairs;$kr;$bn;$catalog;$now):
     . as $p | $stats[$p.symbol] as $v | select($v!=null and $direct.USDT!=null) |
     if .quoteAsset=="USDT" then {ccy:(.baseAsset|currency),rate:(($v.lastPrice|num)*$direct.USDT)}
     elif .baseAsset=="USDT" then {ccy:(.quoteAsset|currency),rate:($direct.USDT/($v.lastPrice|num))} else empty end) as $p
-    ($direct; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end);
+    ($direct; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end) |
+  . as $anchors |
+  # One cross through an independently priced base, without recursively deriving rates.
+  [ $pairs[]|select(.status=="online")|. as $p|
+    (.wsname|split("/")|map(currency)) as $ccys |
+    select((["BTC","ETH"]|index($ccys[0]))!=null and $anchors[$ccys[1]]==null and ($anchors[$ccys[0]]|positive)!=null) |
+    ($k[$p.key] // $k[$p.altname] // $k[($p.wsname|gsub("/";""))]) as $v |
+    select(($v.a[0]|positive)!=null and ($v.b[0]|positive)!=null and ($v.v[1]|positive)!=null and
+      ($v.a[0]|num)>=($v.b[0]|num) and ($v.a[0]|num)/($v.b[0]|num)<1.01) |
+    {ccy:$ccys[1],rate:($anchors[$ccys[0]]/((($v.a[0]|num)+($v.b[0]|num))/2)),volume:(($v.v[1]|num)*$anchors[$ccys[0]])}
+  ] | sort_by(-.volume) |
+  reduce .[] as $p ($anchors; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end);
+# Venue-native tokens must not borrow the price of a same-name asset elsewhere.
+def venue_reference_rates($rates;$gate_pairs;$gate_tickers;$hl):
+  (if ($gate_pairs|type)=="array" then $gate_pairs else [] end) as $gate_pairs |
+  (if ($gate_tickers|type)=="array" then $gate_tickers else [] end) as $gate_tickers |
+  (if ($hl|type)=="array" and ($hl|length)==2 and ($hl[0]|type)=="object" and ($hl[1]|type)=="array" then $hl else [{},[]] end) as $hl |
+  ([$gate_tickers[]?|{key:.currency_pair,value:.}]|from_entries) as $gate |
+  (reduce ($gate_pairs[]?|select(.trade_status=="tradable")|
+    select(.quote as $q | (["USD","USDT","USDC"]|index($q))!=null) |
+    . as $p | $gate[$p.id] as $v |
+    select(($rates[$p.quote]|positive)!=null and ($v.lowest_ask|positive)!=null and
+      ($v.highest_bid|positive)!=null and ($v.quote_volume|positive)!=null and
+      ($v.lowest_ask|num)>=($v.highest_bid|num) and ($v.lowest_ask|num)/($v.highest_bid|num)<1.01) |
+    {ccy:$p.base,rate:(((($v.lowest_ask|num)+($v.highest_bid|num))/2)*$rates[$p.quote])}) as $p
+    ({}; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end)) as $gate_rates |
+  (reduce ($hl[0].universe[]? | . as $pair |
+    ([$hl[0].tokens[]?|select(.index==$pair.tokens[0])][0]) as $base |
+    ([$hl[0].tokens[]?|select(.index==$pair.tokens[1])][0]) as $quote |
+    select($quote.name=="USDC" and $quote.index==0 and ($rates.USDC|positive)!=null and
+      ([$hl[0].tokens[]?|select(.name==$base.name)]|length)==1) |
+    ([$hl[1][]?|select(.coin==$pair.name)]|if length==1 then .[0] else null end) as $ctx |
+    select(($ctx.midPx|positive)!=null and ($ctx.dayNtlVlm|positive)!=null) |
+    {ccy:$base.name,rate:(($ctx.midPx|num)*$rates.USDC)}) as $p
+    ({}; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end)) as $hl_rates |
+  $rates + {venues:{gate:$gate_rates,hyperliquid:$hl_rates}};
+def reference_rate($rates;$m): (quote_ccy($m)|currency) as $ccy |
+  $rates.venues[$m.venue][$ccy] // $rates[$ccy] // null;
 
 def findrow($data;$key;$symbol): first($data|rows|.[]?|select(.[$key]==$symbol)) // null;
 '
@@ -105,8 +142,8 @@ fetch_volumes() {
   market_launch "$scratch_root/stats/gate-perpetual.json" gate-cli cex futures market tickers --settle usdt --format json
   local spot_pairs stock_pairs
   spot_pairs=$(jq -nr --slurpfile c "$candidates" --slurpfile pairs "$scratch_root/kraken/pairs-original.json" "$candle_jq"'
-    [$c[0][]|quote_ccy(.)|currency]|unique as $quotes |
-    ([$pairs[0][]|(.wsname|split("/")) as $pair|select(($pair[1]=="USD" and ($quotes|index($pair[0]|currency))!=null) or ($pair[0]=="USD" and ($quotes|index($pair[1]|currency))!=null))|.altname] +
+    ([$c[0][]|quote_ccy(.)|currency]+["BTC","ETH"])|unique as $quotes |
+    ([$pairs[0][]|(.wsname|split("/")) as $pair|select(($pair[1]=="USD" and ($quotes|index($pair[0]|currency))!=null) or ($pair[0]=="USD" and ($quotes|index($pair[1]|currency))!=null) or ((["BTC","ETH"]|index($pair[0]|currency))!=null and ($quotes|index($pair[1]|currency))!=null))|.altname] +
      [$c[0][]|select(.venue=="kraken" and .product=="spot" and .assetClass!="tokenized_asset")|.symbol])|unique|join(",")')
   stock_pairs=$(jq -r '[.[]|select(.venue=="kraken" and .product=="spot" and .assetClass=="tokenized_asset")|.symbol]|unique|join(",")' "$candidates")
   if [[ -n $spot_pairs ]]; then market_launch "$scratch_root/stats/kraken-spot.json" kraken ticker "$spot_pairs" -o json
@@ -325,15 +362,18 @@ run_candles() {
   # Rates are observed public prices, never hardcoded stablecoin parity.
   jq -n --argjson now "$(date +%s%3N)" --slurpfile pairs "$scratch_root/stats/kraken-pairs.json" \
     --slurpfile kr "$scratch_root/stats/kraken-spot.json" --slurpfile bn "$scratch_root/stats/binance-spot.json" \
-    --slurpfile catalog "$scratch_root/binance/spot.json" "$candle_jq"'
-    reference_rates($pairs[0];$kr[0];$bn[0];$catalog[0];$now)
+    --slurpfile catalog "$scratch_root/binance/spot.json" \
+    --slurpfile gate_pairs "$scratch_root/gate/spot.json" --slurpfile gate_tickers "$scratch_root/stats/gate-spot.json" \
+    --slurpfile hl "$scratch_root/stats/hyperliquid-spot.json" "$candle_jq"'
+    reference_rates($pairs[0];$kr[0];$bn[0];$catalog[0];$now) |
+    venue_reference_rates(.;$gate_pairs[0];$gate_tickers[0];$hl[0])
   ' >"$scratch_root/rates.json" 2>/dev/null || echo '{"USD":1}' >"$scratch_root/rates.json"
   : >"$scratch_root/ranked.jsonl"; : >"$scratch_root/rank-errors.jsonl"
   while IFS= read -r m; do
     venue=$(jq -r '.venue' <<<"$m"); ticker=$(jq -r '.ticker' <<<"$m")
     volume=$(load_volume "$m")
     [[ -n $volume ]] || volume='{"volume":null}'
-    rate=$(jq -r --argjson m "$m" "$candle_jq"' .[quote_ccy($m)|currency] // null' "$scratch_root/rates.json")
+    rate=$(jq -r --argjson m "$m" "$candle_jq"' reference_rate(.;$m)' "$scratch_root/rates.json")
     if jq -ne --argjson v "$volume" --argjson rate "$rate" '($v.volume|type)=="number" and $v.volume>=0 and ($v.volume|isfinite) and ($rate|type)=="number" and $rate>0' >/dev/null; then
       jq -cn --argjson m "$m" --argjson v "$volume" --argjson rate "$rate" "$candle_jq"'$m+{volumeUSD:($v.volume*$rate),volumeEstimated:($v.estimated // false),exposureMultiplier:exposure($m)}' >>"$scratch_root/ranked.jsonl"
     else

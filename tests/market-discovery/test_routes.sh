@@ -478,3 +478,32 @@ jq -ne "$candle_jq"'
   (reference_rates(($pairs|map(.status="cancel_only"));$kr;$bn;$catalog;1000000)=={USD:1})
 ' >/dev/null
 echo 'Inverse quote-contract fills and direct/reversed currency conversions passed.'
+
+# Cross rates use independent anchors, prefer active depth, and retain unknowns.
+jq -ne "$candle_jq"'
+  [{key:"btc",wsname:"XBT/USD",status:"online"},{key:"jpy",wsname:"XBT/JPY",status:"online"},
+   {key:"usdr",wsname:"XBT/USDR",status:"online"}] as $pairs |
+  {btc:{a:[100],b:[100],v:[1,1]},jpy:{a:[15000],b:[15000],v:[1,1]},usdr:{a:[9000],b:[1],v:[0,0]}} as $kr |
+  reference_rates($pairs;$kr;[];{symbols:[]};1000000) as $r |
+  $r.JPY==1/150 and $r.USDR==null and
+  (reference_rates($pairs;($kr|.jpy.b=[10000]);[];{symbols:[]};1000000)|.JPY==null)
+' >/dev/null
+jq -ne "$candle_jq"'
+  {USD:1,USDT:0.99,USDC:1.001,GUSD:0.8} as $rates |
+  [{id:"GUSD_USDT",base:"GUSD",quote:"USDT",trade_status:"tradable"}] as $pairs |
+  [{currency_pair:"GUSD_USDT",lowest_ask:0.999,highest_bid:0.998,quote_volume:1000}] as $tickers |
+  [{tokens:[{index:360,name:"USDH"},{index:0,name:"USDC"}],universe:[{tokens:[360,0],name:"@230"}]},
+   [{coin:"@999",midPx:9,dayNtlVlm:999},{coin:"@230",midPx:0.998,dayNtlVlm:1000}]] as $hl |
+  venue_reference_rates($rates;$pairs;$tickers;$hl) as $r |
+  ($r.GUSD==0.8 and $r.USDH==null and (($r.venues.gate.GUSD-0.9985*0.99)|fabs)<1e-12 and $r.venues.hyperliquid.USDH==0.998*1.001) and
+  ((reference_rate($r;{venue:"gate",quoteAsset:"GUSD"})-0.9985*0.99)|fabs)<1e-12 and
+  (reference_rate($r;{venue:"kraken",quoteAsset:"GUSD"})==0.8) and
+  (venue_reference_rates($rates;$pairs;($tickers|.[0].quote_volume=0);$hl)|.venues.gate.GUSD==null) and
+  (venue_reference_rates($rates;$pairs;($tickers|.[0].highest_bid=0.5);$hl)|.venues.gate.GUSD==null) and
+  (venue_reference_rates($rates;($pairs|.[0].trade_status="untradable");$tickers;$hl)|.venues.gate.GUSD==null) and
+  (venue_reference_rates($rates;$pairs;$tickers;($hl|.[1][1].midPx=null))|.venues.hyperliquid.USDH==null) and
+  (venue_reference_rates($rates;$pairs;$tickers;($hl|.[0].tokens+=[{index:999,name:"USDH"}]))|.venues.hyperliquid.USDH==null) and
+  (venue_reference_rates($rates;$pairs;$tickers;($hl|.[1][1].coin="@231"))|.venues.hyperliquid.USDH==null) and
+  (venue_reference_rates($rates;null;{error:"unavailable"};{error:"unavailable"})|.USD==1 and .USDT==0.99 and .venues=={gate:{},hyperliquid:{}})
+' >/dev/null
+echo 'Cross-quote fallback, venue token identity and invalid conversion data regressions passed.'
