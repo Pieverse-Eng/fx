@@ -835,7 +835,7 @@ pub const read_tool_result = ToolSpec{
 };
 
 const discover_markets_description =
-    "This tool allows you to find available spot and perpetual markets for multiple base tickers across all eight supported venues in parallel. Returns exact trading symbols, product types, routing identifiers, restrictions, and query errors.";
+    "This tool allows you to find available spot and perpetual markets for multiple base tickers across supported venues in parallel. Returns exact trading symbols, product types, routing identifiers, restrictions, and query errors.";
 
 pub const discover_markets = ToolSpec{
     .name = "discover_markets",
@@ -889,7 +889,7 @@ pub const get_market_candles = ToolSpec{
 };
 
 const compare_trade_routes_description =
-    "Retrieve per-market funding, open interest and displayed depth across eight venues. Omit amount and direction for snapshots only. With amount, compare taker entry costs, also including supported onchain stock spot routes. Returns markets with timestamps, units, gaps and fill estimates, plus bestRoute, rankedRoutes with the cheapest eligible route per venue or onchain provider/chain, and gaps. Lower costRank is cheaper; ties share a rank. The caller selects a route using its account configuration and constraints. Market discovery is included; do not call discover_markets solely to supplement or recheck this comparison. Perp amount is sized at each venue midpoint and rounded down to its lot step. estimatedFillPrice excludes fees; effectivePrice includes fees, so do not apply fees again. Funding is reported separately from entry costs. Missing data is unknown, not zero. Does not place orders.";
+    "Retrieve per-market funding, open interest and displayed depth across supported venues. Omit amount and direction for snapshots only. With amount, compare taker entry costs, also including supported onchain stock spot routes. Returns markets with timestamps, units, gaps and fill estimates, plus bestRoute, rankedRoutes with the cheapest eligible route per venue or onchain provider/chain, and gaps. Lower costRank is cheaper; ties share a rank. The caller selects a route using its account configuration and constraints. Market discovery is included; do not call discover_markets solely to supplement or recheck this comparison. Perp amount is sized at each venue midpoint and rounded down to its lot step. estimatedFillPrice excludes fees; effectivePrice includes fees, so do not apply fees again. Funding is reported separately from entry costs. Missing data is unknown, not zero. Does not place orders.";
 
 pub const compare_trade_routes = ToolSpec{
     .name = "compare_trade_routes",

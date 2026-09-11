@@ -18,6 +18,9 @@ route_book() (
     fail 'Live quote-currency conversion unavailable'; exit 0
   fi
   case "$venue" in
+    orderly)
+      fail 'Orderly account/builder trading fee is unverified; market data and displayed depth remain available'
+      exit 0 ;;
     aster)
       source='https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees'
       meta=$(jq -c --arg s "$symbol" '.symbols[]|select(.symbol==$s)' "$scratch_root/aster/catalog.json")

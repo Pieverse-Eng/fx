@@ -24,7 +24,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         requests = []
         failures = []
         call_ids = ["call_" + uuid.uuid4().hex[:24] for _ in range(2 if multiple else 1)]
-        args = {"tickers": ["BTC", "CRCL"]}
+        args = {"tickers": ["ETH", "HOOD", "MSTR", "XAU", "BONK"] if kind == "orderly" else ["BTC", "CRCL"]}
         if tool_name == "compare_trade_routes":
             args = {"ticker": "BTC", "product": "perp", "direction": "long", "amount": "1000"}
             if kind == "snapshot":
@@ -117,7 +117,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             else:
                 if tool_name == "discover_markets" and not multiple:
                     # CRCL needs one extra Gate stock metadata query.
-                    expected_calls = 18 if kind == "aliases" else 19
+                    expected_calls = 19 if kind in ("aliases", "orderly") else 20
                     catalogs = [call for call in calls if call != "route-lighter-book"]
                     assert len(catalogs) == expected_calls and len(set(catalogs)) == expected_calls, calls
                     book_commands = [line for line in (fixtures / "commands").read_text().splitlines()
@@ -151,7 +151,12 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert len(output["output"]) < 100
                 if tool_name != "compare_trade_routes":
                     assert [entry["ticker"] for entry in payload["results"]] == args["tickers"]
-                if kind == "aliases":
+                if kind == "orderly":
+                    assert payload["errors"] == [], payload
+                    expected = ["PERP_ETH_USDC", "PERP_HOOD_USDC_mythos", "PERP_MSTR_USDC_mythos", "PERP_XAU_USDC", "PERP_1000BONK_USDC"]
+                    for row, symbol in zip(payload["results"], expected):
+                        assert [m["symbol"] for m in row["markets"] if m["venue"] == "orderly"] == [symbol], row
+                elif kind == "aliases":
                     commands = (fixtures / "commands").read_text()
                     if tool_name == "discover_markets":
                         assert payload["errors"] == [], payload
@@ -260,3 +265,9 @@ exercise("success", "compare_trade_routes", references=True)
 exercise("success", references=True, multiple=True)
 
 exercise("snapshot", "compare_trade_routes")
+
+(fixtures / "orderly.json").write_text(json.dumps([
+    {"symbol": symbol, "status": "ACTIVE"} for symbol in
+    ["PERP_ETH_USDC", "PERP_HOOD_USDC_mythos", "PERP_MSTR_USDC_mythos", "PERP_XAU_USDC", "PERP_1000BONK_USDC"]
+]))
+exercise("orderly")

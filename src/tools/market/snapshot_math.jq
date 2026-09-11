@@ -6,6 +6,7 @@ def observation($value;$unit;$source):
 def native_book($m;$raw):
   ($raw|if type=="array" then . elif .result=="success" then . else rows end) as $b |
   if $m.venue=="hyperliquid" then {asks:[$b.levels[1][]|[.px,.sz]],bids:[$b.levels[0][]|[.px,.sz]]}
+  elif $m.venue=="orderly" then {asks:[$b.asks[]|[.price,.quantity]],bids:[$b.bids[]|[.price,.quantity]]}
   elif $m.venue=="lighter" then {asks:[$b.asks[]|[.price,.remaining_base_amount]],bids:[$b.bids[]|[.price,.remaining_base_amount]]}
   elif $m.venue=="gate" and $m.product!="spot" then {asks:[$b.asks[]|[.p,.s]],bids:[$b.bids[]|[.p,.s]]}
   elif $m.venue=="kraken" and $m.product=="spot" then $b|to_entries[0].value
@@ -43,6 +44,8 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
    elif $m.venue=="lighter" then ([$o.order_book_details[]?|select(.market_id==$m.marketId)][0]//{})
    else $meta end) as $ctx |
   (if $m.product=="spot" then {status:"not_applicable"}
+   elif $m.venue=="orderly" then observation($ctx.est_funding_rate;"ratio";"/v1/public/futures") +
+     {kind:"estimated",lastSettledRate:($ctx.last_funding_rate|n),intervalHours:($m.funding_period|n),nextSettlementTime:($ctx.next_funding_time|n)}
    elif $m.venue=="bitget" then ($f.data[0]//{}) as $v |
      observation($v.fundingRate;"ratio";"current-fund-rate") + {intervalHours:($v.fundingRateInterval|n),nextSettlementTime:($v.nextUpdate|n)}
    elif $m.venue=="gate" then observation($ctx.funding_rate;"ratio";"contracts") +
@@ -56,6 +59,7 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
      observation($v.fundingRate;"ratio";"funding-rate") + {intervalHours:(if ($v.fundingTime|n)!=null and ($v.nextFundingTime|n)!=null then (($v.nextFundingTime|n)-($v.fundingTime|n))/3600000 else null end),nextSettlementTime:($v.fundingTime|n)}
    else observation($f.lastFundingRate;"ratio";"premiumIndex") + {intervalHours:((try ([$meta[]|select(.symbol==$m.symbol)|.fundingIntervalHours][0]|n) catch null) // (if $m.venue=="binance" and ($meta|type)=="array" then 8 else null end)),nextSettlementTime:($f.nextFundingTime|n)} end) as $funding |
   (if $m.product=="spot" then {status:"not_applicable"}
+   elif $m.venue=="orderly" then observation($ctx.open_interest;"base";"/v1/public/futures")
    elif $m.venue=="bitget" then observation($o.data.openInterestList[0].size;"base";"open-interest")
    elif $m.venue=="gate" then observation($ctx.position_size;"contracts";"contracts") + {contractMultiplier:$size}
    elif $m.venue=="hyperliquid" then observation($ctx.openInterest;"base";"metaAndAssetCtxs")
@@ -78,6 +82,7 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
     gaps:([if $funding.status=="unknown" then "Funding unavailable" else empty end,
            if $oi.status=="unknown" then "Open interest unavailable" else empty end,
            if $book==null then "Depth unavailable" else empty end]),nativeBook:$book} |
+  (if $m.venue=="orderly" then . + {indexPrice:($ctx.index_price|n),volume24h:observation($ctx["24h_amount"];$quote;"/v1/public/futures")} else . end) |
   if .openInterest.status=="available" and .markPrice!=null then
     (if .openInterest.unit=="base" then .openInterest.value
      elif .openInterest.unit=="contracts" and $unsupported==false and .openInterest.contractMultiplier!=null then .openInterest.value*.openInterest.contractMultiplier
