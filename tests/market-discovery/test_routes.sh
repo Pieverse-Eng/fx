@@ -32,12 +32,14 @@ jq -ne "$math"'
   (all($result.rankedRoutes[]; has("effectivePrice")==false and has("fees")==false))
 ' >/dev/null
 jq -ne "$math"'
-  {issuer:"xstocks",chain:"bnb",symbol:"CRCLx",contract:"0x1",provider:"bitget-wallet",product:"spot",effectivePrice:100} as $first |
-  comparison_result([$first,$first+{issuer:"bstocks",symbol:"CRCLB",contract:"0x2",effectivePrice:101},
+  {issuer:"xstocks",chain:"bnb",symbol:"CRCLx",contract:"0x1",provider:"pancakeswap",product:"spot",effectivePrice:100} as $first |
+  comparison_result([$first,$first+{effectivePrice:100.5},
+    $first+{issuer:"bstocks",symbol:"CRCLB",contract:"0x2",effectivePrice:101},
     $first+{chain:"solana",contract:"mint",provider:"dflow",effectivePrice:102}];[]) as $result |
-  ($result.rankedRoutes|length==2) and
-  ($result.rankedRoutes[0]|.contract=="0x1" and .provider=="bitget-wallet") and
-  ($result.rankedRoutes[1]|.chain=="solana" and .provider=="dflow")
+  ($result.rankedRoutes|length==3) and
+  ($result.rankedRoutes[0]|.contract=="0x1" and .provider=="pancakeswap") and
+  ($result.rankedRoutes[1]|.contract=="0x2" and .issuer=="bstocks" and .provider=="pancakeswap") and
+  ($result.rankedRoutes[2]|.chain=="solana" and .provider=="dflow")
 ' >/dev/null
 echo 'Configured-venue selection, strict cheaper alternatives, ties, shorts and route deduplication passed.'
 jq -ne "$math"'

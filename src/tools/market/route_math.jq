@@ -45,11 +45,16 @@ def comparison_route_identity:
     | with_entries(select(.value!=null)) end;
 def ranked_routes($routes):
   # The caller already sorts by effective entry price, descending for shorts.
-  # Retain the cheapest route per venue or onchain provider/chain. Equal
-  # effective prices share a rank so callers do not recommend a tied route
-  # as a cheaper alternative. Configuration policy belongs to the caller.
+  # Retain one result per venue route. Onchain issuers and contracts are
+  # distinct execution targets even when they share a DEX provider and chain.
+  # Equal effective prices share a rank so callers do not recommend a tied
+  # route as a cheaper alternative. Configuration policy belongs to the caller.
   reduce $routes[] as $route ({seen:[],price:null,rank:0,routes:[]};
-    ([$route.venue,$route.product,$route.chain,$route.provider]|tojson) as $key |
+    (if $route.chain!=null then
+      ["onchain",$route.product,$route.chain,$route.issuer,$route.contract,$route.provider,$route.inputContract]
+     else
+      [$route.venue,$route.product,$route.chain,$route.provider]
+     end|tojson) as $key |
     if .price!=$route.effectivePrice then .rank+=1 | .price=$route.effectivePrice else . end |
     if (.seen|index($key))!=null then . else
       .seen+=[$key] |
