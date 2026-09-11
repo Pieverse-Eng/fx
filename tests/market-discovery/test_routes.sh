@@ -110,12 +110,12 @@ market_read() {
       toToken:(if $mode=="wrongtoken" then "0xwrong" else $body.toToken end),
       inputDecimals:18,outputDecimals:18,amountOut:(($a/100-pow($a/1000;2))*1e18|tostring),
       networkFeeWei:(if $mode=="missinggas" then null else "4000000000000000" end),
-      route:{protocol:"v2",path:[$body.fromToken,$body.toToken]}})}' >"$target"
+      route:{protocol:"v3",router:"0x1b81D678ffb9C0263b24A97847620C99d213eB14",fees:[2500],encodedPath:"0xfixture",path:[$body.fromToken,$body.toToken]}})}' >"$target"
   jq -c . <<<"$body" >>"$scratch_root/requests.jsonl"
 }
 d='{"chain":"bnb","issuer":"bstocks","symbol":"CRCLB","contract":"0x1","inputAsset":"USDT","inputContract":"0x2"}'
 quote_evm_stock "$d" 0
-jq -e '.[0].spend<=1000 and .[0].gas==2 and .[0].amountIn!="1000" and .[0].expectedQuantity>0' "$scratch_root/routes/chain-0/routes.json" >/dev/null
+jq -e '.[0].spend<=1000 and .[0].gas==2 and .[0].amountIn!="1000" and .[0].expectedQuantity>0 and .[0].route.protocol=="v3" and .[0].route.fees==[2500] and .[0].route.encodedPath=="0xfixture"' "$scratch_root/routes/chain-0/routes.json" >/dev/null
 [[ $(wc -l <"$scratch_root/requests.jsonl") == 2 ]]
 fixture_mode=unavailable; quote_evm_stock "$d" 1
 [[ -s $scratch_root/routes/chain-1/error.json && ! -e $scratch_root/routes/chain-1/routes.json ]]

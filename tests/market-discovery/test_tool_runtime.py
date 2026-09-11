@@ -200,6 +200,9 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert {r["provider"] for r in routes} == {"pancakeswap", "uniswap"}, payload
                     assert all(r["effectivePrice"] > 0 and r["gas"] > 0 and r["route"] for r in routes), payload
                     assert all("approval" in r["feeNote"] for r in routes), payload
+                    pancake = next(r for r in routes if r["provider"] == "pancakeswap")
+                    assert pancake["route"]["protocol"] == "v3" and pancake["route"]["fees"] == [2500], pancake
+                    assert len(pancake["route"]["path"]) == 2, pancake
                     assert payload["bestRoute"]["chain"] == "bnb", payload
                 elif tool_name == "compare_trade_routes" and kind == "snapshot":
                     assert payload["bestRoute"] is None and payload["rankedRoutes"] == [], payload
