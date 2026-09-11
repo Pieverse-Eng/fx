@@ -31,7 +31,7 @@ market_snapshot() (
       if [[ $kind == spot ]]; then
         market_read "$dir/book.json" gate-cli cex spot market orderbook --pair "$symbol" --depth 100 --format json
       else
-        market_read "$dir/meta.json" curl -fsS --max-time 15 "https://api.gateio.ws/api/v4/futures/usdt/contracts/$symbol"
+        market_read "$dir/meta.json" curl -fsS --max-time 15 -H 'X-Gate-Size-Decimal: 1' "https://api.gateio.ws/api/v4/futures/usdt/contracts/$symbol"
         meta=$(cat "$dir/meta.json"); size=$(jq -r '.quanto_multiplier // null' <<<"$meta")
         [[ $(jq -r .type <<<"$meta") == direct ]] || unsupported=true
         market_read "$dir/book.json" gate-cli cex futures market orderbook --contract "$symbol" --settle usdt --depth 100 --format json

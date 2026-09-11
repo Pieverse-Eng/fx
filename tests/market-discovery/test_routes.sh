@@ -122,6 +122,7 @@ source "$root/src/tools/market/compare-trade-routes.sh"
 market_read() {
   if [[ $1 == */funding.json || $1 == */oi.json ]]; then echo null >"$1"
   elif [[ $1 == */meta.json && $2 == curl && $* == *gateio* ]]; then
+    [[ $* == *'X-Gate-Size-Decimal: 1'* ]]
     jq '.[0]' "$scratch_root/gate/perpetual.json" >"$1"
   else cp "$scratch_root/book-fixture.json" "$1"; fi
 }
@@ -155,6 +156,35 @@ for venue in aster binance bitget gate hyperliquid kraken lighter okx-cex; do
   if [[ $venue == hyperliquid || $venue == lighter ]]; then jq -e '.extraFee==0.0005' "$scratch_root/routes/test-$venue/candidate.json" >/dev/null; fi
 done
 echo 'All eight order-book adapter shapes and platform fees passed.'
+
+# A 10 USDT PEPE request fits fractional contracts but not one whole contract.
+m='{"ticker":"PEPE","baseAsset":"PEPE","quoteAsset":"USDT","venue":"gate","symbol":"PEPE_USDT","product":"perpetual","status":"trading"}'
+echo '{"asks":[{"p":"0.00000328","s":"100.5"}],"bids":[{"p":"0.00000327","s":"100.5"}]}' >"$scratch_root/book-fixture.json"
+for minimum in '"0.1"' '0.1' '"1"' '"10"' '0' 'null'; do
+  jq -n --argjson minimum "$minimum" '[{name:"PEPE_USDT",type:"direct",quanto_multiplier:"10000000",
+    taker_fee_rate:"0.00075",order_size_min:$minimum}]' >"$scratch_root/gate/perpetual.json"
+  index="gate-lot-${minimum//\"/}"
+  route_book "$m" "$index"
+  if [[ $minimum == 0 || $minimum == null ]]; then
+    jq -e '.message=="Gate contract quantity constraints unavailable"' "$scratch_root/routes/$index/error.json" >/dev/null
+    continue
+  fi
+  jq -e --argjson minimum "$minimum" '
+    .minQuantity==(($minimum|tonumber)*10000000) and
+    .step==([1,($minimum|tonumber)]|min)*10000000 and
+    .asks[0].quantity==1005000000' "$scratch_root/routes/$index/candidate.json" >/dev/null
+  if [[ $minimum == *0.1* ]]; then
+    jq -e "$math"'perpetual_notional(.;10;"long") |
+      .expectedQuantity==3000000 and (.openingValue-9.84|fabs)<1e-10' "$scratch_root/routes/$index/candidate.json" >/dev/null
+    jq -e "$math"'perpetual_notional(.;10;"short") |
+      .expectedQuantity==3000000 and (.openingValue-9.81|fabs)<1e-10' "$scratch_root/routes/$index/candidate.json" >/dev/null
+  else
+    if jq -e "$math"'perpetual_notional(.;10;"long")' "$scratch_root/routes/$index/candidate.json" >/dev/null 2>&1; then
+      echo 'Whole-contract minimum unexpectedly accepted a fractional lot' >&2; exit 1
+    fi
+  fi
+done
+echo 'Gate fractional contracts, integer minimums and missing quantity constraints passed.'
 
 # Exercise the production adapter, not a copy of the fee classification.
 echo '{"USDTUSD":"1","USD1USDT":"1","UUSDT":"1"}' >"$scratch_root/routes/rates.json"

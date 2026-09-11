@@ -71,8 +71,13 @@ route_book() (
       else
         meta=$(jq -c --arg s "$symbol" '.[]|select(.name==$s)' "$scratch_root/gate/perpetual.json")
         if [[ $(jq -r .type <<<"$meta") != direct ]]; then fail 'Only linear base-denominated contracts can be compared'; exit 0; fi
-        fee=$(jq -r '.taker_fee_rate // null' <<<"$meta"); size=$(jq -r '.quanto_multiplier // null' <<<"$meta"); step=$size
-        minq=$(jq -nr --argjson m "$meta" 'try (($m.order_size_min|tonumber)*($m.quanto_multiplier|tonumber)) catch 0')
+        fee=$(jq -r '.taker_fee_rate // null' <<<"$meta"); size=$(jq -r '.quanto_multiplier // null' <<<"$meta")
+        if ! jq -e '(.order_size_min|tonumber)>0' <<<"$meta" >/dev/null 2>&1; then
+          fail 'Gate contract quantity constraints unavailable'; exit 0
+        fi
+        minq=$(jq -nr --argjson m "$meta" '($m.order_size_min|tonumber)*($m.quanto_multiplier|tonumber)')
+        # Fractional contracts use the published minimum lot; integer contracts retain a one-lot step.
+        step=$(jq -nr --argjson m "$meta" '([1,($m.order_size_min|tonumber)]|min)*($m.quanto_multiplier|tonumber)')
       fi ;;
     kraken)
       source='https://www.kraken.com/features/fee-schedule'; fee_asset=quote

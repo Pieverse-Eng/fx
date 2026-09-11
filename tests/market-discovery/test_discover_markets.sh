@@ -121,7 +121,7 @@ jq -n '[{id:"BTC_USDT",base:"BTC",quote:"USDT",trade_status:"tradable"},
  {id:"BUY_USDT",base:"BUY",quote:"USDT",trade_status:"buyable"},
  {id:"SELL_USDT",base:"SELL",quote:"USDT",trade_status:"sellable"},
  {id:"OLD_USDT",base:"OLD",quote:"USDT",trade_status:"untradable"}]' >"$fixture_dir/gate-spot.json"
-jq -n '[{name:"BTC_USDT",type:"direct",status:"trading",quanto_multiplier:"0.0001"},
+jq -n '[{name:"BTC_USDT",type:"direct",status:"trading",quanto_multiplier:"0.0001",order_size_min:"0.1",enable_decimal:true,taker_fee_rate:"0.00075"},
  {name:"CRCL_USDT",type:"direct",status:"trading",contract_type:"stocks"},
  {name:"CRCLX_USDT",type:"direct",status:"trading",contract_type:"stocks"},
  {name:"PEPEX_USDT",type:"direct",status:"trading",contract_type:"crypto"},

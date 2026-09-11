@@ -27,6 +27,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         args = {"tickers": ["ETH", "HOOD", "MSTR", "XAU", "BONK"] if kind == "orderly" else ["BTC", "CRCL"]}
         if tool_name == "compare_trade_routes":
             args = {"ticker": "BTC", "product": "perp", "direction": "long", "amount": "1000"}
+            if kind == "gate_fractional":
+                args["amount"] = "0.003"  # 0.3 contracts at the fixture's 100 USDT price.
             if kind == "snapshot":
                 args.pop("amount")
                 args.pop("direction")
@@ -197,6 +199,10 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert by_venue["gate"]["book"]["bestBid"] == 99, payload
                     assert "route-rates" not in calls, calls
                 elif tool_name == "compare_trade_routes":
+                    if kind == "gate_fractional":
+                        gate = next(m for m in payload["markets"] if m["venue"] == "gate")
+                        assert gate["entryEstimate"]["status"] == "available", gate
+                        assert abs(gate["entryEstimate"]["quantity"] - 0.00003) < 1e-12, gate
                     assert all("nativeBook" not in m for m in payload["markets"]), payload
                     assert any(m.get("entryEstimate", {}).get("estimatedFillPrice") for m in payload["markets"]), payload
                     for market in payload["markets"]:
@@ -256,7 +262,7 @@ for tool_name in ("discover_markets", "get_market_candles", "compare_trade_route
 for case in ("success", "partial", "invalid", "denied"):
     exercise(case, "get_market_candles")
 
-for case in ("success", "quote_usdc", "quote_all", "currency_usdc", "invalid", "invalid_quote", "denied"):
+for case in ("success", "gate_fractional", "quote_usdc", "quote_all", "currency_usdc", "invalid", "invalid_quote", "denied"):
     exercise(case, "compare_trade_routes")
 
 exercise("success", references=True)

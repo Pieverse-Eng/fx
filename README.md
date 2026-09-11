@@ -219,6 +219,8 @@ The two tools reuse validated public discovery catalogs for 60 seconds in `.fx/m
 
 Reference selection includes Hyperliquid's default perpetual market alongside named DEXes. Hyperliquid spot turnover is matched by the exact pair identifier, independently of metadata array order. Bitget uses numeric platform turnover when available, including zero, and otherwise falls back to reported turnover. Gate futures trade times use fractional seconds and are converted to milliseconds before freshness checks; spot millisecond timestamps are preserved.
 
+Gate perpetual cost estimates preserve fractional contract quantities from the published minimum lot size. Single-contract metadata requests enable decimal-size responses to preserve fractional position sizes and order minimums.
+
 
 Explicit `$skill-name` mentions load the selected instructions before the model starts work. The `skill` tool accepts an advertised `location` and an optional relative `resource`, returning the complete document or a visible failure. Omitting `resource` or passing an empty string reads `SKILL.md`. File and tool-result limits still apply, and an explicit `skill_chunk_bytes` limit blocks a complete read that would exceed it. Existing named, offset-based calls remain supported.
 
