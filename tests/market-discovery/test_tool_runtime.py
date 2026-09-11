@@ -197,6 +197,10 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert by_venue["bitget"]["funding"]["value"] == 0, payload
                     assert by_venue["okx-cex"]["openInterest"]["usdValue"] == 10000, payload
                     assert by_venue["gate"]["book"]["bestBid"] == 99, payload
+                    kraken_linear = next(m for m in payload["markets"] if m["venue"] == "kraken" and m["symbol"] == "PF_XBTUSD")
+                    assert kraken_linear["funding"]["value"] == -0.000003, payload
+                    assert kraken_linear["funding"]["unit"] == "ratio", payload
+                    assert "snapshot-kraken-funding" in calls, calls
                     assert "route-rates" not in calls, calls
                 elif tool_name == "compare_trade_routes":
                     if kind == "gate_fractional":

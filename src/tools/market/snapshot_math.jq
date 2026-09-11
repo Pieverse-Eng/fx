@@ -3,6 +3,24 @@
 def observation($value;$unit;$source):
   {value:($value|n),unit:$unit,source:$source} |
   .status=(if .value==null then "unknown" else "available" end);
+# Kraken analytics supplies paired timestamp and OHLC arrays. Use the latest
+# published relative-rate close, never cash funding divided by today's mark.
+def kraken_relative_funding($f;$now):
+  ((try (
+    ($now|fromdateiso8601|.*1000) as $clock |
+    $f.result as $r |
+    if $f.errors!=[] or ($r.timestamp|type)!="array" or
+      ($r.data.relativeRate|type)!="array" or
+      ($r.timestamp|length)!=($r.data.relativeRate|length) then null else
+      [$r.timestamp|to_entries[]|{time:(.value|n),ohlc:$r.data.relativeRate[.key]}] |
+      sort_by(.time) | last |
+      select(.time!=null and .time<=$clock and .time>=$clock-7200000) |
+      select((.ohlc|type)=="array" and (.ohlc|length)==4) |
+      {value:(.ohlc[3]|n),sourceTime:.time}
+    end
+  ) catch null)//null) as $v |
+  observation($v.value;"ratio";"/api/charts/v1/analytics/{symbol}/funding relativeRate close") +
+    {intervalHours:1,kind:"current",sourceTime:$v.sourceTime};
 def native_book($m;$raw):
   ($raw|if type=="array" then . elif .result=="success" then . else rows end) as $b |
   if $m.venue=="hyperliquid" then {asks:[$b.levels[1][]|[.px,.sz]],bids:[$b.levels[0][]|[.px,.sz]]}
@@ -52,7 +70,10 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
      {intervalHours:(if ($ctx.funding_interval|n)!=null then ($ctx.funding_interval|n)/3600 else null end),nextSettlementTime:(if ($ctx.funding_next_apply|n)!=null then ($ctx.funding_next_apply|n)*1000 else null end)}
    elif $m.venue=="hyperliquid" then observation($ctx.funding;"ratio";"metaAndAssetCtxs") + {intervalHours:1}
    elif $m.venue=="lighter" then ([$f.funding_rates[]?|select(.exchange=="lighter" and .market_id==$m.marketId)][0]//{}) as $v |
-     observation($v.rate;"provider_native";"funding-rates") + {intervalHours:null,settlementIntervalHours:1,reason:"Hourly settlement is verified; this comparison endpoint rate unit and period are unverified, so do not compare numerically"}
+     # The comparison endpoint reports an eight-hour ratio; settlement is hourly.
+     observation((if ($v.rate|n)!=null then ($v.rate|n)/8 else null end);"ratio";"funding-rates") +
+       {intervalHours:1,settlementIntervalHours:1,kind:"estimated"}
+   elif $m.venue=="kraken" and ($m.symbol|ascii_downcase|startswith("pf_")) then kraken_relative_funding($f;$now)
    elif $m.venue=="kraken" then observation($ctx.fundingRate;"provider_native";"tickers") +
      {prediction:($ctx.fundingRatePrediction|n),intervalHours:null,reason:"Cash funding rate depends on contract specification; not a percentage"}
    elif $m.venue=="okx-cex" then ($f[0]//{}) as $v |
@@ -63,7 +84,7 @@ def snapshot($m;$raw;$f;$o;$meta;$size;$unsupported;$now):
    elif $m.venue=="bitget" then observation($o.data.openInterestList[0].size;"base";"open-interest")
    elif $m.venue=="gate" then observation($ctx.position_size;"contracts";"contracts") + {contractMultiplier:$size}
    elif $m.venue=="hyperliquid" then observation($ctx.openInterest;"base";"metaAndAssetCtxs")
-   elif $m.venue=="lighter" then observation($ctx.open_interest;"provider_native";"orderBookDetails")
+   elif $m.venue=="lighter" then observation($ctx.open_interest;"base";"orderBookDetails") + {basis:"single_sided"}
    elif $m.venue=="kraken" then observation($ctx.openInterest;(if $unsupported then "contracts" else "base" end);"tickers")
    elif $m.venue=="okx-cex" then observation($o[0].oi;"contracts";"open-interest") + {baseAmount:($o[0].oiCcy|n),usdValue:($o[0].oiUsd|n)}
    else observation($o.openInterest;"base";"openInterest") end) as $oi |

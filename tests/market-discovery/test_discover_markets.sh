@@ -20,6 +20,7 @@ case "${0##*/}:$*" in
  curl:*metaAndAssetCtxs*) venue=derivatives; key=snapshot-hl;;
  curl:*api/v1/funding-rates*) venue=derivatives; key=snapshot-lighter-funding;;
  curl:*orderBookDetails\?market_id=*) venue=lighter; key=snapshot-lighter-details;;
+ curl:*kraken.com/api/charts/v1/analytics/*/funding*) venue=derivatives; key=snapshot-kraken-funding;;
  curl:*kraken.com/derivatives/api/v3/tickers*) venue=derivatives; key=kraken-tickers;;
  okx:*'market funding-rate'*) venue=derivatives; key=snapshot-okx-funding;;
  okx:*'market open-interest'*) venue=derivatives; key=snapshot-okx-oi;;
@@ -236,6 +237,7 @@ if [[ $# == 1 ]]; then
   echo '{"data":{"openInterestList":[{"size":"10000"}]}}' >"$fixture_dir/snapshot-bitget-oi.json"
   echo '{"type":"direct","quanto_multiplier":"0.0001","funding_rate":"0.0001","funding_interval":28800,"position_size":10000}' >"$fixture_dir/snapshot-gate.json"
   echo '[{"universe":[{"name":"BTC"},{"name":"xyz:SKHX"}]},[{"funding":"0.00001","openInterest":"200","markPx":"100"},{"funding":"0.00002","openInterest":"300","markPx":"100"}]]' >"$fixture_dir/snapshot-hl.json"
+  jq -n '{errors:[],result:{timestamp:[(now|floor)*1000],data:{relativeRate:[[0,0,0,"-0.000003"]]}}}' >"$fixture_dir/snapshot-kraken-funding.json"
   echo '{"funding_rates":[{"market_id":161,"exchange":"lighter","rate":0.001}]}' >"$fixture_dir/snapshot-lighter-funding.json"
   echo '[{"fundingRate":"0.0001","fundingTime":"1789056000000","nextFundingTime":"1789084800000"}]' >"$fixture_dir/snapshot-okx-funding.json"
   echo '[{"oi":"10000","oiCcy":"100","oiUsd":"10000"}]' >"$fixture_dir/snapshot-okx-oi.json"

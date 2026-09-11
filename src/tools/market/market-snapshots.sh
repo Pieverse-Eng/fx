@@ -68,6 +68,12 @@ market_snapshot() (
         [[ $symbol == PF_* || $symbol == pf_* ]] || unsupported=true
         market_read "$dir/book.json" kraken futures orderbook "$symbol" -o json
         market_read "$dir/meta.json" curl -fsS --max-time 15 https://futures.kraken.com/derivatives/api/v3/tickers
+        if [[ $unsupported == false ]]; then
+          local funding_to funding_symbol
+          funding_to=$(date +%s)
+          funding_symbol=$(tr '[:upper:]' '[:lower:]' <<<"$symbol")
+          market_read "$dir/funding.json" curl -fsS --max-time 15 "https://futures.kraken.com/api/charts/v1/analytics/$funding_symbol/funding?since=$((funding_to-10800))&to=$funding_to&interval=3600"
+        fi
       fi ;;
     okx-cex)
       meta=$(jq -c --arg s "$symbol" '.[]|select(.instId==$s)' "$scratch_root/okx-cex/instruments.json")

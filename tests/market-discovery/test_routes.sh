@@ -361,10 +361,10 @@ jq -ne "$candle_jq $math $snapshot_math"'
     {funding_rates:[{market_id:182,exchange:"other",rate:9},{market_id:182,exchange:"lighter",rate:-0.02}]};
     {order_book_details:[{market_id:999,open_interest:99,mark_price:"99"},{market_id:182,open_interest:500,mark_price:"2.8040"}]};
     {taker_fee:"0.0000"};1;false;"fixture")|
-    .funding.value== -0.02 and .funding.unit=="provider_native" and .funding.settlementIntervalHours==1 and .openInterest.value==500 and .markPrice==2.804) and
+    .funding.value== -0.0025 and .funding.unit=="ratio" and .funding.intervalHours==1 and .openInterest.value==500 and .openInterest.unit=="base" and .openInterest.basis=="single_sided" and .openInterest.quoteValue==1402 and .markPrice==2.804) and
   (snapshot($m+{venue:"kraken",symbol:"PF_XBTUSD",quoteAsset:"USD"};{result:"success",orderBook:{asks:[],bids:[]}};null;null;
     {tickers:[{symbol:"PF_XBTUSD",fundingRate:1.36,fundingRatePrediction:0.87,openInterest:2155}]};1;false;"fixture")|
-    .funding.value==1.36 and .funding.unit=="provider_native" and .funding.prediction==0.87 and .openInterest.value==2155) and
+    .funding.status=="unknown" and .funding.unit=="ratio" and (.funding|has("prediction")|not) and .openInterest.value==2155) and
   (snapshot($m+{venue:"okx-cex",quoteAsset:"USDT"};[{ts:"1789056000000",asks:[[100,100]],bids:[[99,100]]}];
     [{fundingRate:"0.0001",fundingTime:"100000000",nextFundingTime:"128800000"}];[{oi:"1000",oiCcy:"10",oiUsd:"1000"}];[{markPx:"100"}];0.01;false;"fixture")|
     .funding.intervalHours==8 and .openInterest.usdValue==1000 and .book.bidDepth1Pct==99 and .markPrice==100 and .book.sourceTime=="1789056000000")
@@ -410,3 +410,40 @@ jq -ne "$math"'
   ((try perpetual_notional($b+{step:30};3000;"short") catch {error:.})|has("error"))
 ' >/dev/null
 echo 'Each venue sizes its own notional, rounds its own lots, and separates fill from fee-adjusted price.'
+
+# Hourly funding ratios preserve direction and zero; OI is native-base, one-sided.
+jq -ne "$candle_jq $math $snapshot_math"'
+  {venue:"lighter",symbol:"1000PEPE",ticker:"PEPE",baseAsset:"1000PEPE",marketId:3,product:"perpetual",quoteAsset:"USDC",exposureMultiplier:1000} as $m |
+  all([0.000024,-0.000024,0,null][]; . as $rate |
+    snapshot($m;null;{funding_rates:[{market_id:3,exchange:"other",rate:9},{market_id:4,exchange:"lighter",rate:9},{market_id:3,exchange:"lighter",rate:$rate}]};
+      {order_book_details:[{market_id:3,open_interest:200,mark_price:0.01}]};null;1;false;"fixture") as $s |
+    $s.funding.value==(if $rate==null then null else $rate/8 end) and
+    $s.funding.status==(if $rate==null then "unknown" else "available" end) and
+    $s.funding.intervalHours==1 and $s.funding.positiveRatePays=="long_to_short" and
+    $s.openInterest.baseAmount==200 and $s.openInterest.quoteValue==2) and
+  all([0,null][]; . as $oi |
+    snapshot($m;null;null;{order_book_details:[{market_id:3,open_interest:$oi,mark_price:100}]};null;1;false;"fixture") |
+    .openInterest.value==$oi and .openInterest.quoteValue==(if $oi==null then null else 0 end)) and
+  (snapshot($m+{product:"spot"};null;null;null;null;1;false;"fixture") |
+    .funding.status=="not_applicable" and .openInterest.status=="not_applicable")
+' >/dev/null
+# Kraken relative-rate OHLC closes must be paired with a recent source timestamp.
+jq -ne "$candle_jq $math $snapshot_math"'
+  "2026-09-11T10:05:00Z" as $now | ($now|fromdateiso8601|.*1000) as $clock |
+  {errors:[],result:{timestamp:[$clock-300000,$clock-3900000],data:{relativeRate:[[9,10,-10,"-0.000003"],[8,9,0,"0.000001"]]}}} as $f |
+  {venue:"kraken",symbol:"pf_xbtusd",ticker:"BTC",product:"perpetual",quoteAsset:"USD"} as $m |
+  (snapshot($m;null;$f;null;{tickers:[{symbol:"pf_xbtusd",fundingRate:2,fundingRatePrediction:3,markPrice:100}]};1;false;$now)|
+    .funding.value== -0.000003 and .funding.intervalHours==1 and .funding.unit=="ratio" and
+    .funding.sourceTime==$clock-300000 and (.funding|has("prediction")|not)) and
+  all([0,0.000003,-0.000003][]; . as $rate |
+    kraken_relative_funding(($f|.result.data.relativeRate[0][3]=$rate);$now)|.value==$rate and .status=="available") and
+  all([null,{},($f|.errors=["unavailable"]),($f|.result.timestamp=[]),
+    ($f|.result.timestamp[0]=$clock+3600000),($f|.result.timestamp|=map(.-10800000)),
+    ($f|.result.data.relativeRate[0]=[1,2,3]),($f|.result.data.relativeRate[0][3]="bad"),
+    ($f|.result.data.relativeRate[0][3]=null)][];
+    kraken_relative_funding(.;$now)|.value==null and .status=="unknown") and
+  (snapshot($m+{symbol:"PI_XBTUSD"};null;$f;null;{tickers:[{symbol:"PI_XBTUSD",fundingRate:2}]};1;true;$now)|
+    .funding.unit=="provider_native" and .funding.intervalHours==null) and
+  (snapshot($m+{product:"spot"};null;$f;null;null;1;false;$now)|.funding.status=="not_applicable")
+' >/dev/null
+echo 'Lighter hourly funding and single-sided OI; Kraken relative funding freshness and failure regressions passed.'
