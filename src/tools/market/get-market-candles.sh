@@ -52,6 +52,8 @@ load_volume() {
       findrow($s[$m.product];"instId";$m.symbol) |
       {volume:(if $m.product=="spot" then (.volCcy24h|num) else (.volCcy24h|num)*(.last|num) end),
        estimated:($m.product!="spot")}
+    elif $m.venue=="orderly" then
+      if $s.success==true then first($s.data.rows[]|select(.symbol==$m.symbol)) | {volume:(.["24h_amount"]|num)} else {volume:null} end
     elif $m.venue=="lighter" then
       first((($s.order_book_details // [])+($s.spot_order_book_details // []))[]|select(.market_id==$m.marketId)) |
       {volume:(.daily_quote_token_volume|num)}
@@ -89,6 +91,7 @@ fetch_volumes() {
   market_launch "$scratch_root/stats/kraken-perpetual.json" kraken futures tickers -o json
   market_launch "$scratch_root/stats/okx-cex-spot.json" okx market tickers SPOT --site global --json
   market_launch "$scratch_root/stats/okx-cex-perpetual.json" okx market tickers SWAP --site global --json
+  market_launch "$scratch_root/stats/orderly.json" curl -fsS --max-time 20 https://api.orderly.org/v1/public/futures
   market_launch "$scratch_root/stats/lighter.json" curl -fsS --max-time 20 'https://mainnet.zklighter.elliot.ai/api/v1/orderBookDetails'
   market_launch "$scratch_root/stats/hyperliquid-spot.json" purr hyperliquid markets --kind spot
   while IFS= read -r dex; do
@@ -136,6 +139,7 @@ fetch_candle() {
     hyperliquid)
       [[ $product != spot ]] || symbol=$(jq -r '.pairId' <<<"$m")
       market_read "$file" purr hyperliquid candles --coin "$symbol" --interval "$tf" --start-time "$((start*1000))" --end-time "$now" ;;
+    orderly) market_read "$file" purr orderly candles --symbol "$symbol" --interval "$tf" --start-t "$((start*1000))" --end-t "$now" ;;
     lighter) market_read "$file" curl -fsS --max-time 20 --get 'https://mainnet.zklighter.elliot.ai/api/v1/candles' --data-urlencode "market_id=$(jq -r '.marketId' <<<"$m")" --data-urlencode "resolution=$tf" --data-urlencode "start_timestamp=$start" --data-urlencode "end_timestamp=$((now/1000))" --data-urlencode 'count_back=51' ;;
     okx-cex) market_read "$file" okx market candles "$symbol" --bar "$interval" --limit 51 --site global --json ;;
   esac
@@ -162,6 +166,7 @@ fetch_last_trade() {
     hyperliquid)
       [[ $product != spot ]] || symbol=$(jq -r '.pairId' <<<"$m")
       market_read "$file" curl -fsS --max-time 20 -H 'Content-Type: application/json' -d "$(jq -cn --arg coin "$symbol" '{type:"recentTrades",coin:$coin}')" 'https://api.hyperliquid.xyz/info' ;;
+    orderly) market_read "$file" curl -fsS --max-time 20 --get https://api.orderly.org/v1/public/market_trades --data-urlencode "symbol=$symbol" --data-urlencode limit=1 ;;
     lighter) market_read "$file" curl -fsS --max-time 20 --get 'https://mainnet.zklighter.elliot.ai/api/v1/recentTrades' --data-urlencode "market_id=$(jq -r '.marketId' <<<"$m")" --data-urlencode limit=1 ;;
     okx-cex) market_read "$file" okx market trades "$symbol" --limit 1 --site global --json ;;
   esac
@@ -183,6 +188,7 @@ normalize_candles() {
      elif $m.venue=="kraken" then
        if $m.product=="spot" then rows | [to_entries[]|select(.key!="last")|.value[]|entry([(.[0]|num)*1000,.[1],.[2],.[3],.[4],.[6]];null)]
        else .candles | map(entry([.time,.open,.high,.low,.close,(if ($m.symbol|startswith("PF_")) then .volume else null end)];null)) end
+     elif $m.venue=="orderly" then .rows | map(entry([.timestamp,.open,.high,.low,.close,.volume];null))
      elif $m.venue=="hyperliquid" then map(entry([.t,.o,.h,.l,.c,.v];null))
      elif $m.venue=="lighter" then if .code!=200 then error("invalid candles") else .c | map(entry([.t,.o,.h,.l,.c,.v];null)) end
      else error("unsupported venue") end) |
@@ -207,6 +213,7 @@ normalize_trade() {
      elif $m.venue=="kraken" then
        if $m.product=="spot" then .result|[to_entries[]|select(.key!="last")|.value[]|{price:.[0],time:((.[2]|num)*1000|floor)}]
        else [.ticker|{price:.last,time:(.lastTime|iso_ms)}] end
+     elif $m.venue=="orderly" then if .success!=true then [] else .data.rows|map({price:.executed_price,time:.executed_timestamp}) end
      elif $m.venue=="hyperliquid" then map({price:.px,time})
      elif $m.venue=="lighter" then .trades|map({price,time:.timestamp})
      elif $m.venue=="okx-cex" then rows|map({price:.px,time:.ts})

@@ -9,6 +9,8 @@ cat >"$fixture_dir/cli" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}:$*" in
+ purr:'orderly markets') venue=orderly; key=orderly;;
+ curl:*api.orderly.org/v1/public/futures*) venue=orderly; key=stats-orderly;;
  curl:*premiumIndex*) venue=derivatives; key=snapshot-premium;;
  curl:*fundingInfo*) venue=derivatives; key=snapshot-interval;;
  curl:*fapi/v1/openInterest*) venue=derivatives; key=snapshot-oi;;
@@ -83,14 +85,14 @@ printf '%s\n' "$key" >>"$FIXTURE_DIR/calls"
 printf '%s:%s\n' "${0##*/}" "$*" >>"$FIXTURE_DIR/commands"
 if [[ ${WAIT_FOR_ALL:-0} == 1 ]]; then
   touch "$FIXTURE_DIR/started-$venue"
-  # All eight workers must have entered their first public query before any returns.
+  # All nine workers must have entered their first public query before any returns.
   # A sequential implementation fails deterministically rather than by a timing assertion.
   for ((attempt=0; attempt<300; attempt++)); do
     files=("$FIXTURE_DIR"/started-*)
-    (( ${#files[@]} == 8 )) && break
+    (( ${#files[@]} == 9 )) && break
     sleep 0.01
   done
-  (( ${#files[@]} == 8 )) || exit 1
+  (( ${#files[@]} == 9 )) || exit 1
 fi
 [[ ! -f $FIXTURE_DIR/$key.fail ]] || exit 1
 cat "$FIXTURE_DIR/$key.json"
@@ -98,6 +100,8 @@ MOCK
 chmod +x "$fixture_dir/cli"
 for cli in curl binance-cli bgc gate-cli kraken purr okx; do ln -s cli "$fixture_dir/$cli"; done
 export PATH="$fixture_dir:$PATH"
+echo '[{"symbol":"PERP_ORDERLYFIXTURE_USDC","status":"ACTIVE"}]' >"$fixture_dir/orderly.json"
+echo '{"success":true,"data":{"rows":[]}}' >"$fixture_dir/stats-orderly.json"
 jq -n '{data:((["BTC","PEPE","1INCH"]|map({symbol:(.+"USDT"),baseCoin:.,quoteCoin:"USDT",category:"SPOT",status:"online"}))+[
  {symbol:"BTCUSDC",baseCoin:"BTC",quoteCoin:"USDC",category:"SPOT",status:"online"},
  {symbol:"RCRCLUSDT",baseCoin:"rCRCL",quoteCoin:"USDT",category:"SPOT",status:"online",symbolType:"stock"},
@@ -274,7 +278,7 @@ run() { bash "$script" "$@"; }
 WAIT_FOR_ALL=1 run BTC CRCL PEPE ETH >"$fixture_dir/result.json"
 jq -e '(keys==["errors","results"]) and .errors==[] and (.results|map(.ticker))==["BTC","CRCL","PEPE","ETH"]' "$fixture_dir/result.json" >/dev/null
 # Every required catalog was fetched once despite four tickers.
-jq -Rsc 'split("\n")[:-1] | map(select(.!="route-lighter-book")) | length==19 and (group_by(.)|all(.[];length==1))' "$fixture_dir/calls" | jq -e . >/dev/null
+jq -Rsc 'split("\n")[:-1] | map(select(.!="route-lighter-book")) | length==20 and (group_by(.)|all(.[];length==1))' "$fixture_dir/calls" | jq -e . >/dev/null
 jq -e '[.results[]|select(.ticker=="CRCL")|.markets[]] as $m |
  any($m[];.venue=="aster" and .symbol=="CRCLUSDT") and
  any($m[];.venue=="binance" and .symbol=="CRCLBUSDT" and .product=="spot") and
@@ -297,7 +301,7 @@ jq -e 'any(.results[]|select(.ticker=="PEPE")|.markets[];.venue=="lighter" and .
 : >"$fixture_dir/calls"
 run btc BTC CRCL >"$fixture_dir/result.json"
 jq -e '(.results|map(.ticker))==["BTC","CRCL"]' "$fixture_dir/result.json" >/dev/null
-[[ $(wc -l <"$fixture_dir/calls") == 19 ]]
+[[ $(wc -l <"$fixture_dir/calls") == 20 ]]
 # Some venues cannot cover a requested currency; retain the other results.
 partial() { run "$@" || [[ $? == 1 ]]; }
 # Aliases retain input grouping and native order IDs; no fuzzy issuer matching.
@@ -358,7 +362,7 @@ echo '{"result":"success","tickers":[]}' >"$fixture_dir/kraken-tickers.json"
 if run BTC >"$fixture_dir/error.json"; then exit 1; fi
 jq -e '(.errors|length)>0 and ([.results[0].markets[]|select(.venue=="kraken")]|length)==1' "$fixture_dir/error.json" >/dev/null
 mv "$fixture_dir/kraken-tickers.backup" "$fixture_dir/kraken-tickers.json"
-for key in aster binance-spot bitget-spot gate-spot kraken-spot okx-spot hl-metas lighter; do
+for key in aster binance-spot bitget-spot gate-spot kraken-spot okx-spot hl-metas lighter orderly; do
   cp "$fixture_dir/$key.json" "$fixture_dir/backup.json"
   echo '{"error":"invalid"}' >"$fixture_dir/$key.json"
   if run BTC CRCL >"$fixture_dir/error.json"; then echo "Expected malformed $key error"; exit 1; fi
@@ -384,7 +388,7 @@ for entry in "$FX_MARKET_CACHE_DIR"/*.json; do
 done
 run BTC CRCL >/dev/null
 [[ $(wc -l <"$fixture_dir/calls") -gt "$first_calls" ]]
-echo 'Unified discovery fixtures passed: all eight workers overlap, one fetch per catalog, multi-ticker results, filters, restrictions, and partial failures.'
+echo 'Unified discovery fixtures passed: all nine workers overlap, one fetch per catalog, multi-ticker results, filters, restrictions, and partial failures.'
 
 # Empty Lighter books are absent assets; failed queries retain coverage errors.
 # Keep the persistent cache enabled: book changes must be visible immediately.

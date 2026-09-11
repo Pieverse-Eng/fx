@@ -9,9 +9,10 @@ duration=900000
 open=$((now/duration*duration))
 jq -n --argjson open "$open" --argjson duration "$duration" '[range(60;-1;-1)|[$open-.*$duration,100,103,98,102,12]]' >"$fixture/rows.json"
 # Each actual venue response shape must normalize to the same closed/current series.
-for venue in aster binance bitget gate hyperliquid kraken lighter okx-cex; do
+for venue in aster binance bitget gate hyperliquid kraken lighter okx-cex orderly; do
   m=$(jq -cn --arg venue "$venue" '{ticker:"BTC",venue:$venue,symbol:"BTCUSDT",baseAsset:"BTC",product:"spot",quoteAsset:"USDT"}')
   case $venue in
+    orderly) jq '{rows:map({timestamp:.[0],open:.[1],high:.[2],low:.[3],close:.[4],volume:.[5]})}' "$fixture/rows.json" >"$fixture/input.json" ;;
     aster|binance) cp "$fixture/rows.json" "$fixture/input.json" ;;
     bitget) jq '{data:map(map(tostring))}' "$fixture/rows.json" >"$fixture/input.json" ;;
     gate) jq 'map([(.[0]/1000|tostring),"1224",(.[4]|tostring),(.[2]|tostring),(.[3]|tostring),(.[1]|tostring),(.[5]|tostring)])' "$fixture/rows.json" >"$fixture/input.json" ;;
@@ -58,7 +59,7 @@ jq -e '.results[0] as $r |
 # Invalid OHLC bounds fail instead of turning into model-visible invented candles.
 echo '[[1799999100000,100,99,98,102,12]]' >"$fixture/bad.json"
 if normalize_candles '{"ticker":"BTC","baseAsset":"BTC","venue":"binance"}' 15m "$fixture/bad.json" "$now" >/dev/null 2>&1; then exit 1; fi
-echo 'Candle normalization passed for all eight venues, closed/current separation, price/volume units, and invalid data.'
+echo 'Candle normalization passed for all supported venues, closed/current separation, price/volume units, and invalid data.'
 # Compare actual adapter turnover fields, including Bitget platform-only rToken turnover.
 scratch_root="$fixture/volume"; mkdir -p "$scratch_root/stats"
 for venue in aster binance; do
@@ -132,3 +133,5 @@ jq -e '.results[0].timeframes["15m"]==null and any(.errors[];.ticker=="BTC" and 
 grep -q 'worker-specific failure' "$fixture/worker-stderr"
 grep -q 'BTC (exit 23)' "$fixture/worker-stderr"
 echo 'Diagnostic cache failure isolation and worker error reporting passed.'
+
+bash "$repo_root/tests/market-discovery/test_orderly.sh"

@@ -6,7 +6,7 @@ usage() {
   exit 2
 }
 tickers=(); product=all; quote_override=''; quote_set=0
-venues=(aster binance bitget gate hyperliquid kraken lighter okx-cex)
+venues=(aster binance bitget gate hyperliquid kraken lighter okx-cex orderly)
 declare -A seen_tickers=()
 while (( $# )); do
   case "$1" in
@@ -83,8 +83,8 @@ fetch_aster() {
 # SKHY is an ADR exposure, not an alias. Never strip arbitrary USD suffixes.
 perp_alias_jq='
 def perp_alias_matches($venue; $symbol; $ticker):
-  [ {tickers:["SKHYNIX","SKHX"], symbols:{hyperliquid:["xyz:SKHX"], lighter:["SKHYNIXUSD"], aster:["SKHYNIX"]}},
-    {tickers:["SAMSUNG","SMSN"], symbols:{hyperliquid:["xyz:SMSN"], lighter:["SAMSUNGUSD"], aster:["SAMSUNG"]}},
+  [ {tickers:["SKHYNIX","SKHX"], symbols:{hyperliquid:["xyz:SKHX"], lighter:["SKHYNIXUSD"], aster:["SKHYNIX"], orderly:["PERP_SKHYNIX_USDC_mythos"]}},
+    {tickers:["SAMSUNG","SMSN"], symbols:{hyperliquid:["xyz:SMSN"], lighter:["SAMSUNGUSD"], aster:["SAMSUNG"], orderly:["PERP_SAMSUNG_USDC_mythos"]}},
     {tickers:["HYUNDAI"], symbols:{lighter:["HYUNDAIUSD"]}} ] |
   any(.[]; (.tickers|index($ticker))!=null and ((.symbols[$venue] // [])|index($symbol))!=null);
 '
@@ -441,6 +441,25 @@ def spot_matches($token):
 }
 
 
+# Match native asset codes, not display labels (e.g. "XAU (Gold)").
+# Builder markets keep their full symbol, including the catalog broker suffix.
+fetch_orderly() {
+  seed catalog '[]'
+  if [[ $product != spot ]]; then
+    launch catalog 'type=="array" and length>0 and all(.[]; (.symbol|type=="string") and (.status|type=="string") and (.symbol|test("^PERP_[A-Z0-9]+_USDC(?:_[A-Za-z0-9_-]+)?$")))' 'https://api.orderly.org/v1/public/info' purr orderly markets
+  fi
+  wait_queries
+}
+match_orderly() {
+  jq --arg ticker "$ticker" --arg quote "$quote" "$perp_alias_jq"'
+    [$ticker,"1000"+$ticker,"1000000"+$ticker,"1M"+$ticker] as $bases |
+    {markets:[.[] | select(.status=="ACTIVE" and ($quote=="" or $quote=="USDC")) |
+      . as $market | (.symbol|capture("^PERP_(?<base>[A-Z0-9]+)_USDC(?:_(?<broker>[A-Za-z0-9_-]+))?$")) as $id |
+      select(($bases|index($id.base))!=null or perp_alias_matches("orderly"; $market.symbol; $ticker)) |
+      $market + {baseAsset:$id.base,quoteAsset:"USDC",collateralAsset:"USDC",product:"perpetual"}]}
+  ' "$scratch/catalog.json"
+}
+
 run_venue() {
   venue=$1; scratch="$scratch_root/$venue"; mkdir "$scratch"
   pids=()
@@ -456,6 +475,7 @@ run_venue() {
     kraken) quote=USD; cli=kraken; fn=kraken ;;
     lighter) quote=USDC; currency_role=spot_quote_or_perpetual_settlement; cli=purr; fn=lighter ;;
     okx-cex) cli=okx; fn=okx ;;
+    orderly) quote=USDC; cli=purr; supported='["perpetual"]'; fn=orderly ;;
   esac
   # Preserve native quote defaults; restrict Aster cost comparisons to USDT.
   if [[ ${FX_MARKET_MODE:-discover} == routes && $venue == aster ]]; then quote=USDT; fi

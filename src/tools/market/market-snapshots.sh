@@ -36,6 +36,13 @@ market_snapshot() (
         [[ $(jq -r .type <<<"$meta") == direct ]] || unsupported=true
         market_read "$dir/book.json" gate-cli cex futures market orderbook --contract "$symbol" --settle usdt --depth 100 --format json
       fi ;;
+    orderly)
+      market_read "$dir/book.json" purr orderly orderbook --symbol "$symbol" --depth 100
+      market_read "$dir/meta.json" curl -fsS --max-time 15 "https://api.orderly.org/v1/public/futures/$symbol"
+      # Only accept the requested market; an API error is not a zero observation.
+      jq --arg symbol "$symbol" 'if .success==true and .data.symbol==$symbol then .data else null end' "$dir/meta.json" >"$dir/meta.tmp"
+      mv "$dir/meta.tmp" "$dir/meta.json"
+      ;;
     hyperliquid)
       market_read "$dir/book.json" purr hyperliquid l2 --coin "$(jq -r '.pairId//.symbol' <<<"$m")"
       if [[ $kind != spot ]]; then
