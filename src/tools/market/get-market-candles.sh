@@ -59,8 +59,7 @@ load_volume() {
       {volume:(.daily_quote_token_volume|num)}
     elif $m.venue=="hyperliquid" then
       if $m.product=="spot" then
-        ($s.spot) as $pair | first($pair[0].universe|to_entries[]|select(.value.name==$m.pairId)|.key) as $i |
-        {volume:($pair[1][$i].dayNtlVlm|num)}
+        findrow($s.spot[1];"coin";$m.pairId) | {volume:(.dayNtlVlm|num)}
       else
         $s[$m.dex][0].universe | to_entries | map(select(.value.name==$m.symbol)) | .[0].key as $i |
         {volume:($s[$m.dex][1][$i].dayNtlVlm|num)}

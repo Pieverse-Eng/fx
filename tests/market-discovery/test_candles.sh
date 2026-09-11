@@ -97,9 +97,16 @@ venue=gate
 echo '{"perpetual":[{"contract":"BTC_USDT","volume_24h_quote":"20"}]}' >"$scratch_root/stats/gate.json"
 load_volume '{"venue":"gate","product":"perpetual","symbol":"BTC_USDT"}' | jq -e '.volume==20' >/dev/null
 venue=hyperliquid
-echo '{"xyz":[{"universe":[{"name":"xyz:BTC"}]},[{"dayNtlVlm":"22"}]],"spot":[{"universe":[{"name":"@1"}]},[{"dayNtlVlm":"23"}]]}' >"$scratch_root/stats/hyperliquid.json"
+echo '{"xyz":[{"universe":[{"name":"xyz:BTC"}]},[{"dayNtlVlm":"22"}]],"spot":[{"universe":[{"name":"@1"}]},[{"coin":"@1","dayNtlVlm":"23"}]]}' >"$scratch_root/stats/hyperliquid.json"
 load_volume '{"venue":"hyperliquid","dex":"xyz","product":"perpetual","symbol":"xyz:BTC"}' | jq -e '.volume==22' >/dev/null
 load_volume '{"venue":"hyperliquid","product":"spot","pairId":"@1"}' | jq -e '.volume==23' >/dev/null
+# Spot metadata positions need not match context positions. Match the coin ID.
+echo '{"spot":[{"universe":[{"name":"@142","index":142},{"name":"@151","index":151},{"name":"PURR/USDC","index":0}]},[{"coin":"@140","dayNtlVlm":"999"},{"coin":"PURR/USDC","dayNtlVlm":"0"},{"coin":"@151","dayNtlVlm":"28605051"},{"coin":"@142","dayNtlVlm":"28263447"}]]}' >"$scratch_root/stats/hyperliquid.json"
+for pair in '@142 28263447' '@151 28605051' 'PURR/USDC 0' '@missing null'; do
+  read -r pair_id expected <<<"$pair"
+  load_volume "{\"venue\":\"hyperliquid\",\"product\":\"spot\",\"pairId\":\"$pair_id\"}" |
+    jq -e --argjson expected "$expected" '.volume==$expected' >/dev/null
+done
 venue=lighter
 echo '{"order_book_details":[{"market_id":1,"daily_quote_token_volume":24}]}' >"$scratch_root/stats/lighter.json"
 load_volume '{"venue":"lighter","marketId":1}' | jq -e '.volume==24' >/dev/null
