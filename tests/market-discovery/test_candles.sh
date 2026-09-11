@@ -47,6 +47,19 @@ normalize_candles "$m" 15m "$fixture/input.json" "$now" | jq -e 'all(.closed[];.
 # Latest-trade time is the trade time, never request time or a candle boundary.
 echo '[{"price":"102","time":1800001233000}]' >"$fixture/trade.json"
 normalize_trade '{"ticker":"BTC","baseAsset":"BTC","venue":"binance"}' "$fixture/trade.json" "$now" | jq -e '.price==102 and .time==1800001233000' >/dev/null
+# Gate futures seconds and spot milliseconds must yield the same trade time.
+for product in perpetual spot; do
+  if [[ $product == perpetual ]]; then
+    echo '[{"price":"102","create_time":1789118982.811,"create_time_ms":1789118982.811}]' >"$fixture/trade.json"
+  else
+    echo '[{"price":"102","create_time":"1789118982","create_time_ms":"1789118982811.000000"}]' >"$fixture/trade.json"
+  fi
+  normalize_trade "{\"ticker\":\"BTC\",\"baseAsset\":\"BTC\",\"venue\":\"gate\",\"product\":\"$product\"}" "$fixture/trade.json" 1789118983000 |
+    jq -e '.price==102 and .time==1789118982811' >/dev/null
+done
+echo '[{"price":"102","create_time":"1789118982"}]' >"$fixture/trade.json"
+normalize_trade '{"ticker":"BTC","baseAsset":"BTC","venue":"gate","product":"spot"}' "$fixture/trade.json" 1789118983000 |
+  jq -e '.time==1789118982000' >/dev/null
 # The public boundary formats every timestamp, preserving milliseconds and missing data.
 echo '{"results":[{"asOf":1788721732188,"lastTrade":{"price":102,"time":1788721200007},"timeframes":{"15m":{"closed":[[1788720300000,100,103,98,102,12]],"current":[1788721200000,102,103,101,102,1]},"1h":null,"4h":{"closed":[],"current":null}}},{"asOf":null,"lastTrade":null,"timeframes":{"15m":null,"1h":null,"4h":null}}],"errors":[]}' | format_candle_times >"$fixture/utc.json"
 jq -e '.results[0] as $r |
@@ -69,6 +82,14 @@ done
 venue=bitget
 echo '{"SPOT":{"data":[{"symbol":"RIRENUSDT","turnover24h":"10000","platformTurnover24h":"12"}]}}' >"$scratch_root/stats/bitget.json"
 load_volume '{"venue":"bitget","category":"SPOT","symbol":"RIRENUSDT"}' | jq -e '.volume==12' >/dev/null
+# Empty platform turnover falls back; a genuine zero retains precedence.
+for turnover in '""' null '"0"'; do
+  jq -n --argjson platform "$turnover" '{SPOT:{data:[{symbol:"BTCUSDT",platformTurnover24h:$platform,turnover24h:"216767807.005517"}]}}' >"$scratch_root/stats/bitget.json"
+  expected=216767807.005517; [[ $turnover != '"0"' ]] || expected=0
+  load_volume '{"venue":"bitget","category":"SPOT","symbol":"BTCUSDT"}' | jq -e --argjson expected "$expected" '.volume==$expected' >/dev/null
+done
+echo '{"SPOT":{"data":[{"symbol":"BTCUSDT","platformTurnover24h":"","turnover24h":""}]}}' >"$scratch_root/stats/bitget.json"
+load_volume '{"venue":"bitget","category":"SPOT","symbol":"BTCUSDT"}' | jq -e '.volume==null' >/dev/null
 venue=kraken
 echo '{"spot":{"XXBTZUSD":{"v":["1","12"],"p":["1","2"]}},"pairs":[{"altname":"XBTUSD","key":"XXBTZUSD"}]}' >"$scratch_root/stats/kraken.json"
 load_volume '{"venue":"kraken","product":"spot","symbol":"XBTUSD","wsname":"XBT/USD"}' | jq -e '.volume==24' >/dev/null
@@ -85,6 +106,22 @@ load_volume '{"venue":"lighter","marketId":1}' | jq -e '.volume==24' >/dev/null
 venue=okx-cex
 echo '{"perpetual":[{"instId":"BTC-USDT-SWAP","volCcy24h":"10","last":"3"}]}' >"$scratch_root/stats/okx-cex.json"
 load_volume '{"venue":"okx-cex","product":"perpetual","symbol":"BTC-USDT-SWAP"}' | jq -e '.volume==30 and .estimated' >/dev/null
+# Exercise volume request construction; only named HIP-3 DEXes get --dex.
+(
+  scratch_root="$fixture/volume-requests"; mkdir -p "$scratch_root/kraken"
+  echo '{}' >"$scratch_root/kraken/pairs-original.json"
+  echo '[{"venue":"hyperliquid","product":"perpetual","dex":"default","symbol":"BTC","quoteAsset":"USDC"},{"venue":"hyperliquid","product":"perpetual","dex":"xyz","symbol":"xyz:BTC","quoteAsset":"USDC"}]' >"$scratch_root/candidates.json"
+  market_launch() {
+    local target=$1; shift
+    printf '%s\n' "$*" >>"$scratch_root/commands"
+    echo '{}' >"$target"
+  }
+  wait_queries() { :; }
+  fetch_volumes "$scratch_root/candidates.json"
+  grep -Fxq 'purr hyperliquid markets --kind perp' "$scratch_root/commands"
+  grep -Fxq 'purr hyperliquid markets --kind perp --dex xyz' "$scratch_root/commands"
+  if grep -Fq -- '--dex default' "$scratch_root/commands"; then exit 1; fi
+)
 # Highest-volume failure falls back as a whole market, never stitching venues across timeframes.
 scratch_root="$fixture/fallback"; cache_dir="$fixture/logs"; mkdir -p "$scratch_root" "$cache_dir"
 cat >"$scratch_root/ranked.json" <<'JSON'

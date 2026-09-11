@@ -37,7 +37,7 @@ load_volume() {
     if $m.venue=="aster" or $m.venue=="binance" then
       findrow($s[$m.product];"symbol";$m.symbol) | {volume:(.quoteVolume|num)}
     elif $m.venue=="bitget" then
-      findrow($s[$m.category];"symbol";$m.symbol) | {volume:((.platformTurnover24h // .turnover24h)|num)}
+      findrow($s[$m.category];"symbol";$m.symbol) | {volume:((.platformTurnover24h|num) // (.turnover24h|num))}
     elif $m.venue=="gate" then
       findrow($s[$m.product];(if $m.product=="spot" then "currency_pair" else "contract" end);$m.symbol) |
       {volume:((.quote_volume // .volume_24h_quote)|num)}
@@ -97,7 +97,9 @@ fetch_volumes() {
   while IFS= read -r dex; do
     # DEX names also become local filenames; reject path separators.
     [[ $dex =~ ^[A-Za-z0-9_-]+$ ]] || continue
-    market_launch "$scratch_root/stats/hyperliquid-$dex.json" purr hyperliquid markets --kind perp --dex "$dex"
+    # "default" is our catalog label, not an upstream DEX name.
+    local dex_args=(); [[ $dex == default ]] || dex_args=(--dex "$dex")
+    market_launch "$scratch_root/stats/hyperliquid-$dex.json" purr hyperliquid markets --kind perp "${dex_args[@]}"
   done < <(jq -r '[.[]|select(.venue=="hyperliquid" and .product=="perpetual")|.dex]|unique[]' "$candidates")
   wait_queries
   for venue in aster binance bitget gate kraken okx-cex hyperliquid; do
@@ -209,7 +211,10 @@ normalize_trade() {
   jq --argjson m "$m" --argjson now "$now" "$candle_jq"'
     (if $m.venue=="aster" or $m.venue=="binance" then map({price,time})
      elif $m.venue=="bitget" then .data|map({price,time:.ts})
-     elif $m.venue=="gate" then map({price,time:(if .create_time_ms then (.create_time_ms|num) else (.create_time|num)*1000 end)})
+     # Futures create_time is fractional seconds; its create_time_ms can also
+     # contain seconds. Spot create_time_ms is milliseconds.
+     elif $m.venue=="gate" then map({price,time:(if $m.product=="perpetual" then (.create_time|num)*1000
+       else (.create_time_ms|num) // ((.create_time|num)*1000) end)})
      elif $m.venue=="kraken" then
        if $m.product=="spot" then .result|[to_entries[]|select(.key!="last")|.value[]|{price:.[0],time:((.[2]|num)*1000|floor)}]
        else [.ticker|{price:.last,time:(.lastTime|iso_ms)}] end
