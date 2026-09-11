@@ -54,7 +54,8 @@ def ranked_routes($routes):
     if (.seen|index($key))!=null then . else
       .seen+=[$key] |
       .routes+=[($route|comparison_route_identity) + {costRank:.rank} +
-        (if $route.chain!=null and $route.provider!=null then {provider:$route.provider} else {} end)]
+        (if $route.chain!=null and $route.provider!=null then {provider:$route.provider} +
+          ($route|{route,coverage,effectivePrice,gas,quoteType,feeEstimateSource,feeNote}|with_entries(select(.value!=null))) else {} end)]
     end) | .routes;
 def comparison_result($routes;$errors):
   {bestRoute: (if ($routes|length)==0 then null else $routes[0]|comparison_route_identity end),

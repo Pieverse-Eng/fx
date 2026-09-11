@@ -15,6 +15,8 @@ fixtures = Path(sys.argv[2]).resolve()
 
 
 def exercise(kind, tool_name="discover_markets", references=False, multiple=False):
+    if os.environ.get("FX_MARKET_TEST_CASE") and kind != os.environ["FX_MARKET_TEST_CASE"]:
+        return
     with tempfile.TemporaryDirectory(prefix="fx-discovery-runtime-") as directory:
         home = Path(directory)
         (home / ".fx").mkdir()
@@ -27,6 +29,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         args = {"tickers": ["ETH", "HOOD", "MSTR", "XAU", "BONK"] if kind == "orderly" else ["BTC", "CRCL"]}
         if tool_name == "compare_trade_routes":
             args = {"ticker": "BTC", "product": "perp", "direction": "long", "amount": "1000"}
+            if kind == "evm":
+                args = {"ticker": "CRCL", "product": "spot", "amount": "1000"}
             if kind == "gate_fractional":
                 args["amount"] = "0.003"  # 0.3 contracts at the fixture's 100 USDT price.
             if kind == "snapshot":
@@ -100,6 +104,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         env = {"PATH": str(fixtures) + os.pathsep + os.environ["PATH"], "HOME": str(home), "FIXTURE_DIR": str(fixtures), "LANG": "C.UTF-8", "FX_PROVIDER": "pieverse", "FX_PIEVERSE_API_KEY": "local-fixture", "FX_MODEL": "pieverse/test/model", "FX_DISABLE_KEYCHAIN": "1", "FX_SKIP_ONBOARDING": "1", "FX_PIEVERSE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1"}
+        if kind == "evm":
+            env.update(FX_PLATFORM_EVM_QUOTE_URL="http://fixture/market-research/evm-quote", FX_PLATFORM_QUOTE_TOKEN="fixture")
         try:
             prompt = "Research SKHYNIX and SAMSUNG markets." if kind == "aliases" else "Find available BTC and CRCL markets."
             result = subprocess.run([binary, "ask", "--auto", "--json", "--no-save", "--", prompt], cwd=home, env=env, text=True, capture_output=True, timeout=40)
@@ -189,6 +195,12 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
                     assert "lighter" in calls
                     assert bool(payload["errors"]) == (kind == "partial"), payload
+                elif tool_name == "compare_trade_routes" and kind == "evm":
+                    routes = [r for r in payload["rankedRoutes"] if r.get("chain")]
+                    assert {r["provider"] for r in routes} == {"pancakeswap", "uniswap"}, payload
+                    assert all(r["effectivePrice"] > 0 and r["gas"] > 0 and r["route"] for r in routes), payload
+                    assert all("approval" in r["feeNote"] for r in routes), payload
+                    assert payload["bestRoute"]["chain"] == "bnb", payload
                 elif tool_name == "compare_trade_routes" and kind == "snapshot":
                     assert payload["bestRoute"] is None and payload["rankedRoutes"] == [], payload
                     assert len(payload["markets"]) >= 7, payload
@@ -302,3 +314,26 @@ try:
 finally:
     for name, content in originals.items():
         (fixtures / name).write_text(content)
+
+# Exercise the embedded EVM workers through the registered binary tool, not only sourced shell functions.
+import time
+assets = json.loads((fixtures / "binance-assets.json").read_text())
+for asset in assets["data"]:
+    asset["ml"] = 1
+(fixtures / "binance-assets.json").write_text(json.dumps(assets))
+(fixtures / "route-networks.json").write_text(json.dumps({"data": [{"coin": "CRCLB", "networkList": [{"network": "BSC", "contractAddress": "0x" + "1" * 40}]}]}))
+(fixtures / "route-rh.json").write_text(json.dumps({"assets": [{"tokenSymbol": "CRCL", "status": "ASSET_STATUS_ACTIVE", "currentMultiplier": 1, "deployments": [{"chainId": 4663, "contractAddress": "0x" + "2" * 40}]}]}))
+stats = json.loads((fixtures / "stats-binance-spot.json").read_text())
+books = json.loads((fixtures / "route-rates.json").read_text())
+for symbol, price in [("BNBUSDT", 500), ("ETHUSDT", 2000)]:
+    stats.append({"symbol": symbol, "count": 100, "closeTime": int(time.time() * 1000)})
+    books.append({"symbol": symbol, "bidPrice": str(price), "askPrice": str(price), "bidQty": "10", "askQty": "10"})
+(fixtures / "stats-binance-spot.json").write_text(json.dumps(stats))
+(fixtures / "route-rates.json").write_text(json.dumps(books))
+kraken_pairs = json.loads((fixtures / "kraken-spot.json").read_text())
+kraken_pairs["USDGUSD"] = {"altname": "USDGUSD", "wsname": "USDG/USD", "base": "USDG", "status": "online", "aclass_base": "currency"}
+(fixtures / "kraken-spot.json").write_text(json.dumps(kraken_pairs))
+kraken_prices = json.loads((fixtures / "stats-kraken.json").read_text())
+kraken_prices["USDGUSD"] = {"a": ["1.002"], "b": ["1"], "v": ["1", "10"]}
+(fixtures / "stats-kraken.json").write_text(json.dumps(kraken_prices))
+exercise("evm", "compare_trade_routes")

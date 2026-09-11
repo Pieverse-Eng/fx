@@ -9,6 +9,13 @@ cat >"$fixture_dir/cli" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}:$*" in
+ curl:*market-research/evm-quote*)
+   body=${!#}
+   jq -n --argjson b "$body" '{ok:true,data:($b+{provider:(if $b.chainId==56 then "pancakeswap" else "uniswap" end),
+     inputDecimals:18,outputDecimals:18,amountOut:(($b.fromAmount|tonumber)*1e17|tostring),
+     networkFeeWei:"4000000000000000",route:{protocol:"fixture-amm"},
+     feeNote:"Indicative swap gas; approval costs excluded",feeEstimateSource:"fixture"})}'
+   exit 0;;
  purr:'orderly markets') venue=orderly; key=orderly;;
  curl:*api.orderly.org/v1/public/futures*) venue=orderly; key=stats-orderly;;
  curl:*premiumIndex*) venue=derivatives; key=snapshot-premium;;
@@ -25,6 +32,7 @@ case "${0##*/}:$*" in
  okx:*'market funding-rate'*) venue=derivatives; key=snapshot-okx-funding;;
  okx:*'market open-interest'*) venue=derivatives; key=snapshot-okx-oi;;
  curl:*api/v3/ticker/bookTicker*) venue=binance; key=route-rates;;
+ curl:*api.kraken.com/0/public/Ticker*) venue=kraken; key=stats-kraken;;
  curl:*fapi.asterdex.com*/depth*) venue=aster; key=route-book;;
  binance-cli:*depth*|binance-cli:*order-book*) venue=binance; key=route-book;;
  bgc:*'--action orderbook'*) venue=bitget; key=route-bitget;;

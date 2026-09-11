@@ -8,7 +8,7 @@ jq -ne "$math"'
   (comparison_result([$venue,$chain];[]) == {
     bestRoute:{venue:"bitget",symbol:"RCRCLUSDT",product:"spot",category:"SPOT"},
     rankedRoutes:[{venue:"bitget",symbol:"RCRCLUSDT",product:"spot",category:"SPOT",costRank:1},
-      {issuer:"bstocks",chain:"bnb",symbol:"CRCLB",contract:"0x1",provider:"fixture",costRank:2}],gaps:[]}) and
+      {issuer:"bstocks",chain:"bnb",symbol:"CRCLB",contract:"0x1",provider:"fixture",costRank:2,gas:1,effectivePrice:101}],gaps:[]}) and
   (comparison_result([$chain,$venue];[]).bestRoute == {issuer:"bstocks",chain:"bnb",symbol:"CRCLB",contract:"0x1"}) and
   (comparison_result([$venue+{venue:"hyperliquid",assetId:110109,dex:"xyz"},$chain];[]).bestRoute.assetId == 110109) and
   (comparison_result([$venue,$chain];[{venue:"kraken",symbol:"CRCLxUSD",message:"Unavailable book"}]).gaps == ["kraken / CRCLxUSD: Unavailable book"]) and
@@ -92,29 +92,46 @@ source "$root/src/tools/market/onchain-routes.sh"
 route_math=$math
 scratch_root=$(mktemp -d); trap 'rm -rf "$scratch_root"' EXIT
 mkdir -p "$scratch_root/routes"
-echo '{"USDTUSD":"1"}' >"$scratch_root/routes/rates.json"
+echo '{"USDTUSD":"1","BNBUSD":"500","ETHUSD":"2000","USDGUSD":"1"}' >"$scratch_root/routes/rates.json"
 route_input='{"ticker":"CRCL","product":"spot","amount":"1000"}'
 fixture_mode=success
-bg_public() {
-  local target=$1 path=$2 body=$3
-  if [[ $path == *batchGetBaseInfo ]]; then echo '{"status":0,"data":{"list":[{"price":"1"}]}}' >"$target"
-  else
-    jq -n --argjson body "$body" --arg mode "$fixture_mode" '
-      ($body.fromAmount|tonumber) as $a |
-      {status:0,data:{quoteResults:[{outAmount:($a/100 - pow($a/1000;2)),gasFees:{gasFeeAmountInUsd:(if $mode=="missinggas" then null else "2" end)},
-      market:{id:"fixture",label:"Fixture AMM"},priceImpact:{priceImpactWarn:(if $mode=="forbidden" then "forbidden" else "none" end)}}]}}' >"$target"
-    jq -c . <<<"$body" >>"$scratch_root/requests.jsonl"
+FX_PLATFORM_EVM_QUOTE_URL=http://fixture/evm-quote
+FX_PLATFORM_QUOTE_TOKEN=fixture-capability
+market_read() {
+  local target=$1 body=${!#}
+  if [[ $body == *Ticker?pair=USDGUSD ]]; then
+    echo '{"result":{"USDGUSD":{"a":["1.002"],"b":["1.000"],"v":["1","10"]}}}' >"$target"
+    return
   fi
+  jq -n --argjson body "$body" --arg mode "$fixture_mode" '
+    ($body.fromAmount|tonumber) as $a |
+    {ok:($mode!="unavailable"),data:($body+{
+      provider:(if $body.chainId==56 then "pancakeswap" else "uniswap" end),
+      toToken:(if $mode=="wrongtoken" then "0xwrong" else $body.toToken end),
+      inputDecimals:18,outputDecimals:18,amountOut:(($a/100-pow($a/1000;2))*1e18|tostring),
+      networkFeeWei:(if $mode=="missinggas" then null else "4000000000000000" end),
+      route:{protocol:"v2",path:[$body.fromToken,$body.toToken]}})}' >"$target"
+  jq -c . <<<"$body" >>"$scratch_root/requests.jsonl"
 }
 d='{"chain":"bnb","issuer":"bstocks","symbol":"CRCLB","contract":"0x1","inputAsset":"USDT","inputContract":"0x2"}'
-quote_bg_stock "$d" 0
+quote_evm_stock "$d" 0
 jq -e '.[0].spend<=1000 and .[0].gas==2 and .[0].amountIn!="1000" and .[0].expectedQuantity>0' "$scratch_root/routes/chain-0/routes.json" >/dev/null
 [[ $(wc -l <"$scratch_root/requests.jsonl") == 2 ]]
-fixture_mode=forbidden; quote_bg_stock "$d" 1
+fixture_mode=unavailable; quote_evm_stock "$d" 1
 [[ -s $scratch_root/routes/chain-1/error.json && ! -e $scratch_root/routes/chain-1/routes.json ]]
-fixture_mode=missinggas; quote_bg_stock "$d" 2
+fixture_mode=missinggas; quote_evm_stock "$d" 2
 [[ -s $scratch_root/routes/chain-2/error.json && ! -e $scratch_root/routes/chain-2/routes.json ]]
-echo 'Route arithmetic, budget re-quote, missing gas and forbidden route tests passed.'
+fixture_mode=wrongtoken; quote_evm_stock "$d" 3
+[[ -s $scratch_root/routes/chain-3/error.json && ! -e $scratch_root/routes/chain-3/routes.json ]]
+fixture_mode=success; quote_evm_stock "$(jq '.chain="robinhood"|.issuer="robinhood"|.inputAsset="USDG"' <<<"$d")" 4
+jq -e '.[0].provider=="uniswap" and .[0].spend<=1000' "$scratch_root/routes/chain-4/routes.json" >/dev/null
+mkdir -p "$scratch_root/kraken"
+echo '{"USDGUSD":{"altname":"USDGUSD","wsname":"USDG/USD","status":"online"}}' >"$scratch_root/kraken/pairs-original.json"
+jq 'del(.USDGUSD)' "$scratch_root/routes/rates.json" >"$scratch_root/rates.tmp"
+mv "$scratch_root/rates.tmp" "$scratch_root/routes/rates.json"
+quote_evm_stock "$(jq '.chain="robinhood"|.issuer="robinhood"|.inputAsset="USDG"' <<<"$d")" 5
+jq -e '.[0].provider=="uniswap" and (.[0].amountIn|tonumber)<992 and .[0].spend<=1000' "$scratch_root/routes/chain-5/routes.json" >/dev/null
+echo 'Direct DEX selection, nonlinear budget re-quote, missing gas and token identity tests passed.'
 # Adapter tests exercise full normalization, including array-shaped OKX and Kraken success envelopes.
 snapshot_math=$(cat "$root/src/tools/market/snapshot_math.jq")
 source "$root/src/tools/market/market-snapshots.sh"
