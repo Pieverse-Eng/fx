@@ -186,6 +186,51 @@ for minimum in '"0.1"' '0.1' '"1"' '"10"' '0' 'null'; do
 done
 echo 'Gate fractional contracts, integer minimums and missing quantity constraints passed.'
 
+# Kraken no longer publishes fee tiers in AssetPairs. Use the correct public schedule.
+route_input='{"ticker":"BTC","product":"spot","amount":"1000","currency":"USD"}'
+echo '{"PAIR":{"asks":[[100,20,0]],"bids":[[99,20,0]]}}' >"$scratch_root/book-fixture.json"
+while read -r base quote asset_class fees expected; do
+  m=$(jq -cn --arg base "$base" --arg quote "$quote" --arg cls "$asset_class" '
+    {venue:"kraken",ticker:$base,baseAsset:$base,quoteAsset:$quote,symbol:"PAIR",product:"spot",status:"online",assetClass:$cls}')
+  route_input=$(jq --arg quote "$quote" '.currency=$quote' <<<"$route_input")
+  jq -n --arg base "$base" --arg quote "$quote" --arg cls "$asset_class" --argjson fees "$fees" '
+    [{altname:"PAIR",wsname:($base+"/"+$quote),aclass_base:$cls,fees:$fees,
+      lot_decimals:8,ordermin:"0.0001",costmin:"0.5",status:"online"}]' >"$scratch_root/kraken/pairs-original.json"
+  index="kraken-$base-$quote-$asset_class-${fees//[^a-zA-Z0-9]/}"
+  route_book "$m" "$index"
+  if [[ $expected == null ]]; then
+    [[ -s $scratch_root/routes/$index/error.json && ! -e $scratch_root/routes/$index/candidate.json ]]
+  else
+    jq -e --argjson expected "$expected" '.fee==$expected and .feeAsset=="quote"' "$scratch_root/routes/$index/candidate.json" >/dev/null
+    if [[ $fees == '[]' || $fees == null ]]; then
+      jq -e '.feeSource|contains("public entry-tier taker estimate")' "$scratch_root/routes/$index/candidate.json" >/dev/null
+    fi
+    jq -e "$math"'spot(.;1000) | .expectedQuantity>0 and .spend<=1000' "$scratch_root/routes/$index/candidate.json" >/dev/null
+  fi
+done <<'CASES'
+XBT USD currency [] 0.008
+XBT USDT currency [] 0.008
+ETH USD currency null 0.008
+USDT USD currency [] 0.002
+USDC USDT currency [] 0.002
+EUR USD currency [] 0.002
+USDG USD currency [] 0.0001
+XBT USDG currency [] 0.008
+WBTC XBT currency [] 0.002
+TBTC BTC currency [] 0.002
+WBTC USD currency [] 0.008
+AAPLx USD tokenized_asset [] 0.001
+USDE USD currency [] null
+USD1 USD currency [] null
+EURR USD currency [] null
+XBT USD unknown [] null
+XBT USD currency [[0,0.16]] 0.0016
+XBT USD currency [[0,0]] 0
+USDE USD currency [[0,0]] 0
+CASES
+echo 'Kraken public taker schedules, API fee precedence and spot budget estimates passed.'
+route_input='{"ticker":"BTC","product":"perp","direction":"long","amount":"1000"}'
+
 # Exercise the production adapter, not a copy of the fee classification.
 echo '{"USDTUSD":"1","USD1USDT":"1","UUSDT":"1"}' >"$scratch_root/routes/rates.json"
 echo '{"asks":[[100,20]],"bids":[[99,20]]}' >"$scratch_root/book-fixture.json"

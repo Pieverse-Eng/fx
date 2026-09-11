@@ -84,6 +84,26 @@ route_book() (
       if [[ $kind == spot ]]; then
         meta=$(jq -c --arg s "$symbol" '[.[]|select(.altname==$s)]|unique_by(.fees,.lot_decimals,.ordermin,.costmin,.status)|if length==1 then .[0] else {} end' "$scratch_root/kraken/pairs-original.json")
         fee=$(jq -r 'try ((.fees[0][1]|tonumber)/100) catch null' <<<"$meta")
+        if [[ $fee == null ]]; then
+          # Public entry-tier estimates, verified 2026-09-11; not account-specific fees.
+          fee=$(jq -r '
+            (.wsname // "" | split("/") | map(ascii_upcase)) as $pair |
+            $pair[0] as $base | $pair[1] as $quote |
+            ["USD","EUR","GBP","CAD","AUD","CHF","JPY"] as $fiat |
+            ["USDT","USDC","DAI","USDS","TUSD","PYUSD","RLUSD","EURC","EURCV","EUROP","EURQ","USDQ","USDR"] as $stable |
+            if ($pair|length)!=2 or $base=="" or $quote=="" then null
+            elif .aclass_base=="tokenized_asset" then 0.001
+            elif .aclass_base!="currency" then null
+            elif $base=="USDE" then null # Published zero-fee campaign has expired.
+            elif $base=="USDG" then 0.0001
+            elif ($stable|index($base))!=null or
+              (($fiat|index($base))!=null and ($fiat|index($quote))!=null) or
+              ((["WBTC","TBTC"]|index($base))!=null and (["BTC","XBT"]|index($quote))!=null)
+              then 0.002
+            elif ($base|test("USD|EUR")) or ($fiat|index($base))!=null then null
+            else 0.008 end' <<<"$meta")
+          source+=' (public entry-tier taker estimate, 2026-09-11)'
+        fi
         step=$(jq -nr --argjson m "$meta" 'pow(10;-($m.lot_decimals//0))')
         minq=$(jq -r '.ordermin // 0' <<<"$meta"); minv=$(jq -r '.costmin // 0' <<<"$meta")
         args=(kraken orderbook "$symbol" --count 100 -o json)
@@ -241,5 +261,5 @@ run_routes() {
         {status:"available",referenceCurrency:($input.currency//"USDT"),requestedNotional:$amount,direction:($input.direction//"buy"),
          quantityUnit:"underlying",underlying:$s.underlying,exposureMultiplier:$s.exposureMultiplier,priceUnit:"reference_currency_per_underlying",
          quantity:$r.expectedQuantity,estimatedFillPrice:$r.estimatedFillPrice,depthSlippageBps:$r.depthSlippageBps,
-         spreadCostBps:$r.spreadCostBps,fees:$r.fees,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} end)}]}'
+         spreadCostBps:$r.spreadCostBps,fees:$r.fees,feeSource:$r.feeSource,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} end)}]}'
 }

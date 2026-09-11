@@ -221,6 +221,8 @@ Reference selection includes Hyperliquid's default perpetual market alongside na
 
 Gate perpetual cost estimates preserve fractional contract quantities from the published minimum lot size. Single-contract metadata requests enable decimal-size responses to preserve fractional position sizes and order minimums.
 
+When Kraken spot `AssetPairs` omits fees, cost comparisons use its [published entry-tier taker schedule](https://www.kraken.com/features/fee-schedule), verified September 11, 2026: 0.80% for ordinary crypto, 0.20% for recognized stablecoin-base/FX/pegged pairs, 0.01% for USDG-base pairs, and 0.10% for xStocks. A stablecoin quote alone does not change the ordinary crypto rate. USDe's expired promotion is not assumed to continue. API-provided fees, including zero, take precedence; `entryEstimate.feeSource` identifies public fallback estimates rather than account-specific fees.
+
 
 Explicit `$skill-name` mentions load the selected instructions before the model starts work. The `skill` tool accepts an advertised `location` and an optional relative `resource`, returning the complete document or a visible failure. Omitting `resource` or passing an empty string reads `SKILL.md`. File and tool-result limits still apply, and an explicit `skill_chunk_bytes` limit blocks a complete read that would exceed it. Existing named, offset-based calls remain supported.
 
