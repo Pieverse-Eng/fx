@@ -97,7 +97,7 @@ mkdir -p "$scratch_root/routes"
 echo '{"USDTUSD":"1","BNBUSD":"500","ETHUSD":"2000","USDGUSD":"1"}' >"$scratch_root/routes/rates.json"
 route_input='{"ticker":"CRCL","product":"spot","amount":"1000"}'
 fixture_mode=success
-FX_PLATFORM_EVM_QUOTE_URL=http://fixture/evm-quote
+FX_PLATFORM_UNISWAP_QUOTE_URL=http://fixture/wallet/uniswap/quote
 FX_PLATFORM_QUOTE_TOKEN=fixture-capability
 market_read() {
   local target=$1 body=${!#}
@@ -121,18 +121,23 @@ market_read() {
     echo "$amount" >>"$scratch_root/requests.jsonl"
     return
   fi
+  [[ $* == *"purr wallet uniswap"* && $* != *--execute* ]] || return 99
+  local tin tout amount
+  shift 4
+  while (( $# )); do case "$1" in --from) tin=$2;; --to) tout=$2;; --amount) amount=$2;; esac; shift 2; done
+  body=$(jq -cn --arg tin "$tin" --arg tout "$tout" --arg amount "$amount" '{chainId:4663,fromToken:$tin,toToken:$tout,fromAmount:$amount}')
   jq -n --argjson body "$body" --arg mode "$fixture_mode" '
     ($body.fromAmount|tonumber) as $a |
-    {ok:($mode!="unavailable"),data:($body+{
+    ($body+{
       provider:(if $body.chainId==56 then "pancakeswap" else "uniswap" end),
       toToken:(if $mode=="wrongtoken" then "0xwrong" else $body.toToken end),
       inputDecimals:18,outputDecimals:18,amountOut:(($a/100-pow($a/1000;2))*1e18|tostring),
       gasEstimateUsd:(if $mode=="missinggas" then null else "8" end),
-      route:[[{type:"v4-pool",tokenIn:{address:$body.fromToken},tokenOut:{address:$body.toToken}}]]})}' >"$target"
+      route:[[{type:"v4-pool",tokenIn:{address:$body.fromToken},tokenOut:{address:$body.toToken}}]]}) | if $mode=="unavailable" then {} else . end' >"$target"
   jq -c . <<<"$body" >>"$scratch_root/requests.jsonl"
 }
 d='{"chain":"bnb","issuer":"bstocks","symbol":"CRCLB","contract":"0x1","inputAsset":"USDT","inputContract":"0x55d398326f99059fF775485246999027B3197955"}'
-unset FX_PLATFORM_EVM_QUOTE_URL FX_PLATFORM_QUOTE_TOKEN
+unset FX_PLATFORM_UNISWAP_QUOTE_URL FX_PLATFORM_QUOTE_TOKEN
 quote_evm_stock "$d" 0
 jq -e '.[0].spend<=1000 and .[0].gas==2 and .[0].amountIn!="1000" and .[0].expectedQuantity>0 and .[0].route[0].pools[0].type=="v3" and .[0].route[0].pools[0].fee==2500' "$scratch_root/routes/chain-0/routes.json" >/dev/null
 [[ $(wc -l <"$scratch_root/requests.jsonl") == 2 ]]
@@ -142,7 +147,7 @@ fixture_mode=missinggas; quote_evm_stock "$d" 2
 [[ -s $scratch_root/routes/chain-2/error.json && ! -e $scratch_root/routes/chain-2/routes.json ]]
 fixture_mode=wrongtoken; quote_evm_stock "$d" 3
 [[ -s $scratch_root/routes/chain-3/error.json && ! -e $scratch_root/routes/chain-3/routes.json ]]
-FX_PLATFORM_EVM_QUOTE_URL=http://fixture/evm-quote
+FX_PLATFORM_UNISWAP_QUOTE_URL=http://fixture/wallet/uniswap/quote
 FX_PLATFORM_QUOTE_TOKEN=fixture-capability
 fixture_mode=success; quote_evm_stock "$(jq '.chain="robinhood"|.issuer="robinhood"|.inputAsset="USDG"' <<<"$d")" 4
 jq -e '.[0].provider=="uniswap" and .[0].spend<=1000 and .[0].gas==8 and .[0].route[0][0].type=="v4-pool"' "$scratch_root/routes/chain-4/routes.json" >/dev/null

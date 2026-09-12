@@ -1,10 +1,10 @@
 # Public issuer discovery and indicative stock-buy quotes. Never loads a wallet or transaction.
 chain_failure() { jq -cn --arg chain "$1" --arg issuer "$2" --arg message "$3" '{chain:$chain,issuer:$issuer,message:$message}'; }
 quote_evm_stock() (
-  local deployment=$1 index=$2 chain issuer dir budget ref usd_rate chain_id provider reserve=0 i amount body gas spend
+  local deployment=$1 index=$2 chain issuer dir budget ref usd_rate chain_id provider reserve=0 i amount gas spend
   chain=$(jq -r .chain <<<"$deployment"); issuer=$(jq -r .issuer <<<"$deployment"); dir="$scratch_root/routes/chain-$index"; mkdir -p "$dir"
   fail() { chain_failure "$chain" "$issuer" "$1" >"$dir/error.json"; }
-  if [[ $chain == robinhood && ( -z ${FX_PLATFORM_EVM_QUOTE_URL:-} || -z ${FX_PLATFORM_QUOTE_TOKEN:-} ) ]]; then fail 'Direct DEX quote capability unavailable'; exit 0; fi
+  if [[ $chain == robinhood && ( -z ${FX_PLATFORM_UNISWAP_QUOTE_URL:-} || -z ${FX_PLATFORM_QUOTE_TOKEN:-} ) ]]; then fail 'Direct DEX quote capability unavailable'; exit 0; fi
   if [[ $chain == bnb ]]; then chain_id=56; provider=pancakeswap
   elif [[ $chain == robinhood ]]; then chain_id=4663; provider=uniswap
   else fail 'Unsupported direct DEX chain'; exit 0; fi
@@ -35,10 +35,9 @@ quote_evm_stock() (
         fail 'PancakeSwap CLI returned no valid quote with gas'; exit 0
       fi
     else
-    body=$(jq -cn --argjson d "$deployment" --arg amount "$amount" --argjson chain "$chain_id" '{chainId:$chain,fromToken:$d.inputContract,toToken:$d.contract,fromAmount:$amount}')
-    printf 'x-pieverse-market-quote-capability: %s\n' "$FX_PLATFORM_QUOTE_TOKEN" >"$dir/headers"
-    market_read "$dir/quote.json" curl -fsS --max-time 20 "$FX_PLATFORM_EVM_QUOTE_URL" -H "@$dir/headers" -H 'Content-Type: application/json' -d "$body"
-    rm -f "$dir/headers"
+      market_read "$dir/uniswap.json" purr wallet uniswap \
+        --from "$(jq -r .inputContract <<<"$deployment")" --to "$(jq -r .contract <<<"$deployment")" --amount "$amount"
+      jq '{ok:true,data:.}' "$dir/uniswap.json" >"$dir/quote.json"
     fi
     if ! jq -e --argjson d "$deployment" --arg amount "$amount" --argjson chain "$chain_id" --arg provider "$provider" '
       .ok==true and .data.chainId==$chain and .data.provider==$provider and

@@ -105,7 +105,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         thread.start()
         env = {"PATH": str(fixtures) + os.pathsep + os.environ["PATH"], "HOME": str(home), "FIXTURE_DIR": str(fixtures), "LANG": "C.UTF-8", "FX_PROVIDER": "pieverse", "FX_PIEVERSE_API_KEY": "local-fixture", "FX_MODEL": "pieverse/test/model", "FX_DISABLE_KEYCHAIN": "1", "FX_SKIP_ONBOARDING": "1", "FX_PIEVERSE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1"}
         if kind == "evm":
-            env.update(FX_PLATFORM_EVM_QUOTE_URL="http://fixture/market-research/evm-quote", FX_PLATFORM_QUOTE_TOKEN="fixture")
+            env.update(FX_PLATFORM_UNISWAP_QUOTE_URL="http://fixture/wallet/uniswap/quote", FX_PLATFORM_QUOTE_TOKEN="fixture")
         try:
             prompt = "Research SKHYNIX and SAMSUNG markets." if kind == "aliases" else "Find available BTC and CRCL markets."
             result = subprocess.run([binary, "ask", "--auto", "--json", "--no-save", "--", prompt], cwd=home, env=env, text=True, capture_output=True, timeout=40)

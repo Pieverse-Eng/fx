@@ -19,12 +19,15 @@ case "${0##*/}:$*" in
       expiresAt:($now+300),gasEstimateUsd:"2",feeNote:"Indicative gas; approval costs excluded",route:[
         {path:[{address:$tin,decimals:18},{address:$tout,decimals:18}],pools:[{provider:"pancakeswap",type:"v3",fee:2500}]}]}'
    exit 0;;
- curl:*market-research/evm-quote*)
-   body=${!#}
-   jq -n --argjson b "$body" '{ok:true,data:($b+{provider:"uniswap",
+ purr:'wallet uniswap'*)
+   [[ $* != *--execute* ]] || exit 99
+   shift 2
+   while (( $# )); do case "$1" in --from) tin=$2;; --to) tout=$2;; --amount) amount=$2;; esac; shift 2; done
+   body=$(jq -cn --arg tin "$tin" --arg tout "$tout" --arg amount "$amount" '{chainId:4663,fromToken:$tin,toToken:$tout,fromAmount:$amount}')
+   jq -n --argjson b "$body" '$b+{provider:"uniswap",
      inputDecimals:18,outputDecimals:18,amountOut:(($b.fromAmount|tonumber)*1e17|tostring),
      gasEstimateUsd:"8",route:[[{type:"v4-pool",tokenIn:{address:$b.fromToken},tokenOut:{address:$b.toToken}}]],
-     feeNote:"Indicative swap gas; approval costs excluded",feeEstimateSource:"fixture"})}'
+     feeNote:"Indicative swap gas; approval costs excluded",feeEstimateSource:"fixture"}'
    exit 0;;
  purr:'orderly markets') venue=orderly; key=orderly;;
  curl:*api.orderly.org/v1/public/futures*) venue=orderly; key=stats-orderly;;
