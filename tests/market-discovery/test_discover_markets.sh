@@ -9,11 +9,21 @@ cat >"$fixture_dir/cli" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}:$*" in
+ purr:'pancake swap'*)
+   [[ $* != *--execute* ]] || exit 99
+   shift 2
+   while (( $# )); do case "$1" in --from) tin=$2;; --to) tout=$2;; --amount) amount=$2;; esac; shift 2; done
+   jq -n --arg tin "$tin" --arg tout "$tout" --arg amount "$amount" --argjson now "$(date +%s)" '
+     {provider:"pancakeswap",chainId:56,fromToken:$tin,toToken:$tout,fromAmount:$amount,
+      inputDecimals:18,outputDecimals:18,estimatedToAmount:((($amount|tonumber)*1e5|floor|tostring)+"000000000000"),
+      expiresAt:($now+300),gasEstimateUsd:"2",feeNote:"Indicative gas; approval costs excluded",route:[
+        {path:[{address:$tin,decimals:18},{address:$tout,decimals:18}],pools:[{provider:"pancakeswap",type:"v3",fee:2500}]}]}'
+   exit 0;;
  curl:*market-research/evm-quote*)
    body=${!#}
-   jq -n --argjson b "$body" '{ok:true,data:($b+{provider:(if $b.chainId==56 then "pancakeswap" else "uniswap" end),
+   jq -n --argjson b "$body" '{ok:true,data:($b+{provider:"uniswap",
      inputDecimals:18,outputDecimals:18,amountOut:(($b.fromAmount|tonumber)*1e17|tostring),
-     networkFeeWei:"4000000000000000",route:{protocol:"v3",fees:[2500],path:[$b.fromToken,$b.toToken],router:"0x1b81D678ffb9C0263b24A97847620C99d213eB14"},
+     networkFeeWei:"4000000000000000",route:{protocol:"v3",fees:[2500],path:[$b.fromToken,$b.toToken],router:"0xfixture"},
      feeNote:"Indicative swap gas; approval costs excluded",feeEstimateSource:"fixture"})}'
    exit 0;;
  purr:'orderly markets') venue=orderly; key=orderly;;

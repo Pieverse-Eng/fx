@@ -105,6 +105,22 @@ market_read() {
     echo '{"result":{"USDGUSD":{"a":["1.002"],"b":["1.000"],"v":["1","10"]}}}' >"$target"
     return
   fi
+  if [[ $* == *"purr pancake swap"* ]]; then
+    [[ $* != *--execute* ]] || return 99
+    local tin tout amount
+    shift 4
+    while (( $# )); do case "$1" in --from) tin=$2;; --to) tout=$2;; --amount) amount=$2;; esac; shift 2; done
+    jq -n --arg tin "$tin" --arg tout "$tout" --arg amount "$amount" --arg mode "$fixture_mode" --argjson now "$(date +%s)" '
+      ($amount|tonumber) as $a | {
+        provider:"pancakeswap",chainId:56,fromToken:$tin,toToken:(if $mode=="wrongtoken" then "0xwrong" else $tout end),
+        fromAmount:$amount,inputDecimals:18,outputDecimals:18,expiresAt:($now+300),
+        estimatedToAmount:((($a/100-pow($a/1000;2))*1e6|floor|tostring)+"000000000000"),
+        gasEstimateUsd:(if $mode=="missinggas" then null else "2" end),
+        route:[{path:[{address:$tin,decimals:18},{address:$tout,decimals:18}],pools:[{provider:"pancakeswap",type:"v3",fee:2500}]}]} |
+        if $mode=="unavailable" then {} else . end' >"$target"
+    echo "$amount" >>"$scratch_root/requests.jsonl"
+    return
+  fi
   jq -n --argjson body "$body" --arg mode "$fixture_mode" '
     ($body.fromAmount|tonumber) as $a |
     {ok:($mode!="unavailable"),data:($body+{
@@ -115,9 +131,10 @@ market_read() {
       route:{protocol:"v3",router:"0x1b81D678ffb9C0263b24A97847620C99d213eB14",fees:[2500],encodedPath:"0xfixture",path:[$body.fromToken,$body.toToken]}})}' >"$target"
   jq -c . <<<"$body" >>"$scratch_root/requests.jsonl"
 }
-d='{"chain":"bnb","issuer":"bstocks","symbol":"CRCLB","contract":"0x1","inputAsset":"USDT","inputContract":"0x2"}'
+d='{"chain":"bnb","issuer":"bstocks","symbol":"CRCLB","contract":"0x1","inputAsset":"USDT","inputContract":"0x55d398326f99059fF775485246999027B3197955"}'
+unset FX_PLATFORM_EVM_QUOTE_URL FX_PLATFORM_QUOTE_TOKEN
 quote_evm_stock "$d" 0
-jq -e '.[0].spend<=1000 and .[0].gas==2 and .[0].amountIn!="1000" and .[0].expectedQuantity>0 and .[0].route.protocol=="v3" and .[0].route.fees==[2500] and .[0].route.encodedPath=="0xfixture"' "$scratch_root/routes/chain-0/routes.json" >/dev/null
+jq -e '.[0].spend<=1000 and .[0].gas==2 and .[0].amountIn!="1000" and .[0].expectedQuantity>0 and .[0].route[0].pools[0].type=="v3" and .[0].route[0].pools[0].fee==2500' "$scratch_root/routes/chain-0/routes.json" >/dev/null
 [[ $(wc -l <"$scratch_root/requests.jsonl") == 2 ]]
 fixture_mode=unavailable; quote_evm_stock "$d" 1
 [[ -s $scratch_root/routes/chain-1/error.json && ! -e $scratch_root/routes/chain-1/routes.json ]]
@@ -125,6 +142,8 @@ fixture_mode=missinggas; quote_evm_stock "$d" 2
 [[ -s $scratch_root/routes/chain-2/error.json && ! -e $scratch_root/routes/chain-2/routes.json ]]
 fixture_mode=wrongtoken; quote_evm_stock "$d" 3
 [[ -s $scratch_root/routes/chain-3/error.json && ! -e $scratch_root/routes/chain-3/routes.json ]]
+FX_PLATFORM_EVM_QUOTE_URL=http://fixture/evm-quote
+FX_PLATFORM_QUOTE_TOKEN=fixture-capability
 fixture_mode=success; quote_evm_stock "$(jq '.chain="robinhood"|.issuer="robinhood"|.inputAsset="USDG"' <<<"$d")" 4
 jq -e '.[0].provider=="uniswap" and .[0].spend<=1000' "$scratch_root/routes/chain-4/routes.json" >/dev/null
 mkdir -p "$scratch_root/kraken"

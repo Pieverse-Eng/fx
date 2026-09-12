@@ -4,7 +4,7 @@ quote_evm_stock() (
   local deployment=$1 index=$2 chain issuer dir budget ref usd_rate native_rate chain_id provider native reserve=0 i amount body gas spend
   chain=$(jq -r .chain <<<"$deployment"); issuer=$(jq -r .issuer <<<"$deployment"); dir="$scratch_root/routes/chain-$index"; mkdir -p "$dir"
   fail() { chain_failure "$chain" "$issuer" "$1" >"$dir/error.json"; }
-  if [[ -z ${FX_PLATFORM_EVM_QUOTE_URL:-} || -z ${FX_PLATFORM_QUOTE_TOKEN:-} ]]; then fail 'Direct DEX quote capability unavailable'; exit 0; fi
+  if [[ $chain == robinhood && ( -z ${FX_PLATFORM_EVM_QUOTE_URL:-} || -z ${FX_PLATFORM_QUOTE_TOKEN:-} ) ]]; then fail 'Direct DEX quote capability unavailable'; exit 0; fi
   if [[ $chain == bnb ]]; then chain_id=56; provider=pancakeswap; native=BNB
   elif [[ $chain == robinhood ]]; then chain_id=4663; provider=uniswap; native=ETH
   else fail 'Unsupported direct DEX chain'; exit 0; fi
@@ -18,17 +18,31 @@ quote_evm_stock() (
       reference_rates(($pairs[0]//{}|to_entries|map(.value+{key:.key}));$kr[0];[];{};$now).USDG | positive') || usd_rate=''
   fi
   if [[ -z $usd_rate ]]; then fail 'Payment-token USD rate unavailable'; exit 0; fi
-  native_rate=$(jq -er --arg c "$native" "$route_math"'usd(.;$c)' "$scratch_root/routes/rates.json") || { fail 'Native gas-token USD rate unavailable'; exit 0; }
+  if [[ $chain == robinhood ]]; then
+    native_rate=$(jq -er --arg c "$native" "$route_math"'usd(.;$c)' "$scratch_root/routes/rates.json") || { fail 'Native gas-token USD rate unavailable'; exit 0; }
+  fi
   ref=$(jq -ner --argjson input "$route_input" --slurpfile rates "$scratch_root/routes/rates.json" "$route_math"'usd($rates[0];($input.currency//"USDT"))') || { fail 'Reference FX unavailable'; exit 0; }
   budget=$(jq -nr --argjson input "$route_input" --argjson rate "$ref" '($input.amount|tonumber)*$rate')
   # Requote after reserving estimated gas: AMM output is nonlinear in input size.
   for i in 0 1 2; do
     amount=$(jq -nr --argjson budget "$budget" --argjson reserve "$reserve" --argjson rate "$usd_rate" '((($budget-$reserve)/$rate*1000000)|floor)/1000000' | awk '{printf "%.6f", $0}')
     if ! jq -e '.>0' <<<"$amount" >/dev/null; then fail 'Budget does not cover external gas'; exit 0; fi
+    if [[ $chain == bnb ]]; then
+      market_read "$dir/pancake.json" purr pancake swap \
+        --from "$(jq -r .inputContract <<<"$deployment")" --to "$(jq -r .contract <<<"$deployment")" --amount "$amount"
+      if ! jq -e --argjson now "$(date +%s)" '
+        select(type=="object" and (.expiresAt|type)=="number" and .expiresAt>$now) |
+        select((.gasEstimateUsd|type)=="string" and (.gasEstimateUsd|test("^[0-9]+(\\.[0-9]+)?$"))) |
+        {ok:true,data:(.+{amountOut:.estimatedToAmount,gasEstimateUsd:(.gasEstimateUsd|tonumber)})}
+        ' "$dir/pancake.json" >"$dir/quote.json"; then
+        fail 'PancakeSwap CLI returned no valid quote with gas'; exit 0
+      fi
+    else
     body=$(jq -cn --argjson d "$deployment" --arg amount "$amount" --argjson chain "$chain_id" '{chainId:$chain,fromToken:$d.inputContract,toToken:$d.contract,fromAmount:$amount}')
     printf 'x-pieverse-market-quote-capability: %s\n' "$FX_PLATFORM_QUOTE_TOKEN" >"$dir/headers"
     market_read "$dir/quote.json" curl -fsS --max-time 20 "$FX_PLATFORM_EVM_QUOTE_URL" -H "@$dir/headers" -H 'Content-Type: application/json' -d "$body"
     rm -f "$dir/headers"
+    fi
     if ! jq -e --argjson d "$deployment" --arg amount "$amount" --argjson chain "$chain_id" --arg provider "$provider" '
       .ok==true and .data.chainId==$chain and .data.provider==$provider and
       (.data.fromToken|ascii_downcase)==($d.inputContract|ascii_downcase) and (.data.toToken|ascii_downcase)==($d.contract|ascii_downcase) and
@@ -36,10 +50,11 @@ quote_evm_stock() (
       (.data.inputDecimals>=0 and .data.inputDecimals<=30 and .data.inputDecimals==(.data.inputDecimals|floor)) and
       (.data.outputDecimals>=0 and .data.outputDecimals<=30 and .data.outputDecimals==(.data.outputDecimals|floor)) and
       .data.fromAmount==$amount and
-      (.data.amountOut|tonumber)>0 and (.data.networkFeeWei|tonumber)>=0 and (.data.route!=null)' "$dir/quote.json" >/dev/null 2>&1; then
+      (.data.amountOut|tonumber)>0 and (if $chain==56 then .data.gasEstimateUsd>=0 else (.data.networkFeeWei|tonumber)>=0 end) and (.data.route!=null)' "$dir/quote.json" >/dev/null 2>&1; then
       fail "$provider returned no valid direct DEX quote for the requested tokens and amount"; exit 0
     fi
-    gas=$(jq -r --argjson rate "$native_rate" '(.data.networkFeeWei|tonumber)/1e18*$rate' "$dir/quote.json")
+    if [[ $chain == bnb ]]; then gas=$(jq -r '.data.gasEstimateUsd' "$dir/quote.json")
+    else gas=$(jq -r --argjson rate "$native_rate" '(.data.networkFeeWei|tonumber)/1e18*$rate' "$dir/quote.json"); fi
     spend=$(jq -nr --argjson a "$amount" --argjson rate "$usd_rate" --argjson gas "$gas" '$a*$rate+$gas')
     if (( i>0 )) && jq -en --argjson spend "$spend" --argjson budget "$budget" '$spend<=$budget' >/dev/null; then break; fi
     reserve=$(jq -nr --argjson gas "$gas" '$gas*1.05+0.000001')
