@@ -200,6 +200,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert {r["provider"] for r in routes} == {"pancakeswap", "uniswap"}, payload
                     assert all(r["effectivePrice"] > 0 and r["gas"] > 0 and r["route"] for r in routes), payload
                     assert all("approval" in r["feeNote"] for r in routes), payload
+                    uniswap = next(r for r in routes if r["provider"] == "uniswap")
+                    assert uniswap["gas"] == 8 and uniswap["route"][0][0]["type"] == "v4-pool", uniswap
                     pancake = next(r for r in routes if r["provider"] == "pancakeswap")
                     assert pancake["route"][0]["pools"][0] == {"provider": "pancakeswap", "type": "v3", "fee": 2500}, pancake
                     assert len(pancake["route"][0]["path"]) == 2, pancake

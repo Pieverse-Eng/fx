@@ -23,7 +23,7 @@ case "${0##*/}:$*" in
    body=${!#}
    jq -n --argjson b "$body" '{ok:true,data:($b+{provider:"uniswap",
      inputDecimals:18,outputDecimals:18,amountOut:(($b.fromAmount|tonumber)*1e17|tostring),
-     networkFeeWei:"4000000000000000",route:{protocol:"v3",fees:[2500],path:[$b.fromToken,$b.toToken],router:"0xfixture"},
+     gasEstimateUsd:"8",route:[[{type:"v4-pool",tokenIn:{address:$b.fromToken},tokenOut:{address:$b.toToken}}]],
      feeNote:"Indicative swap gas; approval costs excluded",feeEstimateSource:"fixture"})}'
    exit 0;;
  purr:'orderly markets') venue=orderly; key=orderly;;

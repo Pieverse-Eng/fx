@@ -1,12 +1,12 @@
 # Public issuer discovery and indicative stock-buy quotes. Never loads a wallet or transaction.
 chain_failure() { jq -cn --arg chain "$1" --arg issuer "$2" --arg message "$3" '{chain:$chain,issuer:$issuer,message:$message}'; }
 quote_evm_stock() (
-  local deployment=$1 index=$2 chain issuer dir budget ref usd_rate native_rate chain_id provider native reserve=0 i amount body gas spend
+  local deployment=$1 index=$2 chain issuer dir budget ref usd_rate chain_id provider reserve=0 i amount body gas spend
   chain=$(jq -r .chain <<<"$deployment"); issuer=$(jq -r .issuer <<<"$deployment"); dir="$scratch_root/routes/chain-$index"; mkdir -p "$dir"
   fail() { chain_failure "$chain" "$issuer" "$1" >"$dir/error.json"; }
   if [[ $chain == robinhood && ( -z ${FX_PLATFORM_EVM_QUOTE_URL:-} || -z ${FX_PLATFORM_QUOTE_TOKEN:-} ) ]]; then fail 'Direct DEX quote capability unavailable'; exit 0; fi
-  if [[ $chain == bnb ]]; then chain_id=56; provider=pancakeswap; native=BNB
-  elif [[ $chain == robinhood ]]; then chain_id=4663; provider=uniswap; native=ETH
+  if [[ $chain == bnb ]]; then chain_id=56; provider=pancakeswap
+  elif [[ $chain == robinhood ]]; then chain_id=4663; provider=uniswap
   else fail 'Unsupported direct DEX chain'; exit 0; fi
   usd_rate=$(jq -er --arg c "$(jq -r .inputAsset <<<"$deployment")" "$route_math"'usd(.;$c)' "$scratch_root/routes/rates.json" 2>/dev/null) || usd_rate=''
   # USDG has no Binance USDG/USDT market. Reuse the candle FX validation and
@@ -18,9 +18,6 @@ quote_evm_stock() (
       reference_rates(($pairs[0]//{}|to_entries|map(.value+{key:.key}));$kr[0];[];{};$now).USDG | positive') || usd_rate=''
   fi
   if [[ -z $usd_rate ]]; then fail 'Payment-token USD rate unavailable'; exit 0; fi
-  if [[ $chain == robinhood ]]; then
-    native_rate=$(jq -er --arg c "$native" "$route_math"'usd(.;$c)' "$scratch_root/routes/rates.json") || { fail 'Native gas-token USD rate unavailable'; exit 0; }
-  fi
   ref=$(jq -ner --argjson input "$route_input" --slurpfile rates "$scratch_root/routes/rates.json" "$route_math"'usd($rates[0];($input.currency//"USDT"))') || { fail 'Reference FX unavailable'; exit 0; }
   budget=$(jq -nr --argjson input "$route_input" --argjson rate "$ref" '($input.amount|tonumber)*$rate')
   # Requote after reserving estimated gas: AMM output is nonlinear in input size.
@@ -50,11 +47,10 @@ quote_evm_stock() (
       (.data.inputDecimals>=0 and .data.inputDecimals<=30 and .data.inputDecimals==(.data.inputDecimals|floor)) and
       (.data.outputDecimals>=0 and .data.outputDecimals<=30 and .data.outputDecimals==(.data.outputDecimals|floor)) and
       .data.fromAmount==$amount and
-      (.data.amountOut|tonumber)>0 and (if $chain==56 then .data.gasEstimateUsd>=0 else (.data.networkFeeWei|tonumber)>=0 end) and (.data.route!=null)' "$dir/quote.json" >/dev/null 2>&1; then
+      (.data.amountOut|tonumber)>0 and ((.data.gasEstimateUsd|tonumber)>=0) and (.data.route!=null)' "$dir/quote.json" >/dev/null 2>&1; then
       fail "$provider returned no valid direct DEX quote for the requested tokens and amount"; exit 0
     fi
-    if [[ $chain == bnb ]]; then gas=$(jq -r '.data.gasEstimateUsd' "$dir/quote.json")
-    else gas=$(jq -r --argjson rate "$native_rate" '(.data.networkFeeWei|tonumber)/1e18*$rate' "$dir/quote.json"); fi
+    gas=$(jq -r '.data.gasEstimateUsd|tonumber' "$dir/quote.json")
     spend=$(jq -nr --argjson a "$amount" --argjson rate "$usd_rate" --argjson gas "$gas" '$a*$rate+$gas')
     if (( i>0 )) && jq -en --argjson spend "$spend" --argjson budget "$budget" '$spend<=$budget' >/dev/null; then break; fi
     reserve=$(jq -nr --argjson gas "$gas" '$gas*1.05+0.000001')

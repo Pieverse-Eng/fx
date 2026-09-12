@@ -127,8 +127,8 @@ market_read() {
       provider:(if $body.chainId==56 then "pancakeswap" else "uniswap" end),
       toToken:(if $mode=="wrongtoken" then "0xwrong" else $body.toToken end),
       inputDecimals:18,outputDecimals:18,amountOut:(($a/100-pow($a/1000;2))*1e18|tostring),
-      networkFeeWei:(if $mode=="missinggas" then null else "4000000000000000" end),
-      route:{protocol:"v3",router:"0x1b81D678ffb9C0263b24A97847620C99d213eB14",fees:[2500],encodedPath:"0xfixture",path:[$body.fromToken,$body.toToken]}})}' >"$target"
+      gasEstimateUsd:(if $mode=="missinggas" then null else "8" end),
+      route:[[{type:"v4-pool",tokenIn:{address:$body.fromToken},tokenOut:{address:$body.toToken}}]]})}' >"$target"
   jq -c . <<<"$body" >>"$scratch_root/requests.jsonl"
 }
 d='{"chain":"bnb","issuer":"bstocks","symbol":"CRCLB","contract":"0x1","inputAsset":"USDT","inputContract":"0x55d398326f99059fF775485246999027B3197955"}'
@@ -145,13 +145,15 @@ fixture_mode=wrongtoken; quote_evm_stock "$d" 3
 FX_PLATFORM_EVM_QUOTE_URL=http://fixture/evm-quote
 FX_PLATFORM_QUOTE_TOKEN=fixture-capability
 fixture_mode=success; quote_evm_stock "$(jq '.chain="robinhood"|.issuer="robinhood"|.inputAsset="USDG"' <<<"$d")" 4
-jq -e '.[0].provider=="uniswap" and .[0].spend<=1000' "$scratch_root/routes/chain-4/routes.json" >/dev/null
+jq -e '.[0].provider=="uniswap" and .[0].spend<=1000 and .[0].gas==8 and .[0].route[0][0].type=="v4-pool"' "$scratch_root/routes/chain-4/routes.json" >/dev/null
 mkdir -p "$scratch_root/kraken"
 echo '{"USDGUSD":{"altname":"USDGUSD","wsname":"USDG/USD","status":"online"}}' >"$scratch_root/kraken/pairs-original.json"
-jq 'del(.USDGUSD)' "$scratch_root/routes/rates.json" >"$scratch_root/rates.tmp"
+jq 'del(.USDGUSD,.ETHUSD)' "$scratch_root/routes/rates.json" >"$scratch_root/rates.tmp"
 mv "$scratch_root/rates.tmp" "$scratch_root/routes/rates.json"
 quote_evm_stock "$(jq '.chain="robinhood"|.issuer="robinhood"|.inputAsset="USDG"' <<<"$d")" 5
 jq -e '.[0].provider=="uniswap" and (.[0].amountIn|tonumber)<992 and .[0].spend<=1000' "$scratch_root/routes/chain-5/routes.json" >/dev/null
+fixture_mode=missinggas; quote_evm_stock "$(jq '.chain="robinhood"|.issuer="robinhood"|.inputAsset="USDG"' <<<"$d")" 6
+[[ -s $scratch_root/routes/chain-6/error.json && ! -e $scratch_root/routes/chain-6/routes.json ]]
 echo 'Direct DEX selection, nonlinear budget re-quote, missing gas and token identity tests passed.'
 # Adapter tests exercise full normalization, including array-shaped OKX and Kraken success envelopes.
 snapshot_math=$(cat "$root/src/tools/market/snapshot_math.jq")
