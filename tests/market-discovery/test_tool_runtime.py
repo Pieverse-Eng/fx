@@ -126,7 +126,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                 if tool_name == "discover_markets" and not multiple:
                     # CRCL needs one extra Gate stock metadata query.
                     expected_calls = 19 if kind in ("aliases", "orderly") else 20
-                    catalogs = [call for call in calls if call != "route-lighter-book"]
+                    catalogs = [call for call in calls if not call.startswith("route-")]
                     assert len(catalogs) == expected_calls and len(set(catalogs)) == expected_calls, calls
                     book_commands = [line for line in (fixtures / "commands").read_text().splitlines()
                                      if line.startswith("purr:lighter order-book-depth ")]
@@ -191,6 +191,12 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                         assert lighter["openInterest"]["value"] == 500 and lighter["markPrice"] == 100, lighter
                         assert "--market SKHYNIXUSD --market-type perp" in commands, commands
                         assert any("xyz:SKHX" in gap and "HIP-3" in gap for gap in payload["gaps"]), payload
+                elif tool_name == "discover_markets" and kind == "onchain":
+                    markets = [m for r in payload["results"] for m in r["markets"] if m.get("chain")]
+                    assert {(m["chain"], m["provider"]) for m in markets} == {("bnb", "pancakeswap"), ("robinhood", "uniswap")}, payload
+                    assert all(m["availability"] == "deployment_only" and m["contract"] for m in markets)
+                    commands = (fixtures / "commands").read_text()
+                    assert "pancake swap" not in commands and "wallet uniswap" not in commands and "dflow" not in commands, commands
                 elif tool_name == "discover_markets":
                     assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
                     assert "lighter" in calls
@@ -342,3 +348,4 @@ kraken_prices = json.loads((fixtures / "stats-kraken.json").read_text())
 kraken_prices["USDGUSD"] = {"a": ["1.002"], "b": ["1"], "v": ["1", "10"]}
 (fixtures / "stats-kraken.json").write_text(json.dumps(kraken_prices))
 exercise("evm", "compare_trade_routes")
+exercise("onchain", "discover_markets")

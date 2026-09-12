@@ -1,5 +1,4 @@
 # Public issuer discovery and indicative stock-buy quotes. Never loads a wallet or transaction.
-chain_failure() { jq -cn --arg chain "$1" --arg issuer "$2" --arg message "$3" '{chain:$chain,issuer:$issuer,message:$message}'; }
 quote_evm_stock() (
   local deployment=$1 index=$2 chain issuer dir budget ref usd_rate chain_id provider reserve=0 i amount gas spend
   chain=$(jq -r .chain <<<"$deployment"); issuer=$(jq -r .issuer <<<"$deployment"); dir="$scratch_root/routes/chain-$index"; mkdir -p "$dir"
@@ -101,62 +100,27 @@ quote_sol_stock() (
       expectedQuantity:$shares,spend:($spend/$ref),gas:($gas/$ref),unspent:(($budget-$spend)/$ref),
       effectivePrice:($spend/$ref/$shares),quotedAt:$now,quoteType:"indicative"}]' "$dir/quote.json" >"$dir/routes.json"
 )
-issuer_read() (
-  local target=$1 url=$2 code
-  code=$(timeout --kill-after=2s 25s curl -sS --max-time 20 -o "$target.body" -w '%{http_code}' "$url" 2>"$target.stderr") || code=000
-  printf '%s' "$code" >"$target.status"
-  if [[ $code == 200 ]] && jq -e 'type=="object"' "$target.body" >/dev/null 2>&1; then mv "$target.body" "$target"
-  else echo null >"$target"; fi
-)
 onchain_routes() (
   shopt -s nullglob
   local dir="$scratch_root/routes/issuers" ticker index=0 d pid
   ticker=$(jq -r '.ticker|ascii_upcase' <<<"$route_input"); mkdir -p "$dir"
-  pids=()
-  issuer_read "$dir/xstocks.json" "https://api.xstocks.fi/api/v2/public/assets/${ticker}x" & pids+=("$!")
-  market_launch "$dir/robinhood.json" curl -fsS --max-time 20 https://api.robinhood.com/rhj/assets
-  market_launch "$dir/networks.json" curl -fsS --max-time 20 https://www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll
-  wait_queries
-  jq -n --arg ticker "$ticker" --slurpfile x "$dir/xstocks.json" --slurpfile rh "$dir/robinhood.json" \
-    --slurpfile bn "$scratch_root/binance/assets.json" --slurpfile nets "$dir/networks.json" '
-    [($bn[0].data[]?|select(.uq==$ticker and .trading==true and .delisted==false and ((.tags//[])|index("bStocks"))!=null)) as $asset |
-      $nets[0].data[]?|select(.coin==$asset.assetCode)|.networkList[]?|select(.network=="BSC" and (.contractAddress|length)>0) |
-      # Non-unit issuer multipliers require verified semantics before cross-issuer ranking.
-      select(($asset.ml|tonumber)==1) |
-      {issuer:"bstocks",chain:"bnb",symbol:$asset.assetCode,contract:.contractAddress,inputAsset:"USDT",inputContract:"0x55d398326f99059fF775485246999027B3197955"}] +
-    [($x[0]|select(.underlyingSymbol==$ticker and .isTradingHalted==false)) as $asset |
-      $asset.deployments[]?|select(.network=="BinanceSmartChain" or .network=="Solana") |
-      . as $dep | .stablecoins[]?|select(.symbol=="USDC") |
-      {issuer:"xstocks",chain:(if $dep.network=="Solana" then "solana" else "bnb" end),symbol:$asset.symbol,
-       contract:$dep.address,inputAsset:"USDC",inputContract:.address}] +
-    [$rh[0].assets[]?|select(.tokenSymbol==$ticker and .status=="ASSET_STATUS_ACTIVE" and (.currentMultiplier|tonumber)==1) |
-      . as $asset | .deployments[]?|select(.chainId==4663) |
-      {issuer:"robinhood",chain:"robinhood",symbol:$asset.tokenSymbol,contract:.contractAddress,inputAsset:"USDG",
-       inputContract:"0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"}]' >"$dir/deployments.json"
+  issuer_catalogs "$dir"
+  issuer_discover "$ticker" "$dir" "$dir"
+  # Comparison still requires a verified unit multiplier for these issuers.
+  jq '[.[]|select(.issuer=="xstocks" or .exposureMultiplier==1)]' "$dir/deployments.json" >"$dir/eligible.json"
   pids=()
   while IFS= read -r d; do
     if [[ $(jq -r .chain <<<"$d") == solana ]]; then quote_sol_stock "$d" "$index" &
     else quote_evm_stock "$d" "$index" & fi
     pids+=("$!"); index=$((index+1))
-  done < <(jq -c '.[]' "$dir/deployments.json")
+  done < <(jq -c '.[]' "$dir/eligible.json")
   for pid in "${pids[@]}"; do wait "$pid" || true; done
-  for ((index=0; index<$(jq length "$dir/deployments.json"); index++)); do
+  for ((index=0; index<$(jq length "$dir/eligible.json"); index++)); do
     if [[ ! -s $scratch_root/routes/chain-$index/routes.json && ! -s $scratch_root/routes/chain-$index/error.json ]]; then
-      d=$(jq -c ".[$index]" "$dir/deployments.json")
+      d=$(jq -c ".[$index]" "$dir/eligible.json")
       chain_failure "$(jq -r .chain <<<"$d")" "$(jq -r .issuer <<<"$d")" 'Quote worker failed' >"$scratch_root/routes/chain-$index/error.json"
     fi
   done
-  # No issuer match is normal for crypto; registry failures remain visible instead of proving absence.
-  : >"$dir/coverage.jsonl"
-  if ! jq -e '.assets|type=="array"' "$dir/robinhood.json" >/dev/null; then
-    chain_failure robinhood robinhood 'Issuer catalog unavailable' >>"$dir/coverage.jsonl"
-  fi
-  if ! jq -e '.data|type=="array"' "$dir/networks.json" >/dev/null; then
-    chain_failure bnb bstocks 'Issuer deployment catalog unavailable' >>"$dir/coverage.jsonl"
-  fi
-  if [[ $(cat "$dir/xstocks.json.status") != 404 ]] && ! jq -e --arg t "$ticker" '.underlyingSymbol==$t and (.deployments|type)=="array"' "$dir/xstocks.json" >/dev/null; then
-    chain_failure bnb/solana xstocks 'Issuer lookup failed; stock deployment coverage unresolved' >>"$dir/coverage.jsonl"
-  fi
   jq -n --arg t "$ticker" --slurpfile bn "$scratch_root/binance/assets.json" --slurpfile rh "$dir/robinhood.json" '
     ($bn[0].data[]?|select(.uq==$t and ((.tags//[])|index("bStocks"))!=null and (try ((.ml|tonumber)!=1) catch true))|
       {chain:"bnb",issuer:"bstocks",message:"Non-unit or unknown token exposure multiplier is not supported"}),

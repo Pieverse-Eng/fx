@@ -835,7 +835,7 @@ pub const read_tool_result = ToolSpec{
 };
 
 const discover_markets_description =
-    "This tool allows you to find available spot and perpetual markets for multiple base tickers across supported venues in parallel. Returns exact trading symbols, product types, routing identifiers, restrictions, and query errors.";
+    "This tool allows you to find spot and perpetual markets for multiple base tickers across supported venues, including issuer-verified stock token deployments on BNB, Solana and Robinhood Chain. Returns exact trading symbols or chain/contract/provider identities, restrictions, and query errors. Onchain deployment_only entries identify supported purchase channels, not confirmed liquidity or executable quotes; use compare_trade_routes with an amount to compare entry costs.";
 
 pub const discover_markets = ToolSpec{
     .name = "discover_markets",
