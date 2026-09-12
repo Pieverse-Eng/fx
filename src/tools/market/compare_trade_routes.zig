@@ -1,7 +1,7 @@
 const std = @import("std");
 const dispatch = @import("../../core/tooling/tool_dispatch.zig");
 const public_command = @import("public_market_command.zig");
-const script = "snapshot_math=$(cat <<'FX_SNAPSHOT_MATH'\n" ++ @embedFile("snapshot_math.jq") ++ "\nFX_SNAPSHOT_MATH\n)\n" ++ "route_math=$(cat <<'FX_ROUTE_MATH'\n" ++ @embedFile("route_math.jq") ++ "\nFX_ROUTE_MATH\n)\n" ++ @embedFile("get-market-candles.sh") ++ "\n" ++ @embedFile("onchain-routes.sh") ++ "\n" ++ @embedFile("market-snapshots.sh") ++ "\n" ++ @embedFile("compare-trade-routes.sh") ++ "\nFX_MARKET_MODE=routes\n" ++ @embedFile("discover-markets.sh");
+const script = "snapshot_math=$(cat <<'FX_SNAPSHOT_MATH'\n" ++ @embedFile("snapshot_math.jq") ++ "\nFX_SNAPSHOT_MATH\n)\n" ++ "route_math=$(cat <<'FX_ROUTE_MATH'\n" ++ @embedFile("route_math.jq") ++ "\nFX_ROUTE_MATH\n)\n" ++ @embedFile("get-market-candles.sh") ++ "\n" ++ @embedFile("issuer-discovery.sh") ++ "\n" ++ @embedFile("onchain-routes.sh") ++ "\n" ++ @embedFile("market-snapshots.sh") ++ "\n" ++ @embedFile("compare-trade-routes.sh") ++ "\nFX_MARKET_MODE=routes\n" ++ @embedFile("discover-markets.sh");
 const Input = struct {
     parsed: std.json.Parsed(std.json.Value),
     fn deinit(ptr: *anyopaque, alloc: std.mem.Allocator) void {

@@ -3,7 +3,7 @@ const dispatch = @import("../../core/tooling/tool_dispatch.zig");
 
 const public_command = @import("public_market_command.zig");
 
-const script = @embedFile("discover-markets.sh");
+const script = @embedFile("issuer-discovery.sh") ++ "\n" ++ @embedFile("discover-markets.sh");
 
 const Input = struct {
     parsed: std.json.Parsed(std.json.Value),

@@ -155,7 +155,12 @@ function toolResultText(
   if (output.type !== outputType || typeof output.value !== "string") {
     throw new Error(`Invalid tool result for ${toolCallId}`);
   }
-  return output.value;
+  const value = output.value;
+  // JSON requests annotate referenceable JSON tool results with a model-facing
+  // result-reference line. Keep this helper focused on the original payload.
+  return value.startsWith("FX result reference: ")
+    ? value.slice(value.indexOf("\n") + 1)
+    : value;
 }
 
 function preserveHttpFailure(

@@ -835,7 +835,7 @@ pub const read_tool_result = ToolSpec{
 };
 
 const discover_markets_description =
-    "This tool allows you to find available spot and perpetual markets for multiple base tickers across supported venues in parallel. Returns exact trading symbols, product types, routing identifiers, restrictions, and query errors.";
+    "This tool allows you to find spot and perpetual markets for multiple base tickers across supported venues, including issuer-verified stock token deployments on BNB, Solana and Robinhood Chain. Returns exact trading symbols or chain/contract/provider identities, restrictions, and query errors. Onchain deployment_only entries identify supported purchase channels, not confirmed liquidity or executable quotes; use compare_trade_routes with an amount to compare entry costs.";
 
 pub const discover_markets = ToolSpec{
     .name = "discover_markets",
@@ -889,7 +889,7 @@ pub const get_market_candles = ToolSpec{
 };
 
 const compare_trade_routes_description =
-    "Retrieve per-market funding, open interest and displayed depth across supported venues. Omit amount and direction for snapshots only. With amount, compare taker entry costs, also including supported onchain stock spot routes. Returns markets with timestamps, units, gaps and fill estimates, plus bestRoute, rankedRoutes with the cheapest eligible route per venue or onchain provider/chain, and gaps. Lower costRank is cheaper; ties share a rank. The caller selects a route using its account configuration and constraints. Market discovery is included; do not call discover_markets solely to supplement or recheck this comparison. Perp amount is sized at each venue midpoint and rounded down to its lot step. estimatedFillPrice excludes fees; effectivePrice includes fees, so do not apply fees again. Funding is reported separately from entry costs. Missing data is unknown, not zero. Does not place orders.";
+    "Retrieve per-market funding, open interest and displayed depth across supported venues. Omit amount and direction for snapshots only. With amount, compare taker entry costs, also including supported onchain stock spot routes. Returns markets with timestamps, units and fill estimates, plus bestRoute, rankedRoutes and gaps. rankedRoutes is ordered by cost, keeps the cheapest eligible route for each venue, and preserves separate onchain routes when the issuer, contract, provider, or payment token differs. Lower costRank is cheaper; ties share a rank. The caller selects a route using its account configuration and constraints. Market discovery is included; do not call discover_markets solely to supplement or recheck this comparison. Perp amount is sized at each venue midpoint and rounded down to its lot step. estimatedFillPrice excludes fees; effectivePrice includes fees, so do not apply fees again. Funding is reported separately from entry costs. Missing data is unknown, not zero. Does not place orders.";
 
 pub const compare_trade_routes = ToolSpec{
     .name = "compare_trade_routes",
@@ -1069,7 +1069,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "9b13eb28ab994f894c6b2f9f778247348d0049f878c6ebcc3d4cef579c2d8700",
+        "1cf95877ae3e25fdc32af012213daceece97935388d0b29e7fa06d19fd173c91",
         &actual_hex,
     );
 }

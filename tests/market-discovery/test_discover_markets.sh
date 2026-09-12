@@ -9,6 +9,26 @@ cat >"$fixture_dir/cli" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}:$*" in
+ purr:'pancake swap'*)
+   [[ $* != *--execute* ]] || exit 99
+   shift 2
+   while (( $# )); do case "$1" in --from) tin=$2;; --to) tout=$2;; --amount) amount=$2;; esac; shift 2; done
+   jq -n --arg tin "$tin" --arg tout "$tout" --arg amount "$amount" --argjson now "$(date +%s)" '
+     {provider:"pancakeswap",chainId:56,fromToken:$tin,toToken:$tout,fromAmount:$amount,
+      inputDecimals:18,outputDecimals:18,estimatedToAmount:((($amount|tonumber)*1e5|floor|tostring)+"000000000000"),
+      expiresAt:($now+300),gasEstimateUsd:"2",feeNote:"Indicative gas; approval costs excluded",route:[
+        {path:[{address:$tin,decimals:18},{address:$tout,decimals:18}],pools:[{provider:"pancakeswap",type:"v3",fee:2500}]}]}'
+   exit 0;;
+ purr:'wallet uniswap'*)
+   [[ $* != *--execute* ]] || exit 99
+   shift 2
+   while (( $# )); do case "$1" in --from) tin=$2;; --to) tout=$2;; --amount) amount=$2;; esac; shift 2; done
+   body=$(jq -cn --arg tin "$tin" --arg tout "$tout" --arg amount "$amount" '{chainId:4663,fromToken:$tin,toToken:$tout,fromAmount:$amount}')
+   jq -n --argjson b "$body" '$b+{provider:"uniswap",
+     inputDecimals:18,outputDecimals:18,amountOut:(($b.fromAmount|tonumber)*1e17|tostring),
+     gasEstimateUsd:"8",route:[[{type:"v4-pool",tokenIn:{address:$b.fromToken},tokenOut:{address:$b.toToken}}]],
+     feeNote:"Indicative swap gas; approval costs excluded",feeEstimateSource:"fixture"}'
+   exit 0;;
  purr:'orderly markets') venue=orderly; key=orderly;;
  curl:*api.orderly.org/v1/public/futures*) venue=orderly; key=stats-orderly;;
  curl:*premiumIndex*) venue=derivatives; key=snapshot-premium;;
@@ -25,6 +45,7 @@ case "${0##*/}:$*" in
  okx:*'market funding-rate'*) venue=derivatives; key=snapshot-okx-funding;;
  okx:*'market open-interest'*) venue=derivatives; key=snapshot-okx-oi;;
  curl:*api/v3/ticker/bookTicker*) venue=binance; key=route-rates;;
+ curl:*api.kraken.com/0/public/Ticker*) venue=kraken; key=stats-kraken;;
  curl:*fapi.asterdex.com*/depth*) venue=aster; key=route-book;;
  binance-cli:*depth*|binance-cli:*order-book*) venue=binance; key=route-book;;
  bgc:*'--action orderbook'*) venue=bitget; key=route-bitget;;
@@ -42,7 +63,14 @@ case "${0##*/}:$*" in
  curl:*api/v1/candles*resolution=1h*) venue=lighter; key=lighter-candles-1h;;
  curl:*api/v1/candles*resolution=4h*) venue=lighter; key=lighter-candles-4h;;
  curl:*api/v1/recentTrades*) venue=lighter; key=lighter-trades;;
- curl:*api.xstocks.fi*) venue=issuer; key=route-no-asset;;
+ curl:*api.xstocks.fi*)
+   venue=issuer; key=route-no-asset
+   for arg in "$@"; do
+     if [[ $arg == https://api.xstocks.fi/api/v2/public/assets/* ]]; then
+       asset=${arg##*/}
+       [[ ! -f $FIXTURE_DIR/route-xstocks-$asset.json ]] || key=route-xstocks-$asset
+     fi
+   done;;
  curl:*api.robinhood.com*) venue=issuer; key=route-rh;;
  curl:*getNetworkCoinAll*) venue=issuer; key=route-networks;;
  curl:*binance.com*klines*interval=15m*) venue=binance; key=candles-15m;;
@@ -84,7 +112,7 @@ case "${0##*/}:$*" in
 esac
 printf '%s\n' "$key" >>"$FIXTURE_DIR/calls"
 printf '%s:%s\n' "${0##*/}" "$*" >>"$FIXTURE_DIR/commands"
-if [[ ${WAIT_FOR_ALL:-0} == 1 ]]; then
+if [[ ${WAIT_FOR_ALL:-0} == 1 && $venue != issuer ]]; then
   touch "$FIXTURE_DIR/started-$venue"
   # All nine workers must have entered their first public query before any returns.
   # A sequential implementation fails deterministically rather than by a timing assertion.
@@ -96,6 +124,15 @@ if [[ ${WAIT_FOR_ALL:-0} == 1 ]]; then
   (( ${#files[@]} == 9 )) || exit 1
 fi
 [[ ! -f $FIXTURE_DIR/$key.fail ]] || exit 1
+if [[ $venue == issuer ]]; then
+  target=''
+  while (( $# )); do if [[ $1 == -o ]]; then target=$2; shift; fi; shift; done
+  if [[ -n $target ]]; then
+    cp "$FIXTURE_DIR/$key.json" "$target"
+    if [[ $key == route-no-asset ]]; then printf 404; else printf 200; fi
+    exit 0
+  fi
+fi
 cat "$FIXTURE_DIR/$key.json"
 MOCK
 chmod +x "$fixture_dir/cli"
@@ -276,11 +313,14 @@ if [[ $# == 1 ]]; then
   python3 "$repo_root/tests/market-discovery/test_tool_runtime.py" "$1" "$fixture_dir"
   exit
 fi
+echo '{"error":"asset not found"}' >"$fixture_dir/route-no-asset.json"
+echo '{"assets":[]}' >"$fixture_dir/route-rh.json"
+echo '{"data":[]}' >"$fixture_dir/route-networks.json"
 run() { bash "$script" "$@"; }
 WAIT_FOR_ALL=1 run BTC CRCL PEPE ETH >"$fixture_dir/result.json"
 jq -e '(keys==["errors","results"]) and .errors==[] and (.results|map(.ticker))==["BTC","CRCL","PEPE","ETH"]' "$fixture_dir/result.json" >/dev/null
 # Every required catalog was fetched once despite four tickers.
-jq -Rsc 'split("\n")[:-1] | map(select(.!="route-lighter-book")) | length==20 and (group_by(.)|all(.[];length==1))' "$fixture_dir/calls" | jq -e . >/dev/null
+jq -Rsc 'split("\n")[:-1] | map(select(.!="route-lighter-book" and (startswith("route-")|not))) | length==20 and (group_by(.)|all(.[];length==1))' "$fixture_dir/calls" | jq -e . >/dev/null
 jq -e '[.results[]|select(.ticker=="CRCL")|.markets[]] as $m |
  any($m[];.venue=="aster" and .symbol=="CRCLUSDT") and
  any($m[];.venue=="binance" and .symbol=="CRCLBUSDT" and .product=="spot") and
@@ -303,7 +343,7 @@ jq -e 'any(.results[]|select(.ticker=="PEPE")|.markets[];.venue=="lighter" and .
 : >"$fixture_dir/calls"
 run btc BTC CRCL >"$fixture_dir/result.json"
 jq -e '(.results|map(.ticker))==["BTC","CRCL"]' "$fixture_dir/result.json" >/dev/null
-[[ $(wc -l <"$fixture_dir/calls") == 20 ]]
+[[ $(sed '/^route-/d' "$fixture_dir/calls" | wc -l) == 20 ]]
 # Some venues cannot cover a requested currency; retain the other results.
 partial() { run "$@" || [[ $? == 1 ]]; }
 # Aliases retain input grouping and native order IDs; no fuzzy issuer matching.
@@ -379,9 +419,9 @@ done
 export FX_MARKET_CACHE_DIR="$fixture_dir/cache"
 : >"$fixture_dir/calls"
 run BTC CRCL >"$fixture_dir/cache-first.json"
-first_calls=$(wc -l <"$fixture_dir/calls")
+first_calls=$(sed '/^route-/d' "$fixture_dir/calls" | wc -l)
 run BTC CRCL >"$fixture_dir/cache-second.json"
-[[ $(wc -l <"$fixture_dir/calls") == "$first_calls" ]]
+[[ $(sed '/^route-/d' "$fixture_dir/calls" | wc -l) == "$first_calls" ]]
 cmp "$fixture_dir/cache-first.json" "$fixture_dir/cache-second.json"
 # An expired entry forces a real read, not stale availability.
 for entry in "$FX_MARKET_CACHE_DIR"/*.json; do
@@ -389,7 +429,7 @@ for entry in "$FX_MARKET_CACHE_DIR"/*.json; do
   mv "$fixture_dir/expired.json" "$entry"
 done
 run BTC CRCL >/dev/null
-[[ $(wc -l <"$fixture_dir/calls") -gt "$first_calls" ]]
+[[ $(sed '/^route-/d' "$fixture_dir/calls" | wc -l) -gt "$first_calls" ]]
 echo 'Unified discovery fixtures passed: all nine workers overlap, one fetch per catalog, multi-ticker results, filters, restrictions, and partial failures.'
 
 # Empty Lighter books are absent assets; failed queries retain coverage errors.
@@ -403,3 +443,24 @@ partial ETH --quote ALL | jq -e 'any(.errors[];.venue=="lighter") and all(.resul
 mv "$fixture_dir/book.saved" "$fixture_dir/route-lighter-book.json"
 partial ETH --quote ALL | jq -e 'any(.results[].markets[];.venue=="lighter")' >/dev/null
 echo 'Lighter empty-book exclusion and failed-book coverage passed.'
+
+# Availability includes issuer deployments without quoting or wallet credentials.
+unset FX_MARKET_CACHE_DIR
+echo '{"data":[{"coin":"CRCLB","networkList":[{"network":"BSC","contractAddress":"0x1111111111111111111111111111111111111111"}]}]}' >"$fixture_dir/route-networks.json"
+echo '{"assets":[{"tokenSymbol":"CRCL","status":"ASSET_STATUS_ACTIVE","currentMultiplier":2,"deployments":[{"chainId":4663,"contractAddress":"0x2222222222222222222222222222222222222222"}]}]}' >"$fixture_dir/route-rh.json"
+echo '{"underlyingSymbol":"CRCL","symbol":"CRCLx","isTradingHalted":false,"deployments":[{"network":"BinanceSmartChain","address":"0x3333333333333333333333333333333333333333","stablecoins":[{"symbol":"USDC","address":"0x4444444444444444444444444444444444444444"}]},{"network":"Solana","address":"SolanaStockFixture","stablecoins":[{"symbol":"USDC","address":"SolanaUsdcFixture"}]}]}' >"$fixture_dir/route-xstocks-CRCLx.json"
+: >"$fixture_dir/commands"
+run CRCL --product spot >"$fixture_dir/onchain.json"
+jq -e '[.results[0].markets[]|select(.chain!=null)] as $m |
+  ($m|length)==4 and all($m[];.availability=="deployment_only" and .product=="spot") and
+  any($m[];.chain=="robinhood" and .provider=="uniswap" and .contract=="0x2222222222222222222222222222222222222222") and
+  ([$m[]|select(.chain=="bnb")]|length)==2 and any($m[];.chain=="solana" and .provider=="dflow") and .errors==[]' "$fixture_dir/onchain.json" >/dev/null
+! rg -q 'pancake swap|wallet uniswap|dflow|/quote|/calldata' "$fixture_dir/commands"
+run CRCL --product spot --quote USDG | jq -e '[.results[0].markets[]|select(.chain!=null)]|length==1 and .[0].chain=="robinhood"' >/dev/null
+: >"$fixture_dir/calls"
+run CRCL --product perpetual | jq -e 'all(.results[].markets[];.chain==null)' >/dev/null
+! rg -q '^route-(rh|networks|xstocks|no-asset)' "$fixture_dir/calls"
+touch "$fixture_dir/route-rh.fail"
+partial CRCL --product spot | jq -e 'any(.errors[];.chain=="robinhood") and any(.results[].markets[];.chain=="bnb")' >/dev/null
+rm "$fixture_dir/route-rh.fail"
+echo 'Onchain discovery, issuer identity, currency filters and failure coverage passed.'

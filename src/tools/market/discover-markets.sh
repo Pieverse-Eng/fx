@@ -534,6 +534,36 @@ if [[ ${FX_MARKET_MODE:-discover} == routes ]]; then
   exit $?
 fi
 tickers_json=$(printf '%s\n' "${tickers[@]}" | jq -Rsc 'split("\n")[:-1]')
+# Deployment discovery is independent of wallet readiness and quote amounts.
+# Direct shell tests source the same helper that the native tool embeds.
+if [[ $product != perpetual ]]; then
+  if ! declare -F issuer_discover >/dev/null; then source "$(dirname "${BASH_SOURCE[0]}")/issuer-discovery.sh"; fi
+  issuer_catalogs "$scratch_root/issuers"
+  for ticker in "${tickers[@]}"; do
+    issuer_discover "$ticker" "$scratch_root/issuers/$ticker" "$scratch_root/issuers" & workers+=("$!")
+    if (( ${#workers[@]} >= 4 )); then wait "${workers[0]}" || true; workers=("${workers[@]:1}"); fi
+  done
+  for pid in "${workers[@]}"; do wait "$pid" || true; done
+  workers=()
+fi
+echo '{"results":[],"errors":[]}' >"$scratch_root/onchain.json"
+for ticker in "${tickers[@]}"; do
+  [[ $product != perpetual ]] || break
+  dir="$scratch_root/issuers/$ticker"
+  if [[ ! -s $dir/deployments.json || ! -s $dir/errors.json ]]; then
+    echo '[]' >"$dir/deployments.json"
+    echo '[{"message":"Issuer discovery failed; chain coverage unresolved"}]' >"$dir/errors.json"
+  fi
+  jq --arg ticker "$ticker" --arg quote "$quote_override" --slurpfile d "$dir/deployments.json" --slurpfile e "$dir/errors.json" '
+    .results += [{ticker:$ticker,markets:([$d[0][] |
+      select($quote=="" or .inputAsset==$quote) |
+      {issuer,chain,symbol,contract,product:"spot",representation:"tokenized_stock",
+       provider:(if .chain=="bnb" then "pancakeswap" elif .chain=="solana" then "dflow" else "uniswap" end),
+       availability:"deployment_only"}]|unique_by(.issuer,.chain,.contract,.provider))}] |
+    .errors += [$e[0][]|.+{ticker:$ticker,query:"onchain"}]
+  ' "$scratch_root/onchain.json" >"$scratch_root/onchain.tmp"
+  mv "$scratch_root/onchain.tmp" "$scratch_root/onchain.json"
+done
 jq -s --argjson tickers "$tickers_json" '
   # Discovery hands off exact order selectors, not a snapshot of order sizing rules.
   def order_market($venue):
@@ -551,5 +581,10 @@ jq -s --argjson tickers "$tickers_json" '
   {results:[$tickers[]|. as $ticker|{ticker:$ticker,markets:[$venues[]|.venue as $venue|.results[]|select(.ticker==$ticker)|.markets[]|order_market($venue)]}],
    errors:[$venues[]|.venue as $venue|.errors[]|.+{venue:$venue}]}
 ' "${files[@]}" >"$scratch_root/result.json"
+jq --slurpfile chains "$scratch_root/onchain.json" '
+  .results |= map(. as $r | .markets += [$chains[0].results[]|select(.ticker==$r.ticker)|.markets[]]) |
+  .errors += $chains[0].errors
+' "$scratch_root/result.json" >"$scratch_root/result.tmp"
+mv "$scratch_root/result.tmp" "$scratch_root/result.json"
 cat "$scratch_root/result.json"
 jq -e '.errors|length==0' "$scratch_root/result.json" >/dev/null
