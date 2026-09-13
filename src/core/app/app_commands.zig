@@ -2183,6 +2183,7 @@ fn buildTraceReport(app: anytype) ![]u8 {
     try writePermissionsSummary(&out.writer, app.permission_engine.grants.items);
     try writeRuntimeContextSummary(&out.writer, app, app.alloc);
     try writeRendererState(&out.writer, app, app.alloc);
+    try writeRendererEvents(&out.writer, app.alloc);
 
     if (app.shell.entries.items.len > 0) {
         try out.writer.writeAll("\n## Transcript Timeline\n");
@@ -2520,6 +2521,10 @@ fn writeRuntimeContextSummary(writer: *std.Io.Writer, app: anytype, alloc: std.m
     try writer.print("TERM: {s}\n", .{io_mod.getenv("TERM") orelse "(unset)"});
     try writer.print("TERM_PROGRAM: {s}\n", .{io_mod.getenv("TERM_PROGRAM") orelse "(unset)"});
     try writer.print("LANG: {s}\n", .{io_mod.getenv("LANG") orelse "(unset)"});
+    try writer.print("terminal_hosts: tmux={s} cmux={s}\n", .{
+        boolLabel(io_mod.getenv("TMUX") != null),
+        boolLabel(io_mod.getenv("CMUX_WORKSPACE_ID") != null),
+    });
 
     var mcp_lease = if (comptime @hasDecl(@TypeOf(app.*), "acquireMcpRuntime"))
         app.acquireMcpRuntime()
@@ -2587,6 +2592,10 @@ fn writeRendererState(writer: *std.Io.Writer, app: anytype, alloc: std.mem.Alloc
         },
     );
     try writer.print(
+        "projection: view={d} history={d} total_rows={d} source_bytes={d} recovery={s} catchup={s}\n",
+        .{ transcript_commit.visual_offset, transcript_commit.history_visual_offset, transcript_commit.total_visual_rows, transcript_commit.source_bytes, boolLabel(app.shell.normalBufferRecoveryPending()), boolLabel(app.shell.historyCatchupPending()) },
+    );
+    try writer.print(
         "replaceable: active={s} row={d} start={d}\n",
         .{ boolLabel(app.shell.replaceable_last_line), app.shell.replaceable_row, app.shell.replaceable_start },
     );
@@ -2614,6 +2623,41 @@ fn writeRendererState(writer: *std.Io.Writer, app: anytype, alloc: std.mem.Alloc
         try writer.print("  {d:0>3}: {s}\n", .{ row, masked });
     }
     if (!emitted_any) try writer.writeAll("  (empty)\n");
+}
+
+fn writeRendererEvents(writer: *std.Io.Writer, alloc: std.mem.Allocator) !void {
+    var events: [diagnostics.render_ring_capacity]diagnostics.RenderEvent = undefined;
+    const count = diagnostics.snapshotRenderEvents(&events);
+    try writer.writeAll("\n## Recent Renderer Events\n");
+    try writer.writeAll("Internal rendering decisions, not terminal readback. Idle and same-row updates are omitted.\n");
+    if (count == 0) {
+        try writer.writeAll("(none recorded)\n");
+        return;
+    }
+    try writer.print("retained={d} capacity={d} overwritten_before={d}\n", .{
+        count, diagnostics.render_ring_capacity, events[0].sequence -| 1,
+    });
+    for (events[0..count]) |*event| {
+        try writeTraceTimestampUtc(writer, event.timestamp_ms);
+        try writer.print(" seq={d} kind={s} ", .{ event.sequence, @tagName(event.kind) });
+        try writeMaskedInline(writer, alloc, event.detail());
+        if (event.truncated) try writer.writeAll(" [truncated]");
+        try writer.writeByte('\n');
+    }
+}
+
+test "trace renderer events are available without opt-in file logging" {
+    diagnostics.resetForTest();
+    defer diagnostics.resetForTest();
+    debug_trace.shutdown();
+    diagnostics.recordRenderEvent(.transition, "release_past_finality history={d} releasable={d}", .{ 21, 20 });
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try writeRendererEvents(&out.writer, std.testing.allocator);
+    try std.testing.expect(debug_trace.activeLogPath() == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "## Recent Renderer Events") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "seq=1 kind=transition release_past_finality history=21 releasable=20") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "overwritten_before=0") != null);
 }
 
 fn boolLabel(value: bool) []const u8 {
@@ -3608,6 +3652,7 @@ pub fn settingsCatalogSnapshot(app: anytype) settings_catalog.Snapshot {
     }
     if (comptime @hasField(App, "statusline_context")) snapshot.statusline_context = app.statusline_context;
     if (comptime @hasField(App, "statusline_session")) snapshot.statusline_session = app.statusline_session;
+    if (comptime @hasField(App, "session_title_generation")) snapshot.session_titles = app.session_title_generation;
     if (comptime @hasField(App, "workspace_identity")) snapshot.statusline_workspace = app.workspace_identity.enabled;
     if (comptime @hasField(App, "prompt_history")) snapshot.prompt_history = app.prompt_history.enabled;
     if (comptime @hasDecl(App, "notificationPreferences")) {
@@ -3693,6 +3738,24 @@ pub fn applySettingsCatalogChange(app: anytype, change: settings_catalog.Change)
                 app,
                 "slash menu categories",
                 .{ .slash_menu_categories = enabled },
+                runtime_changed,
+            );
+        },
+        .session_titles => {
+            const enabled = parseOnOff(change.value) orelse return error.InvalidSettingsCatalogValue;
+            const ChangeApp = @TypeOf(app.*);
+            const current = if (comptime @hasField(ChangeApp, "session_title_generation"))
+                app.session_title_generation
+            else
+                true;
+            const runtime_changed = enabled != current;
+            if (comptime @hasField(ChangeApp, "session_title_generation")) {
+                if (runtime_changed) app.session_title_generation = enabled;
+            }
+            try persistUserPreferences(
+                app,
+                "session titles",
+                .{ .session_titles = enabled },
                 runtime_changed,
             );
         },

@@ -1,3 +1,4 @@
+import { toolResultPayload } from "./result-reference-helpers";
 import { describe, expect, test } from "bun:test";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import {
@@ -26,6 +27,7 @@ import {
   contentText,
 } from "./conditional-guidance-oracle";
 import { expectPermissionModeContext } from "./permission-mode-context";
+import { fakeGatewayTitleDefault, TITLE_GENERATION_MARKER } from "./tmux-helpers";
 
 const TIMEOUT = 15_000;
 const SOURCE_URL = "https://ziglang.org/download/";
@@ -251,6 +253,7 @@ function startFakeGateway(
   model: string | ModelCatalogFixture = OUTER_MODEL,
 ) {
   const requests: GatewayRequest[] = [];
+  const titleRequests: GatewayRequest[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -263,15 +266,22 @@ function startFakeGateway(
         });
       }
       if (req.method !== "POST") return new Response("not found", { status: 404 });
-      requests.push({ body: await req.text(), headers: req.headers });
+      const body = await req.text();
+      // Title generation side calls bypass the queued responses entirely.
+      if (body.includes(TITLE_GENERATION_MARKER)) {
+        titleRequests.push({ body, headers: req.headers });
+        return fakeGatewayTitleDefault();
+      }
+      requests.push({ body, headers: req.headers });
       return await (responses.shift() ?? new Response("unexpected request", { status: 500 }));
     },
   });
 
   return {
-    chatUrl: `http://127.0.0.1:${server.port}/v3/ai/language-model`,
+    chatUrl: `http://127.0.0.1:${server.port}/v4/ai/language-model`,
     baseUrl: `http://127.0.0.1:${server.port}`,
     requests,
+    titleRequests,
     stop() {
       server.stop(true);
     },
@@ -345,7 +355,7 @@ function toolResultText(body: string, callId: string): string {
     part.type === "tool-result" && part.toolCallId === callId
   );
   if (!result) throw new Error(`Missing tool result for ${callId}`);
-  return contentText(result.output);
+  return toolResultPayload(contentText(result.output));
 }
 
 class AcpClient {
@@ -595,7 +605,7 @@ describe("web_search Gateway fixture", () => {
         for (const request of [initial, continuing]) {
           expect(findUnavailableCapabilityReferences(request)).toEqual([]);
           expect(customProviderGuidanceState(request)).toEqual({
-            providerToolIndices: [13],
+            providerToolIndices: [AUTO_EXA_WITHOUT_DURABLE_TOOLS_SERIALIZED_TOOL_NAMES.indexOf("exa_search")],
             guidanceMessageIndices: [1],
           });
           expect(
@@ -837,7 +847,7 @@ describe("web_search Gateway fixture", () => {
         );
         expect(findUnavailableCapabilityReferences(request)).toEqual([]);
         expect(customProviderGuidanceState(request)).toEqual({
-          providerToolIndices: [13],
+          providerToolIndices: [AUTO_EXA_WITHOUT_DURABLE_TOOLS_SERIALIZED_TOOL_NAMES.indexOf("exa_search")],
           guidanceMessageIndices: [1],
         });
       } finally {
