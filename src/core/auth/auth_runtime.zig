@@ -1408,12 +1408,29 @@ pub const StatusSnapshot = struct {
 
     pub fn missingHelp(self: StatusSnapshot, surface: MissingHelpSurface) ?[]const u8 {
         if (self.active_source != null) return null;
-        if (self.stored_key_status == .unavailable) return credentials.unreadable_store_message;
+        if (self.stored_key_status == .unavailable) {
+            if (self.required_source == .stored_key) return switch (surface) {
+                .cli => "The selected stored API key could not be read from " ++ credentials.stored_key_backend_label ++ ". Start fx and open /provider to choose an available credential; no other credential was selected.",
+                .interactive => "The selected stored API key could not be read from " ++ credentials.stored_key_backend_label ++ ". Run /provider to choose an available credential; no other credential was selected.",
+            };
+            return credentials.unreadable_store_message;
+        }
         if (self.failure) |failure| {
             if (preparationError(failure)) |err| return preparationFailureNotice(err);
         }
-        if (self.required_source == .fx_login) {
-            return switch (surface) {
+        const automatic_help: []const u8 = switch (surface) {
+            .cli => credentials.missing_credential_message,
+            .interactive => credentials.missing_interactive_credential_message,
+        };
+        const required_source = self.required_source orelse return automatic_help;
+        return switch (required_source) {
+            .vercel_oidc_token => "VERCEL_OIDC_TOKEN is selected but unavailable. Set VERCEL_OIDC_TOKEN before starting fx; no other credential was selected.",
+            .ai_gateway_api_key => "AI_GATEWAY_API_KEY is selected but unavailable. Set AI_GATEWAY_API_KEY before starting fx; no other credential was selected.",
+            .stored_key => switch (surface) {
+                .cli => "A stored API key is selected but unavailable. Start fx and open /provider to choose an available credential; no other credential was selected.",
+                .interactive => "A stored API key is selected but unavailable. Run /provider to choose an available credential; no other credential was selected.",
+            },
+            .fx_login => switch (surface) {
                 .cli => if (self.fx_login_status == .unavailable)
                     "The saved fx login could not be loaded. Run fx login to repair this source; no other credential was selected."
                 else
@@ -1422,29 +1439,20 @@ pub const StatusSnapshot = struct {
                     "The saved fx login could not be loaded. Run /login to repair this source; no other credential was selected."
                 else
                     "fx login is selected but unavailable. Run /login to reconnect; no other credential was selected.",
-            };
-        }
-        if (self.required_source == .chatgpt_subscription) {
-            return switch (surface) {
+            },
+            .chatgpt_subscription => switch (surface) {
                 .cli => credentials.missing_chatgpt_credential_message,
                 .interactive => credentials.missing_chatgpt_interactive_credential_message,
-            };
-        }
-        if (self.required_source == .grok_subscription) {
-            return switch (surface) {
+            },
+            .grok_subscription => switch (surface) {
                 .cli => credentials.missing_grok_credential_message,
                 .interactive => credentials.missing_grok_interactive_credential_message,
-            };
-        }
-        if (self.required_source == .pieverse_api_key) {
-            return switch (surface) {
+            },
+            .pieverse_api_key => switch (surface) {
                 .cli => credentials.missing_pieverse_credential_message,
                 .interactive => credentials.missing_pieverse_interactive_credential_message,
-            };
-        }
-        return switch (surface) {
-            .cli => credentials.missing_credential_message,
-            .interactive => credentials.missing_interactive_credential_message,
+            },
+            .host_managed => automatic_help,
         };
     }
 
@@ -1613,7 +1621,10 @@ pub const Runtime = struct {
     secret_store: host.SecretStore = host.unavailable_secret_store,
     auth_mode: credentials.AuthMode = .local,
     selected_credential: ?credentials.Credential = null,
-    credential_failure: ?CredentialFailure = null,
+    credential_failure: ?struct {
+        failure: CredentialFailure,
+        notice_claimed: bool,
+    } = null,
     source_inventory: SourceSet = .empty,
     unavailable_sources: SourceSet = .empty,
     stored_key_status: credentials.StoredKeyReadStatus = .not_attempted,
@@ -1790,24 +1801,28 @@ pub const Runtime = struct {
         return credentials.catalogAccessAt(self.selected_credential, io_mod.milliTimestamp());
     }
 
-    /// Returns true only for the first observation of this failure episode.
-    pub fn recordCredentialFailure(self: *Self, failure: CredentialFailure) bool {
+    /// Records recovery state even when silent. Returns true only when claiming
+    /// the first requested notice of this failure episode.
+    pub fn recordCredentialFailure(
+        self: *Self,
+        failure: CredentialFailure,
+        options: struct { notify: bool = true },
+    ) bool {
         std.debug.assert(self.credentialSource() == failure.source);
-        if (self.credential_failure) |current| {
-            if (current.source == failure.source and
-                current.reason == failure.reason)
-            {
-                return false;
-            }
-        }
-        self.credential_failure = failure;
+        const same_failure = if (self.credential_failure) |current|
+            current.failure.source == failure.source and current.failure.reason == failure.reason
+        else
+            false;
+        if (!same_failure) self.credential_failure = .{ .failure = failure, .notice_claimed = false };
+        if (!options.notify or self.credential_failure.?.notice_claimed) return false;
+        self.credential_failure.?.notice_claimed = true;
         return true;
     }
 
     /// Recovery and catalog access concern only the selected credential.
     pub fn credentialFailure(self: *const Self) ?CredentialFailure {
-        const failure = self.credential_failure orelse return null;
-        return if (self.credentialSource() == failure.source) failure else null;
+        const episode = self.credential_failure orelse return null;
+        return if (self.credentialSource() == episode.failure.source) episode.failure else null;
     }
 
     pub fn credentialSource(self: *const Self) ?credentials.Source {
@@ -1856,8 +1871,8 @@ pub const Runtime = struct {
         const pieverse_connected = self.source_inventory.contains(.pieverse_api_key);
         const credential = self.selected_credential orelse return .{
             .required_source = requestedSource(provider, preferred),
-            .failure = if (self.credential_failure) |failure|
-                if (model_provider.authorizesCredential(provider, failure.source)) failure else null
+            .failure = if (self.credential_failure) |episode|
+                if (model_provider.authorizesCredential(provider, episode.failure.source)) episode.failure else null
             else
                 null,
             .stored_key_status = if (provider == .gateway) self.stored_key_status else .not_attempted,
@@ -1905,10 +1920,10 @@ pub const Runtime = struct {
         self.fx_login_status = fx_login_status;
         self.onboarding_skipped = onboarding_skipped;
         if (self.auth_mode == .local and self.selected_credential == null) {
-            self.credential_failure = if (load_failure) |failure|
-                classifyCredentialFailure(failure.source, failure.err)
-            else
-                null;
+            self.credential_failure = if (load_failure) |failure| .{
+                .failure = classifyCredentialFailure(failure.source, failure.err),
+                .notice_claimed = true,
+            } else null;
         }
     }
 
@@ -2043,7 +2058,8 @@ pub const Runtime = struct {
         }
         if (self.credentialSource()) |source| {
             if (source != .host_managed and !inventory.unavailable.contains(source)) self.source_inventory.insert(source);
-        } else if (self.credential_failure) |failure| {
+        } else if (self.credential_failure) |episode| {
+            const failure = episode.failure;
             if (!inventory.available.contains(failure.source) and !inventory.unavailable.contains(failure.source)) {
                 debug_trace.logf("auth", "credential load failure cleared source={t} reason=source_absent", .{failure.source});
                 self.credential_failure = null;
@@ -3315,7 +3331,7 @@ test "catalog access records a refresh failure until another credential is adopt
     _ = runtime.recordCredentialFailure(classifyCredentialFailure(
         .fx_login,
         error.OAuthRequestFailed,
-    ));
+    ), .{});
 
     const failed = runtime.modelCatalogAccess();
     try std.testing.expectEqual(credentials.CatalogPublicOnlyReason.credential_refresh_failed, failed.publicOnlyReason().?);
@@ -3337,17 +3353,29 @@ test "credential failure episodes deduplicate and clear on adoption" {
     _ = runtime.adoptCredential(alloc, &login);
 
     const failure = classifyCredentialFailure(.fx_login, error.InvalidGrant);
-    try std.testing.expect(runtime.recordCredentialFailure(failure));
-    try std.testing.expect(!runtime.recordCredentialFailure(failure));
+    try std.testing.expect(!runtime.recordCredentialFailure(failure, .{ .notify = false }));
+    try std.testing.expectEqual(failure, runtime.credentialFailure().?);
+    runtime.cancelPromptCredentialRefresh();
+    try std.testing.expect(runtime.recordCredentialFailure(failure, .{}));
+    try std.testing.expect(!runtime.recordCredentialFailure(failure, .{ .notify = false }));
+    try std.testing.expect(!runtime.recordCredentialFailure(failure, .{}));
     try std.testing.expectEqual(failure, runtime.credentialFailure().?);
     try std.testing.expectEqual(
         credentials.CatalogPublicOnlyReason.credential_refresh_failed,
         runtime.modelCatalogAccess().publicOnlyReason().?,
     );
 
+    const temporary = classifyCredentialFailure(.fx_login, error.OAuthRequestFailed);
+    try std.testing.expect(!runtime.recordCredentialFailure(temporary, .{ .notify = false }));
+    try std.testing.expectEqual(temporary, runtime.credentialFailure().?);
+    try std.testing.expect(runtime.recordCredentialFailure(temporary, .{}));
+    try std.testing.expect(!runtime.recordCredentialFailure(temporary, .{}));
+
     var refreshed = try makeTestCredential(alloc, "fresh-login-token", .fx_login, null, null);
     _ = runtime.adoptCredential(alloc, &refreshed);
     try std.testing.expect(runtime.credentialFailure() == null);
+    try std.testing.expect(runtime.recordCredentialFailure(temporary, .{}));
+    try std.testing.expect(!runtime.recordCredentialFailure(temporary, .{}));
 }
 
 test "auth runtime adopts credential ownership and prefers team id" {
@@ -3616,7 +3644,7 @@ test "startup status and inventory preserve selected and host-managed failure se
     defer credential.deinit(alloc);
     _ = runtime.adoptCredential(alloc, &credential);
     const failure = classifyCredentialFailure(.fx_login, error.OAuthRequestFailed);
-    _ = runtime.recordCredentialFailure(failure);
+    _ = runtime.recordCredentialFailure(failure, .{});
     runtime.recordStartupStatus(.not_attempted, .not_attempted, .{
         .source = .grok_subscription,
         .err = error.InvalidGrokAuthSession,
@@ -3736,6 +3764,59 @@ test "auth status snapshot distinguishes an absent store from an unreadable one"
 
     const resolved = StatusSnapshot{ .active_source = .fx_login, .stored_key_status = .unavailable };
     try std.testing.expect(resolved.missingHelp(.cli) == null);
+}
+
+test "auth status names each explicit key source and its recovery" {
+    const cases = [_]struct {
+        source: credentials.Source,
+        label: []const u8,
+        cli_recovery: []const u8,
+        interactive_recovery: []const u8,
+    }{
+        .{ .source = .vercel_oidc_token, .label = "VERCEL_OIDC_TOKEN", .cli_recovery = "Set VERCEL_OIDC_TOKEN before starting fx", .interactive_recovery = "Set VERCEL_OIDC_TOKEN before starting fx" },
+        .{ .source = .ai_gateway_api_key, .label = "AI_GATEWAY_API_KEY", .cli_recovery = "Set AI_GATEWAY_API_KEY before starting fx", .interactive_recovery = "Set AI_GATEWAY_API_KEY before starting fx" },
+        .{ .source = .stored_key, .label = "stored API key", .cli_recovery = "Start fx and open /provider", .interactive_recovery = "Run /provider" },
+    };
+    for (cases) |case| {
+        const status = StatusSnapshot{ .required_source = case.source };
+        for ([_]MissingHelpSurface{ .cli, .interactive }) |surface| {
+            const help = status.missingHelp(surface).?;
+            try std.testing.expect(std.mem.find(u8, help, case.label) != null);
+            try std.testing.expect(std.mem.find(u8, help, if (surface == .cli) case.cli_recovery else case.interactive_recovery) != null);
+            try std.testing.expect(std.mem.find(u8, help, "no other credential was selected") != null);
+            if (case.source != .ai_gateway_api_key) try std.testing.expect(std.mem.find(u8, help, "AI_GATEWAY_API_KEY") == null);
+        }
+    }
+}
+
+test "auth status preserves explicit Pieverse recovery on both surfaces" {
+    const status = StatusSnapshot{ .required_source = .pieverse_api_key };
+    try std.testing.expectEqualStrings(credentials.missing_pieverse_credential_message, status.missingHelp(.cli).?);
+    try std.testing.expectEqualStrings(credentials.missing_pieverse_interactive_credential_message, status.missingHelp(.interactive).?);
+
+    const detail = try status.formatDoctorDetail(std.testing.allocator);
+    defer std.testing.allocator.free(detail);
+    try std.testing.expectEqualStrings(credentials.missing_pieverse_credential_message, detail);
+    try std.testing.expect((StatusSnapshot{ .active_source = .pieverse_api_key }).missingHelp(.cli) == null);
+}
+
+test "auth status preserves selected stored-key read failure without suggesting an excluded key" {
+    var status = StatusSnapshot{
+        .required_source = .stored_key,
+        .stored_key_status = .unavailable,
+        .failure = classifyCredentialFailure(.stored_key, error.CredentialStorageUnavailable),
+    };
+    for ([_]MissingHelpSurface{ .cli, .interactive }) |surface| {
+        const help = status.missingHelp(surface).?;
+        try std.testing.expect(std.mem.find(u8, help, "could not be read") != null);
+        try std.testing.expect(std.mem.find(u8, help, credentials.stored_key_backend_label) != null);
+        try std.testing.expect(std.mem.find(u8, help, "/provider") != null);
+        try std.testing.expect(std.mem.find(u8, help, "AI_GATEWAY_API_KEY") == null);
+    }
+    status.required_source = null;
+    try std.testing.expectEqualStrings(credentials.unreadable_store_message, status.missingHelp(.cli).?);
+    status.active_source = .ai_gateway_api_key;
+    try std.testing.expect(status.missingHelp(.cli) == null);
 }
 
 test "auth status keeps an unavailable explicit fx login distinct from automatic absence" {

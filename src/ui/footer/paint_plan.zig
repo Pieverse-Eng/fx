@@ -592,7 +592,7 @@ fn pushSteeringRows(
         const candidate_rows = render_input.steering_message_layout(
             ctx.steering_messages[candidate],
             width,
-            ctx.steering_waits_for_tool,
+            ctx.steering_waits_for_boundary,
             render_input.max_steering_message_rows,
         ).row_count;
         visible_start = candidate;
@@ -613,7 +613,7 @@ fn pushSteeringRows(
             message,
             width,
             row_limit,
-            ctx.steering_waits_for_tool,
+            ctx.steering_waits_for_boundary,
         );
         defer rows.deinit(alloc);
         for (rows.rows.items) |*row| {
@@ -909,11 +909,19 @@ pub fn composeFooterFrame(
             }
         } else if (input.picker_kind == .file and input.file_picker_items.len > 0) {
             const selected = input.picker_selection_index % input.file_picker_items.len;
-            const window_start = picker_presentation.updateEdgeScrollPickerWindowStart(input.picker_window_start, input.file_picker_items.len, selected, input.picker_rows);
-            const window = picker_presentation.edgeScrollPickerWindowFromStart(input.file_picker_items.len, window_start, input.picker_rows);
             var row = rows.picker_start;
+            const status_rows: u16 = @intFromBool(ctx.file_completion_status != null and input.picker_rows > 1);
+            if (status_rows > 0) {
+                const status = ctx.file_completion_status.?;
+                var status_row = try picker_presentation.composePickerOptionRow(alloc, .file, input.picker_start_col, status, false, shell.layout.cols);
+                try pushFooterBandRow(alloc, &frame, plan, row, &status_row);
+                row += 1;
+            }
+            const visible_rows = input.picker_rows -| status_rows;
+            const window_start = picker_presentation.updateEdgeScrollPickerWindowStart(input.picker_window_start, input.file_picker_items.len, selected, visible_rows);
+            const window = picker_presentation.edgeScrollPickerWindowFromStart(input.file_picker_items.len, window_start, visible_rows);
             for (input.file_picker_items[window.start..window.end], window.start..) |item, i| {
-                var picker_row = try picker_presentation.composeFilePickerOptionRow(alloc, input.picker_start_col, item, i == selected, shell.layout.cols);
+                var picker_row = try picker_presentation.composeFilePickerOptionRow(alloc, input.picker_start_col, item, ctx.file_completion_has_selection and i == selected, shell.layout.cols);
                 try pushFooterBandRow(alloc, &frame, plan, row, &picker_row);
                 row += 1;
             }
@@ -929,7 +937,10 @@ pub fn composeFooterFrame(
                 row += 1;
             }
         } else {
-            var status_row = try picker_presentation.composePickerStatusRowWithProvider(alloc, input.picker_kind, ctx.model_picker_stage, ctx.provider_picker_stage, input.picker_loading, input.picker_failed, input.picker_start_col, shell.layout.cols);
+            var status_row = if (input.picker_kind == .file and ctx.file_completion_status != null)
+                try picker_presentation.composePickerOptionRow(alloc, .file, input.picker_start_col, ctx.file_completion_status.?, false, shell.layout.cols)
+            else
+                try picker_presentation.composePickerStatusRowWithProvider(alloc, input.picker_kind, ctx.model_picker_stage, ctx.provider_picker_stage, input.picker_loading, input.picker_failed, input.picker_start_col, shell.layout.cols);
             try pushFooterBandRow(alloc, &frame, plan, rows.picker_start, &status_row);
         }
     }
@@ -1000,7 +1011,7 @@ fn composeTranscriptViewerFooterFrame(
     errdefer frame.deinit(alloc);
     const width = shell.layout.cols;
     const navigation = switch (input.ctx.transcript_depth) {
-        .full => "Full detail · ctrl o close · PgUp/PgDn scroll · Esc close",
+        .full => "full detail · ctrl+o close · pgup/pgdn scroll · esc close",
         .inline_mode => unreachable,
     };
 
@@ -1098,29 +1109,6 @@ fn composeAndPushVisibleInputRows(
     return placement;
 }
 
-fn composeInputRowsSnapshot(
-    alloc: Allocator,
-    input: []const u8,
-    cursor: usize,
-    images: []const types.ImageAttachment,
-    width: u16,
-    row_limit: usize,
-) ![]u8 {
-    const source = visual_layout.Source{ .input = input, .cursor = cursor, .terminal_cols = width, .images = images };
-    const summary = visual_layout.summarize(source, null);
-    const window = visual_layout.visibleWindow(summary.cursor.row_index, summary.total_rows, row_limit);
-    var rows = try input_presentation.composeVisibleInputRows(alloc, source, window);
-    defer rows.deinit(alloc);
-
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(alloc);
-    for (rows.rows.items, 0..) |row, i| {
-        if (i > 0) try out.append(alloc, '\n');
-        try out.appendSlice(alloc, row.items);
-    }
-    return try out.toOwnedSlice(alloc);
-}
-
 fn pushFooterBandRow(
     alloc: Allocator,
     frame: *footer_viewport.ComposedFooterFrame,
@@ -1211,10 +1199,6 @@ fn expectRowBackground(row_bytes: []const u8, width: u16, expected_bg: vt_emulat
         const cell = grid.cellAt(1, col) orelse return error.TestUnexpectedResult;
         try std.testing.expect(cell.style.bg.eql(expected_bg));
     }
-}
-
-fn expectRowDefaultBackground(row_bytes: []const u8, width: u16) !void {
-    try expectRowBackground(row_bytes, width, .default);
 }
 
 fn expectFrameRowBackground(frame: *const footer_viewport.ComposedFooterFrame, row_number: u16, width: u16, expected_bg: vt_emulator.Color) !void {
@@ -1320,7 +1304,7 @@ test "transcript viewer footer keeps navigation blank row and aligns main status
         &frame,
         frame_plan.paint.footer.top_divider,
         shell.layout.cols,
-        "┃ Full detail · ctrl o close · PgUp/PgDn scroll · Esc close",
+        "┃ full detail · ctrl+o close · pgup/pgdn scroll · esc close",
     );
     try expectFrameRowTextTrimmed(
         &frame,
@@ -1354,7 +1338,7 @@ test "transcript viewer footer keeps navigation blank row and aligns main status
         &full_frame,
         full_plan.paint.footer.top_divider,
         shell.layout.cols,
-        "┃ Full detail · ctrl o close · PgUp/PgDn scroll · Esc close",
+        "┃ full detail · ctrl+o close · pgup/pgdn scroll · esc close",
     );
 }
 
@@ -1460,7 +1444,7 @@ test "steering banner keeps two clean lines and a composer gap in both delivery 
         const messages = [_][]const u8{"FIRST_LINE\nSECOND_LINE\nHIDDEN_END"};
         var ctx = testContext(&input);
         ctx.steering_messages = &messages;
-        ctx.steering_waits_for_tool = waiting;
+        ctx.steering_waits_for_boundary = waiting;
         const planner_input: FooterPlannerInput = .{
             .active_label = null,
             .ctx = ctx,
@@ -1842,7 +1826,7 @@ test "approval footer composition hides cursor while rendering command prompt" {
         if (std.mem.find(u8, row.text.items, "3. No") != null) {
             choice_three_row = row.row;
         }
-        if (std.mem.find(u8, row.text.items, "1–3 Choose") != null) {
+        if (std.mem.find(u8, row.text.items, "1–3 choose") != null) {
             controls_row = row.row;
             controls_count += 1;
             try std.testing.expect(std.mem.find(u8, row.text.items, "gpt-5.1") == null);

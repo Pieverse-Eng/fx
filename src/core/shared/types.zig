@@ -249,6 +249,7 @@ pub const TurnPhase = enum {
     thinking,
     generating,
     running,
+    waiting_for_subagent,
 };
 
 pub const TurnPhaseUpdate = struct {
@@ -857,6 +858,7 @@ pub const PersistedToolResult = struct {
     stored_output_bytes: usize,
     truncated: bool = false,
     provider_native: bool = false,
+    review_feedback: bool = false,
     created_at_ms: i64 = 0,
     permission_feedback: [][]u8 = &.{},
     committed_file_presentation: ?CommittedFilePresentation = null,
@@ -1008,6 +1010,8 @@ test "persisted deferred tool result classifier is exact" {
 }
 
 pub const ToolResultMemory = struct {
+    /// Host review feedback is retained for the agent, not security evidence.
+    review_feedback: bool = false,
     tool_images: []const ToolImage = &.{},
     tool_image_handle: ?[]const u8 = null,
     output_handle: ?[]const u8 = null,
@@ -1034,6 +1038,8 @@ pub const PersistedSteering = struct {
     assistant_prefix: ?[]u8 = null,
     after_tool_step_count: usize,
 };
+
+pub const SteeringDelivery = enum(u8) { queued, applied, not_applied };
 
 pub const FileEvidence = struct {
     path: []u8,
@@ -1866,6 +1872,11 @@ pub const InterruptedTerminalReason = enum {
     failed,
 };
 
+pub const CancellationOrigin = enum {
+    turn,
+    compaction,
+};
+
 pub const InterruptedHistoryTurn = struct {
     user: UserTurn,
     assistant: ?[]u8 = null,
@@ -1874,6 +1885,7 @@ pub const InterruptedHistoryTurn = struct {
     execution: ExecutionMemory = .{},
     cancelled_command: ?CancelledCommandPresentation = null,
     terminal_reason: InterruptedTerminalReason = .cancelled,
+    cancellation_origin: CancellationOrigin = .turn,
 };
 
 pub const context_handoff_open = "<context_handoff>";
@@ -2284,6 +2296,7 @@ pub fn dupeHistoryTurn(alloc: std.mem.Allocator, turn: HistoryTurn) !HistoryTurn
                 .execution = execution,
                 .cancelled_command = cancelled_command,
                 .terminal_reason = entry.terminal_reason,
+                .cancellation_origin = entry.cancellation_origin,
             } };
         },
     };
@@ -2610,6 +2623,7 @@ fn dupePersistedToolResult(alloc: std.mem.Allocator, result: PersistedToolResult
         .stored_output_bytes = result.stored_output_bytes,
         .truncated = result.truncated,
         .provider_native = result.provider_native,
+        .review_feedback = result.review_feedback,
         .created_at_ms = result.created_at_ms,
         .permission_feedback = permission_feedback,
         .committed_file_presentation = committed_file_presentation,

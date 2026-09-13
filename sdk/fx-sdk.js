@@ -1,4 +1,5 @@
 import { CoreOutput, maxCoreMessageBytes } from "./core-output.js";
+import { loadModule } from "./wasm-module.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -35,6 +36,7 @@ function validateGatewayChatUrl(value) {
   if (url.username || url.password || url.hash) {
     throw new TypeError("gatewayChatUrl must not contain credentials or a fragment");
   }
+  if (url.href === "https://ai-gateway.vercel.sh/v4/ai/language-model") return;
   if (url.href === "https://ai-gateway.vercel.sh/v3/ai/language-model") return;
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "[::1]" || url.hostname === "localhost";
   if (url.protocol !== "http:" || !loopback || !url.port) {
@@ -207,14 +209,83 @@ export function encodeXtermKeyEvent(event) {
     if (event.key === "Backspace") return `\x1b[127;${modifiers + 1}u`;
     const arrow = { ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D" }[event.key];
     if (arrow) return `\x1b[1;${modifiers + 1}${arrow}`;
+    const shortcut = { a: 97, c: 99, x: 120, z: 122 }[event.key.toLowerCase()];
+    if (shortcut) return `\x1b[${shortcut};${modifiers + 1}u`;
   }
   return null;
+}
+
+function xtermPointerCell(term, event) {
+  const root = term.element;
+  const screen = root?.querySelector?.(".xterm-screen") || root;
+  const rect = screen?.getBoundingClientRect?.();
+  if (!rect || rect.width <= 0 || rect.height <= 0 || term.cols <= 0 || term.rows <= 0) return null;
+  if (event.clientX < rect.left || event.clientX >= rect.right ||
+    event.clientY < rect.top || event.clientY >= rect.bottom) return null;
+  return {
+    column: Math.min(term.cols, Math.floor((event.clientX - rect.left) * term.cols / rect.width) + 1),
+    row: Math.min(term.rows, Math.floor((event.clientY - rect.top) * term.rows / rect.height) + 1),
+  };
+}
+
+function installXtermClickHandler(term, callback) {
+  const element = term.element;
+  if (typeof element?.addEventListener !== "function") return () => {};
+  let pointerDown = null;
+  const down = (event) => {
+    if (event.button !== 0) return;
+    pointerDown = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  };
+  const up = (event) => {
+    const start = pointerDown;
+    pointerDown = null;
+    if (!start || event.button !== 0 || event.pointerId !== start.id ||
+      event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (dx * dx + dy * dy > 16) return;
+    if (term.modes?.mouseTrackingMode && term.modes.mouseTrackingMode !== "none") return;
+    const cell = xtermPointerCell(term, event);
+    if (!cell) return;
+    callback(`\x1b[<0;${cell.column};${cell.row}M\x1b[<0;${cell.column};${cell.row}m`);
+  };
+  const cancel = () => { pointerDown = null; };
+  element.addEventListener("pointerdown", down);
+  element.addEventListener("pointerup", up);
+  element.addEventListener("pointercancel", cancel);
+  return () => {
+    element.removeEventListener("pointerdown", down);
+    element.removeEventListener("pointerup", up);
+    element.removeEventListener("pointercancel", cancel);
+  };
+}
+
+function installXtermShortcutHandler(term, callback) {
+  const element = term.element;
+  if (typeof element?.addEventListener !== "function") return () => {};
+  const keydown = (event) => {
+    if (xtermSelectionOwnsShortcut(term, event)) return;
+    const data = encodeXtermKeyEvent(event);
+    if (data === null) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    callback(data);
+  };
+  element.addEventListener("keydown", keydown, true);
+  return () => element.removeEventListener("keydown", keydown, true);
+}
+
+function xtermSelectionOwnsShortcut(term, event) {
+  return event.type === "keydown" && event.metaKey &&
+    (event.key.toLowerCase() === "c" || event.key.toLowerCase() === "x") &&
+    term.hasSelection?.();
 }
 
 export function xtermAdapter(term) {
   let keyDataHandler = null;
   if (typeof term.attachCustomKeyEventHandler === "function") {
     term.attachCustomKeyEventHandler((event) => {
+      if (xtermSelectionOwnsShortcut(term, event)) return true;
       const data = encodeXtermKeyEvent(event);
       if (data === null || keyDataHandler === null) return true;
       keyDataHandler(data);
@@ -226,7 +297,13 @@ export function xtermAdapter(term) {
     onData(callback) { const disposable = term.onData(callback); return () => disposable.dispose(); },
     onKeyData(callback) {
       keyDataHandler = callback;
-      return () => { if (keyDataHandler === callback) keyDataHandler = null; };
+      const removeShortcutHandler = installXtermShortcutHandler(term, callback);
+      const removeClickHandler = installXtermClickHandler(term, callback);
+      return () => {
+        removeShortcutHandler();
+        removeClickHandler();
+        if (keyDataHandler === callback) keyDataHandler = null;
+      };
     },
     get cols() { return term.cols; },
     get rows() { return term.rows; },
@@ -287,43 +364,6 @@ class ByteQueue {
   wake() {
     this.waiters.splice(0).forEach((resolve) => resolve());
   }
-}
-
-const modulePromisesBySource = new Map();
-const modulePromisesByObject = new WeakMap();
-
-async function compileModule(input) {
-  if (input instanceof WebAssembly.Module) return input;
-  if (typeof input === "string") input = fetch(input);
-  if (input instanceof Promise) input = await input;
-  if (input instanceof WebAssembly.Module) return input;
-  if (input instanceof Response) {
-    const contentType = input.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
-    if (contentType === "application/wasm" && typeof WebAssembly.compileStreaming === "function") {
-      return WebAssembly.compileStreaming(input);
-    }
-    const bytes = await input.arrayBuffer();
-    return WebAssembly.compile(bytes);
-  }
-  if (input instanceof ArrayBuffer || ArrayBuffer.isView(input)) {
-    return WebAssembly.compile(input);
-  }
-  throw new TypeError("wasm must be a URL, Response, ArrayBuffer, typed array, or WebAssembly.Module");
-}
-
-function loadModule(input) {
-  if (input instanceof WebAssembly.Module) return Promise.resolve(input);
-  const isString = typeof input === "string";
-  if (!isString && (typeof input !== "object" || input === null)) return compileModule(input);
-  const cache = isString ? modulePromisesBySource : modulePromisesByObject;
-  const cached = cache.get(input);
-  if (cached) return cached;
-  const pending = compileModule(input);
-  cache.set(input, pending);
-  pending.catch(() => {
-    if (cache.get(input) === pending) cache.delete(input);
-  });
-  return pending;
 }
 
 function raceWithTimeout(promise, timeoutMs, timeoutValue) {
@@ -643,6 +683,23 @@ function createRuntime(options) {
       accepted === false ? 0 : 1).catch(() => 0);
   }
 
+  function clipboardCopy(valuePtr, valueLen) {
+    let clipboard = options.clipboard;
+    if (clipboard === undefined) {
+      try { clipboard = globalThis.navigator?.clipboard; } catch { clipboard = null; }
+    }
+    if (typeof clipboard?.writeText !== "function") return Promise.resolve(0);
+    const value = text(valuePtr, valueLen);
+    return Promise.resolve().then(() => clipboard.writeText(value)).then((accepted) => {
+      if (accepted === false) return 0;
+      options.emit?.("clipboard.copy", { length: value.length });
+      return 1;
+    }).catch((error) => {
+      options.emit?.("clipboard.copy_error", { error });
+      return 0;
+    });
+  }
+
   function oauthSessionLoad(outPtr, outCap, revisionPtr, revisionCap, revisionLenOut) {
     if (!options.oauthSessionStore?.load) return -1;
     return Promise.resolve().then(() => options.oauthSessionStore.load()).then((record) => {
@@ -949,6 +1006,7 @@ function createRuntime(options) {
 
   const fx = {
     fx_term_poll_input: new WebAssembly.Suspending(termPollInput),
+    fx_clipboard_copy: new WebAssembly.Suspending(clipboardCopy),
     fx_prompt_history_available() { return options.promptHistoryStore ? 1 : 0; },
     fx_workspace_available() { return workspace.present ? 1 : 0; },
     fx_workspace_info: workspaceInfo,
@@ -1032,7 +1090,10 @@ async function instantiate(options) {
       runtime.setInstance(null);
       if (options.args?.[0] === "acp" && !String(error).includes("proc_exit")) runtime.abort(error);
       else {
-        if (!String(error).includes("proc_exit")) console.error(error);
+        if (!String(error).includes("proc_exit")) {
+          runtime.abortHostEffects();
+          console.error(error);
+        }
         runtime.markExited(runtime.aborted ? 130 : 1);
       }
     },
@@ -1076,13 +1137,13 @@ export async function createFxTerminal(options) {
     if (interruptKey && data.includes(interruptKey)) runtime.abortHostEffects();
     runtime.write(data);
   };
-  const unsubscribeData = options.terminal.onData(forwardData);
-  const unsubscribeKeyData = options.terminal.onKeyData?.(forwardData) ?? (() => {});
   const signalResize = () => {
     emit("terminal.resize", { cols: options.terminal.cols, rows: options.terminal.rows });
     runtime.wake();
   };
-  const unsubscribeResize = options.terminal.onResize(signalResize);
+  let unsubscribeData;
+  let unsubscribeKeyData;
+  let unsubscribeResize;
   let subscriptionsReleased = false;
   const releaseSubscriptions = () => {
     if (subscriptionsReleased) return;
@@ -1095,6 +1156,17 @@ export async function createFxTerminal(options) {
     releaseSubscriptions();
     emit("runtime.exit", { surface: "terminal", code });
   });
+  try {
+    unsubscribeData = options.terminal.onData(forwardData);
+    unsubscribeKeyData = options.terminal.onKeyData?.(forwardData);
+    unsubscribeResize = options.terminal.onResize(signalResize);
+  } catch (error) {
+    // The rejected factory never transfers this promise to a caller.
+    interactive.catch(() => {});
+    releaseSubscriptions();
+    runtime.abort();
+    throw error;
+  }
   return {
     interactive,
     exited: runtime.exited,

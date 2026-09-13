@@ -194,18 +194,22 @@ const ask_user_question_question_schema = model_tool_schema.ObjectSchema{
 };
 
 const subagent_description =
-    "Delegate work and receive one terminal child result. Use run for one temporary child and one task. Use message with a stable name to create or continue a persistent conversation in this parent session. Optional instructions replace only that child's system overlay; fx preserves its trusted base prompt. fx owns timing, worker identities, cancellation, permissions, persistence, and cleanup.";
+    "Delegate work and receive one terminal child result. Use run for one temporary child and one task. Use message with a stable name to create or continue a persistent conversation in this parent session. A plain message to a working child queues feedback for its next safe boundary without cancelling its current tool. A delivery receipt is not the child's final result; that result arrives separately. Optional instructions replace only that child's system overlay between turns; fx preserves its trusted base prompt. Optional model and effort apply only when a child is created and are rejected for an existing child. fx owns timing, worker identities, cancellation, permissions, persistence, and cleanup.";
 
 const subagent_model_run_properties = [_]model_tool_schema.Property{
     .{ .name = "action", .json_type = .string, .shape = &.{ .enum_values = &.{"run"} } },
-    .{ .name = "task", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_prompt_bytes }, .description = "One complete task for a temporary child. The child inherits the parent model and effort and accepts no follow-up." },
+    .{ .name = "task", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_prompt_bytes }, .description = "One complete task for a temporary child. The child accepts no follow-up." },
+    .{ .name = "model", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_model_bytes }, .description = "Optional model for this child. Inherits the parent's model when omitted." },
+    .{ .name = "effort", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = types.ReasoningEffort.max_name_bytes }, .description = "Optional reasoning effort for this child. Inherits the parent's effort when omitted." },
 };
 
 const subagent_model_message_properties = [_]model_tool_schema.Property{
     .{ .name = "action", .json_type = .string, .shape = &.{ .enum_values = &.{"message"} } },
     .{ .name = "agent", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_agent_name_bytes }, .description = "Stable lowercase name for one persistent conversation in this parent session. A new valid name creates it; later calls continue it." },
-    .{ .name = "instructions", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_instructions_bytes }, .description = "Optional persistent instructions for this child. When present, replaces its child-specific system overlay before this message; when omitted, preserves the existing overlay. Cannot replace fx's trusted base prompt or widen authority." },
-    .{ .name = "message", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_message_bytes }, .description = "Next message for that named agent. fx creates it on first use and continues it afterward." },
+    .{ .name = "instructions", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_instructions_bytes }, .description = "Optional persistent instructions for this child. Replaces its child-specific system overlay before this message when idle; rejected while the child is working. Omit to preserve the overlay or send live feedback. Cannot replace fx's trusted base prompt or widen authority." },
+    .{ .name = "message", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_message_bytes }, .description = "Message for that named agent: creates it on first use, continues an idle conversation, or queues feedback for a working child. Do not resend merely to poll for completion." },
+    .{ .name = "model", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_model_bytes }, .description = "Optional model applied when this message creates the child. Inherits the parent's model when omitted. Rejected when the named child already exists." },
+    .{ .name = "effort", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = types.ReasoningEffort.max_name_bytes }, .description = "Optional reasoning effort applied when this message creates the child. Inherits the parent's effort when omitted. Rejected when the named child already exists." },
 };
 
 const subagent_model_action_schemas = [_]model_tool_schema.ObjectSchema{
@@ -1069,7 +1073,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "1cf95877ae3e25fdc32af012213daceece97935388d0b29e7fa06d19fd173c91",
+        "17d4ecfe4fbd8a98fca904cf62d13ce9be7c3b7c67fcd6dea59e5eca05f8bc94",
         &actual_hex,
     );
 }
@@ -1097,22 +1101,6 @@ fn schemaProperty(schema: model_tool_schema.ObjectSchema, name: []const u8) ?mod
         if (std.mem.eql(u8, property.name, name)) return property;
     }
     return null;
-}
-
-fn schemaEnumValues(property: model_tool_schema.Property) []const []const u8 {
-    const shape = property.shape orelse return &.{};
-    return switch (shape.*) {
-        .enum_values => |values| values,
-        else => &.{},
-    };
-}
-
-fn schemaObject(property: model_tool_schema.Property) ?*const model_tool_schema.ObjectSchema {
-    const shape = property.shape orelse return null;
-    return switch (shape.*) {
-        .object => |object| object,
-        else => null,
-    };
 }
 
 fn nameInSet(names: []const []const u8, wanted: []const u8) bool {
@@ -1538,6 +1526,11 @@ test "built-in subagent owns product metadata schema and callbacks" {
         try std.testing.expect(std.mem.find(u8, schema_json, action) != null);
     }
     try std.testing.expect(std.mem.find(u8, schema_json, "\"instructions\":") != null);
+    // Creation-time routing overrides are advertised on both actions.
+    try std.testing.expect(std.mem.find(u8, schema_json, "\"model\":") != null);
+    try std.testing.expect(std.mem.find(u8, schema_json, "\"effort\":") != null);
+    try std.testing.expect(std.mem.find(u8, schema_json, "Inherits the parent's model when omitted") != null);
+    try std.testing.expect(std.mem.find(u8, schema_json, "Rejected when the named child already exists") != null);
     for ([_][]const u8{
         "\"command\":",
         "\"relationship\":",
@@ -1547,8 +1540,7 @@ test "built-in subagent owns product metadata schema and callbacks" {
         "\"cursor\":",
         "\"generation\":",
         "\"reopen\"",
-        "\"model\"",
-        "\"effort\"",
+        "\"provider\"",
         "\"send\"",
         "\"wait\"",
         "\"stop\"",
@@ -1902,12 +1894,6 @@ test "built-in registry uses executable web_fetch implementation" {
     try std.testing.expect(std.mem.find(u8, body, "\"tool_name\":\"web_fetch\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "web_fetch failed") != null);
     try std.testing.expect(std.mem.find(u8, body, "UnsupportedScheme") != null);
-}
-
-fn expectRegisteredNames(names: []const []const u8) !void {
-    for (names) |name| {
-        try std.testing.expect(registry.lookup(name) != null);
-    }
 }
 
 test "built-in read-only tool set matches plan inspection tools" {

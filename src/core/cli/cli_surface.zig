@@ -106,13 +106,14 @@ pub const UpgradeRelaunch = struct {
 const resume_picker_alias = "-r";
 
 pub const ResumeTarget = union(enum) {
+    remembered,
     pick,
     last,
     id: []u8,
 
     pub fn deinit(self: *ResumeTarget, alloc: Allocator) void {
         switch (self.*) {
-            .pick, .last => {},
+            .remembered, .pick, .last => {},
             .id => |value| alloc.free(value),
         }
         self.* = undefined;
@@ -2778,22 +2779,6 @@ fn permissionRulesForSnapshot(alloc: Allocator, active_rules: anytype) !types.Pe
     return .{ .rules = rules };
 }
 
-fn loadLatestWorkspaceSessionDetail(
-    alloc: Allocator,
-    store: session_store.Store,
-) !session_store.ReadOnlyDetail {
-    var summary = try store.latestReadOnlyWorkspaceSummary(alloc);
-    defer summary.deinit(alloc);
-    return store.loadReadOnlyDetail(alloc, summary.id, .{});
-}
-
-fn loadLatestWorkspaceSessionSummary(
-    alloc: Allocator,
-    store: session_store.Store,
-) !session_store.SessionSummary {
-    return store.latestReadOnlyWorkspaceSummary(alloc);
-}
-
 fn catalogFailureDetail(failure: model_catalog.Failure) []const u8 {
     return switch (failure.category) {
         .authentication => "AuthenticationRejected",
@@ -2869,7 +2854,12 @@ fn writeLookupFailure(
         error.SessionNotFound => {
             try writeStderr(deps, "fx session: record not found\n");
         },
-        error.InvalidSessionFormat => {
+        error.InvalidSessionFormat,
+        error.InvalidPermissionState,
+        error.PermissionStateTooLarge,
+        error.InvalidRecoveryCheckpoint,
+        error.InvalidUsageSidecar,
+        => {
             try writeStderr(
                 deps,
                 "fx session: record is corrupt; run `fx doctor` for recovery guidance\n",
@@ -3045,7 +3035,12 @@ fn lookupFailureMessage(err: anyerror) ?[]const u8 {
         error.NoSavedSessions => "no saved sessions for this workspace",
         error.NoReadableSessions => "saved sessions are unreadable; run `fx doctor` for recovery guidance",
         error.SessionNotFound => "record not found",
-        error.InvalidSessionFormat => "record is corrupt; run `fx doctor` for recovery guidance",
+        error.InvalidSessionFormat,
+        error.InvalidPermissionState,
+        error.PermissionStateTooLarge,
+        error.InvalidRecoveryCheckpoint,
+        error.InvalidUsageSidecar,
+        => "record is corrupt; run `fx doctor` for recovery guidance",
         error.UnsupportedSessionSchema => "record uses an unsupported session version",
         error.InvalidSessionId => "invalid session id",
         error.LegacySessionTooLarge => "legacy session is too large for automatic loading; run `fx session migrate <id> --allow-large`",
@@ -3128,6 +3123,32 @@ test "session detail failures separate corruption from unsupported schema" {
         "fx session: session future-session uses an unsupported session version\n",
         unsupported_text.stderr.written(),
     );
+}
+
+test "session lookup failures preserve supporting-state errors in the requested format" {
+    const cases = [_]struct { err: anyerror, code: []const u8 }{
+        .{ .err = error.InvalidPermissionState, .code = "InvalidPermissionState" },
+        .{ .err = error.PermissionStateTooLarge, .code = "PermissionStateTooLarge" },
+        .{ .err = error.InvalidRecoveryCheckpoint, .code = "InvalidRecoveryCheckpoint" },
+        .{ .err = error.InvalidUsageSidecar, .code = "InvalidUsageSidecar" },
+    };
+    for (cases) |case| {
+        for ([_]output_contracts.OutputFormat{ .text, .json }) |format| {
+            var output = CaptureOutput.init(std.testing.allocator);
+            defer output.deinit();
+            try writeLookupFailure(std.testing.allocator, output.deps(), "session", case.err, format);
+            const body = if (format == .json) output.stdout.written() else output.stderr.written();
+            const unused = if (format == .json) output.stderr.written() else output.stdout.written();
+            try std.testing.expectEqual(@as(usize, 0), unused.len);
+            try std.testing.expect(std.mem.find(u8, body, "fx doctor") != null);
+            try std.testing.expect(std.mem.find(u8, body, "resume it normally") == null);
+            if (format == .json) {
+                var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, body, .{});
+                defer parsed.deinit();
+                try std.testing.expectEqualStrings(case.code, parsed.value.object.get("code").?.string);
+            }
+        }
+    }
 }
 
 test "session recovery boundary failures keep stable text and json guidance" {
@@ -3562,6 +3583,7 @@ fn parseResumeArgs(
         }
         if (args.len != 1) return error.InvalidResumeArgs;
         if (std.mem.eql(u8, args[0], resume_picker_alias)) return .pick;
+        if (std.mem.eql(u8, args[0], "-c") or std.mem.eql(u8, args[0], "--continue")) return .remembered;
         if (command_specs.matchesTopLevel(command_catalog, args[0], .@"resume")) return .last;
         if (!std.mem.startsWith(u8, args[0], resume_id_alias_prefix)) return error.InvalidResumeArgs;
         const id = args[0][resume_id_alias_prefix.len..];
@@ -4189,7 +4211,7 @@ test "parse resume args accepts explicit id flag" {
     defer target.deinit(std.testing.allocator);
 
     switch (target) {
-        .pick, .last => return error.TestExpectedExactResumeId,
+        .remembered, .pick, .last => return error.TestExpectedExactResumeId,
         .id => |id| try std.testing.expectEqualStrings("release.2026.06", id),
     }
 }
@@ -4203,7 +4225,7 @@ test "parse resume args accepts an operand on the top-level resume flag" {
     defer target.deinit(std.testing.allocator);
 
     switch (target) {
-        .pick, .last => return error.TestExpectedExactResumeId,
+        .remembered, .pick, .last => return error.TestExpectedExactResumeId,
         .id => |id| try std.testing.expectEqualStrings("session-123", id),
     }
 
@@ -4223,7 +4245,7 @@ test "parse resume args treats last after id flag as exact id" {
     defer target.deinit(std.testing.allocator);
 
     switch (target) {
-        .pick, .last => return error.TestExpectedExactResumeId,
+        .remembered, .pick, .last => return error.TestExpectedExactResumeId,
         .id => |id| try std.testing.expectEqualStrings("last", id),
     }
 }
@@ -4299,7 +4321,7 @@ test "parseInteractiveLaunch shares native resume grammar" {
                 const target = launch.requested_resume orelse return error.TestExpectedResumeTarget;
                 if (case.expected_id) |expected_id| switch (target) {
                     .id => |id| try std.testing.expectEqualStrings(expected_id, id),
-                    .pick, .last => return error.TestExpectedExactResumeId,
+                    .remembered, .pick, .last => return error.TestExpectedExactResumeId,
                 } else try std.testing.expectEqual(ResumeTarget.last, target);
             },
             .noninteractive => |value| {
@@ -4911,7 +4933,10 @@ test "runIfRequested top-level resume aliases return the existing target" {
             capture.deps(),
         );
         switch (result) {
-            .interactive => |launch| try std.testing.expectEqual(ResumeTarget.last, launch.requested_resume.?),
+            .interactive => |launch| {
+                const expected: ResumeTarget = if (std.mem.eql(u8, args[0], "-c") or std.mem.eql(u8, args[0], "--continue")) .remembered else .last;
+                try std.testing.expectEqual(expected, launch.requested_resume.?);
+            },
             else => return error.TestExpectedEqual,
         }
         try std.testing.expectEqualStrings("", capture.stdout.written());
@@ -4933,7 +4958,7 @@ test "runIfRequested top-level resume aliases return the existing target" {
             defer launch.deinit(std.testing.allocator);
             switch (launch.requested_resume.?) {
                 .id => |id| try std.testing.expectEqualStrings("session.123", id),
-                .pick, .last => return error.TestExpectedExactResumeId,
+                .remembered, .pick, .last => return error.TestExpectedExactResumeId,
             }
         },
         else => return error.TestExpectedEqual,
@@ -4954,7 +4979,7 @@ test "runIfRequested top-level resume aliases return the existing target" {
             defer launch.deinit(std.testing.allocator);
             switch (launch.requested_resume.?) {
                 .id => |id| try std.testing.expectEqualStrings("session.123", id),
-                .pick, .last => return error.TestExpectedExactResumeId,
+                .remembered, .pick, .last => return error.TestExpectedExactResumeId,
             }
         },
         else => return error.TestExpectedEqual,

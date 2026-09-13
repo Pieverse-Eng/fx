@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, REPO_ROOT, runFx, providerVersionTestEnv } from "../evals/eval-helpers";
+import { fakeResponsesTitleDefault, TITLE_GENERATION_MARKER } from "./tmux-helpers";
 import { readTapeFrames } from "./render-lab/tape";
 import { equivalentPngEncodings } from "./fixtures/image-encoding";
 import {
@@ -78,7 +79,7 @@ function startFakeDirectUsageProvider(
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/models") {
         return provider === "codex"
@@ -95,6 +96,10 @@ function startFakeDirectUsageProvider(
       }
       if (path === "/modalities") {
         return Response.json({ models: [grokModalityModel(model, false)] });
+      }
+      if (request.method === "POST") {
+        const body = await request.text();
+        if (body.includes(TITLE_GENERATION_MARKER)) return fakeResponsesTitleDefault();
       }
       responses += 1;
       return new Response(
@@ -146,6 +151,7 @@ function startFakeProviderCompaction(provider: "codex" | "grok") {
         ] });
       }
       const body = await request.text();
+      if (body.includes(TITLE_GENERATION_MARKER)) return fakeResponsesTitleDefault();
       bodies.push(body);
       authorizations.push(request.headers.get("authorization"));
       modelOverrides.push(request.headers.get("x-grok-model-override"));
@@ -560,6 +566,9 @@ function startFakeChatGptOAuth(
       const body = url.pathname === "/chatgpt/responses" || url.pathname === "/chatgpt/token"
         ? await request.text()
         : null;
+      if (url.pathname === "/chatgpt/responses" && body?.includes(TITLE_GENERATION_MARKER)) {
+        return fakeResponsesTitleDefault();
+      }
       requests.push({
         method: request.method,
         path: url.pathname,
@@ -673,6 +682,9 @@ function startFakeGrokOAuth(options: {
     async fetch(request) {
       const url = new URL(request.url);
       const body = request.method === "POST" ? await request.text() : null;
+      if (url.pathname === "/v1/responses" && body?.includes(TITLE_GENERATION_MARKER)) {
+        return fakeResponsesTitleDefault();
+      }
       requests.push({
         method: request.method,
         path: url.pathname,
@@ -925,7 +937,9 @@ function startFakeCodexToolLoop(options: {
           { slug: "gpt-5.4-mini", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
         ].map((model, index) => index === 0 && options.model ? { ...model, slug: options.model } : model) });
       }
-      bodies.push(await request.text());
+      const titleBody = await request.text();
+      if (titleBody.includes(TITLE_GENERATION_MARKER)) return fakeResponsesTitleDefault();
+      bodies.push(titleBody);
       if (options.responses) return options.responses.shift() ?? new Response("unexpected request", { status: 400 });
       if (bodies.length === 1) {
         return new Response(
@@ -966,7 +980,9 @@ function startFakeCodexCapacityLoop() {
           { slug: "gpt-5.6-luna", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "medium" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 272000 },
         ] });
       }
-      bodies.push(await request.text());
+      const titleBody = await request.text();
+      if (titleBody.includes(TITLE_GENERATION_MARKER)) return fakeResponsesTitleDefault();
+      bodies.push(titleBody);
       const call = bodies.length;
       if (call <= 64) {
         return new Response(
@@ -1017,7 +1033,9 @@ function startFakeGrokToolLoop(options: {
       if (path === "/modalities") {
         return Response.json({ models: [grokModalityModel(options.model ?? "grok-4.20", true)] });
       }
-      bodies.push(await request.text());
+      const titleBody = await request.text();
+      if (titleBody.includes(TITLE_GENERATION_MARKER)) return fakeResponsesTitleDefault();
+      bodies.push(titleBody);
       if (options.responses) return options.responses.shift() ?? new Response("unexpected request", { status: 400 });
       if (bodies.length === 1) {
         return new Response(
@@ -1062,6 +1080,7 @@ function startFakeCodexAutoReview() {
         ] });
       }
       const body = await request.text();
+      if (body.includes(TITLE_GENERATION_MARKER)) return fakeResponsesTitleDefault();
       bodies.push(body);
       const model = (JSON.parse(body) as { model?: string }).model;
       if (model === "gpt-5.6-luna") {
@@ -1120,6 +1139,8 @@ function startFakeGrokAutoReview() {
       if (path === "/modalities") {
         return Response.json({ models: [grokModalityModel("grok-4.20", false)] });
       }
+      const body = await request.text();
+      if (body.includes(TITLE_GENERATION_MARKER)) return fakeResponsesTitleDefault();
       headers.push({
         tokenAuth: request.headers.get("x-xai-token-auth"),
         authenticateResponse: request.headers.get("x-authenticateresponse"),
@@ -1128,7 +1149,6 @@ function startFakeGrokAutoReview() {
         modelOverride: request.headers.get("x-grok-model-override"),
         grokUserId: request.headers.get("x-grok-user-id"),
       });
-      const body = await request.text();
       bodies.push(body);
       if (body.includes('"name":"permission_decision"')) {
         return new Response(
@@ -1180,7 +1200,9 @@ function startFakeGrokResourceRecovery() {
       if (path === "/modalities") {
         return Response.json({ models: [grokModalityModel("grok-4.20", false)] });
       }
-      bodies.push(await request.text());
+      const titleBody = await request.text();
+      if (titleBody.includes(TITLE_GENERATION_MARKER)) return fakeResponsesTitleDefault();
+      bodies.push(titleBody);
       responseCalls += 1;
       if (responseCalls === 1) {
         return new Response(
@@ -1764,7 +1786,7 @@ for (const scenario of [
       expect(gateway.requests).toHaveLength(1);
 
       await session.sendKeys("C-u");
-      await session.sendKeys("Escape");
+      await session.sendInterruptEscapePair(TIMEOUT);
       await session.waitForText("What can fx do differently?", TIMEOUT);
       await session.sendText(scenario.command.trim());
       await session.waitForPane(
@@ -2092,7 +2114,7 @@ tmuxTest(
         pane.includes("TEST-CODE") &&
         pane.includes("/verify") &&
         pane.includes("Waiting for authorization") &&
-        pane.includes("Enter reopens browser · Esc cancels"),
+        pane.includes("enter reopens browser · esc cancels"),
       TIMEOUT,
     );
     expect(signInScreen).not.toContain("Starting Vercel sign-in");
@@ -2138,12 +2160,12 @@ tmuxTest(
         pane.includes("Sign in with Codex") &&
         pane.includes("Authorize with Codex") &&
         pane.includes("Waiting for authorization") &&
-        pane.includes("Enter reopens browser · Esc cancels"),
+        pane.includes("enter reopens browser · esc cancels"),
       TIMEOUT,
     );
     expect(signInScreen).toMatch(/^Sign in with Codex\s+Waiting for authorization…$/m);
     expect(signInScreen).toMatch(/^  Open\s+Authorize with Codex$/m);
-    expect(signInScreen).toMatch(/^Enter reopens browser · Esc cancels$/m);
+    expect(signInScreen).toMatch(/^enter reopens browser · esc cancels$/m);
     expect(signInScreen).not.toContain("Code   ");
     expect(signInScreen).not.toContain(`${chatgptOauth.baseUrl}/oauth/authorize?`);
     const signInEscapes = await session.capturePaneEscapes();
@@ -2262,7 +2284,7 @@ for (const [provider, previousProvider] of [
           expect(grok.requests.filter((request) => request.path === "/v1/responses")).toHaveLength(0);
           expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(preferences);
           await session.sendKeys("Escape");
-          await session.waitForPane((pane) => !pane.includes("Esc Close"), TIMEOUT);
+          await session.waitForPane((pane) => !pane.includes("esc close"), TIMEOUT);
           await session.sendKeys("C-u");
           await session.waitForComposer(TIMEOUT);
           await session.sendText("Continue the restored provider session.");
@@ -2442,7 +2464,7 @@ tmuxTest(
       expect(codexCatalog).not.toContain(vendor);
     }
     await session.sendKeys("Escape");
-    await session.waitForPane((pane) => !pane.includes("Esc Close"), TIMEOUT);
+    await session.waitForPane((pane) => !pane.includes("esc close"), TIMEOUT);
     await session.waitForComposer(TIMEOUT);
     const authorizeRequestsBeforeRoundTrip = chatgptOauth.requests.filter(
       (request) => request.path === "/oauth/authorize",
@@ -2628,7 +2650,7 @@ tmuxTest(
     await session.waitForPane(
       (pane) =>
         pane.includes("Codex subscription sign-in expired.") &&
-        pane.includes("Press Enter to sign in again."),
+        pane.includes("press enter to sign in again."),
       TIMEOUT,
     );
 
@@ -2672,7 +2694,7 @@ tmuxTest(
       await session.waitForPane(
         (pane) =>
           pane.includes("Grok subscription sign-in expired.") &&
-          pane.includes("Press Enter to sign in again."),
+          pane.includes("press enter to sign in again."),
         TIMEOUT,
       );
 
@@ -2822,7 +2844,7 @@ tmuxTest(
     await session.sendKeys("Down");
     await session.sendKeys("Right");
     const keyField = await session.waitForText("Paste or type a key", TIMEOUT);
-    expect(keyField).toContain("Enter saves");
+    expect(keyField).toContain("enter saves");
     await session.sendKeys("Escape");
     await session.waitForComposer(TIMEOUT);
 
@@ -2901,6 +2923,43 @@ for (const [provider, help] of [
     expect(await session.captureFullScrollbackEscapes()).toContain(help);
     expect(gateway.requests).toHaveLength(0);
     expect(readFileSync(settingsPath, "utf8")).toBe(settings);
+    expect(readFileSync(stderrPath, "utf8")).toBe("");
+  }, TIMEOUT);
+}
+
+for (const [source, help] of [
+  ["vercel_oidc_token", "VERCEL_OIDC_TOKEN is selected but unavailable."],
+  ["stored_key", "A stored API key is selected but unavailable."],
+] as const) {
+  tmuxTest(`/status retains ${source} until another credential is selected`, async () => {
+    home = mkdtempSync(join(tmpdir(), "fx-status-explicit-key-"));
+    stderrPath = join(home, "stderr.log");
+    writeFileSync(stderrPath, "");
+    mkdirSync(join(home, ".fx"));
+    const settingsPath = join(home, ".fx", "settings.json");
+    const settings = JSON.stringify({ provider: "gateway", credential_source: source });
+    writeFileSync(settingsPath, settings);
+    gateway = startFakeGateway([fakeGatewayFinalText("EXPLICIT_KEY_RECOVERED")]);
+    session = await startFx(home, stderrPath, gateway);
+    await session.waitForComposer(TIMEOUT);
+    await session.sendText("/status");
+    await session.waitForText("auth_help=", TIMEOUT);
+    const missing = await session.captureFullScrollback();
+    expect(missing).toContain(`auth_help=${help}`);
+    expect(missing).not.toContain("set AI_GATEWAY_API_KEY");
+    expect(gateway.requests).toHaveLength(0);
+    expect(readFileSync(settingsPath, "utf8")).toBe(settings);
+
+    await selectEnvKeyCredential(session);
+    await session.sendText("Verify the account with a greeting.");
+    await session.waitForText("EXPLICIT_KEY_RECOVERED", TIMEOUT);
+    await session.sendText("/status");
+    await session.waitForText("auth=AI_GATEWAY_API_KEY", TIMEOUT);
+    const scrollback = await session.captureFullScrollback();
+    expect(scrollback.slice(scrollback.lastIndexOf("● Status:"))).not.toContain("auth_help=");
+    expect(JSON.parse(readFileSync(settingsPath, "utf8")).credential_source).toBe("ai_gateway_api_key");
+    expect(gateway.requests).toHaveLength(1);
+    expect(gateway.requests[0].headers.get("authorization")).toBe(`Bearer ${ENV_TOKEN}`);
     expect(readFileSync(stderrPath, "utf8")).toBe("");
   }, TIMEOUT);
 }
@@ -4302,8 +4361,8 @@ tmuxTest(
       const collapsed = await session.waitForPane(
         (pane) =>
           pane.includes("Authorize with Grok") &&
-          pane.includes("Browser didn't return? Press Tab to enter a code") &&
-          pane.includes("Enter reopens browser · Tab enters code · Esc cancels"),
+          pane.includes("Browser didn't return? press tab to enter a code") &&
+          pane.includes("enter reopens browser · tab enters code · esc cancels"),
         TIMEOUT,
       );
       expect(collapsed).toMatch(/^Sign in with Grok\s+Waiting for authorization…$/m);
@@ -4381,10 +4440,10 @@ tmuxTest(
       await session.sendKeys("Down");
       await session.sendKeys("Down");
       await session.sendKeys("Enter");
-      await session.waitForText("Browser didn't return? Press Tab to enter a code", TIMEOUT);
+      await session.waitForText("Browser didn't return? press tab to enter a code", TIMEOUT);
       await session.pasteText("grok-code");
       await session.waitForPane(
-        (pane) => pane.includes("•••••••••") && pane.includes("Enter submits"),
+        (pane) => pane.includes("•••••••••") && pane.includes("enter submits"),
         TIMEOUT,
       );
       const expanded = await session.capturePane();
@@ -4393,17 +4452,17 @@ tmuxTest(
       const compactEntry = await session.waitForPane(
         (pane) =>
           pane.includes("•••••••••") &&
-          pane.includes("Enter submits") &&
-          pane.includes("Esc cancels"),
+          pane.includes("enter submits") &&
+          pane.includes("esc cancels"),
         TIMEOUT,
       );
       expect(compactEntry).not.toContain("Paste the code shown by xAI");
       await session.sendKeys("Tab");
-      const collapsedWithDraft = await session.waitForText("Tab enters code", TIMEOUT);
+      const collapsedWithDraft = await session.waitForText("tab enters code", TIMEOUT);
       expect(collapsedWithDraft).not.toContain("•••••••••");
       await session.sendKeys("Tab");
       await session.waitForPane(
-        (pane) => pane.includes("•••••••••") && pane.includes("Enter submits"),
+        (pane) => pane.includes("•••••••••") && pane.includes("enter submits"),
         TIMEOUT,
       );
       await session.sendKeys("Enter");
@@ -4833,6 +4892,78 @@ test("native final snapshots preserve completed items and reject conflicting kin
   }
 }, 60_000);
 
+test("native discarded prose keeps tool continuation and saved resume valid", async () => {
+  for (const provider of ["codex", "grok"] as const) for (const mismatch of [false, true]) for (const multiple of [false, true]) {
+    const profile = mkdtempSync(join(tmpdir(), "fx-discarded-prose-"));
+    const gateway = startFakeGateway([]);
+    const model = "fixture-model";
+    const prose = mismatch ? "我会先检查锁文件和依赖清单。" : "I will read the notes next.";
+    const reasoning = { type: "reasoning", id: "rs_filtered", summary: [], encrypted_content: "RETAINED_REASONING" };
+    const message = (id: string, text: string, phase?: string) => ({ type: "message", id, role: "assistant", status: "completed", ...(phase ? { phase } : {}), content: [{ type: "output_text", text, annotations: [] }] });
+    const messages = multiple ? [message("msg_first", prose), message("msg_second", prose)] : [message("msg_first", prose, "commentary")];
+    const call = { type: "function_call", id: "fc_filtered", call_id: "call_filtered", name: "read_file", arguments: JSON.stringify({ path: "notes.txt" }) };
+    const toolIndex = messages.length + 1;
+    const answer = (text: string) => fakeGatewaySse([
+      { type: "response.output_item.done", output_index: 0, item: message("msg_answer", text) },
+      { type: "response.completed", response: { status: "completed", output: null } },
+    ]);
+    const responses = [fakeGatewaySse([
+      { type: "response.output_item.done", output_index: 0, item: reasoning },
+      ...messages.map((item, index) => ({ type: "response.output_item.done", output_index: index + 1, item })),
+      { type: "response.output_item.added", output_index: toolIndex, item: { ...call, arguments: "" } },
+      { type: "response.function_call_arguments.done", output_index: toolIndex, item_id: call.id, arguments: call.arguments },
+      { type: "response.output_item.done", output_index: toolIndex, item: call },
+      { type: "response.completed", response: { status: "completed", output: [reasoning, ...messages, call] } },
+    ]), answer("The notes were checked."), answer("The saved session remains usable.")];
+    const direct = provider === "codex" ? startFakeCodexToolLoop({ model, responses }) : startFakeGrokToolLoop({ model, responses });
+    try {
+      if (provider === "codex") writeSeededChatGptLogin(profile, direct.accessToken);
+      else writeSeededGrokLogin(profile, direct.accessToken);
+      writeFileSync(join(profile, ".fx", "settings.json"), JSON.stringify({ provider, [provider + "_model"]: model }), { mode: 0o600 });
+      writeFileSync(join(profile, "notes.txt"), "FILTERED_READ_RESULT\n");
+      const tracePath = join(profile, "trace.log");
+      const env = {
+        HOME: profile, AI_GATEWAY_API_KEY: "fixture", VERCEL_OIDC_TOKEN: undefined, FX_MODEL: undefined,
+        FX_DISABLE_KEYCHAIN: "1", FX_AUTO_UPGRADE: "0", FX_SOUND: "0", FX_TRACE_LOG: tracePath, FX_TRACE_SCOPES: "agent,gateway,tool",
+        FX_GATEWAY_BASE_URL: gateway.baseUrl, FX_E2E_GATEWAY_MODELS_URL: gateway.baseUrl + "/coding-agent/v1/models",
+        FX_E2E_OPENAI_CODEX_RESPONSES_URL: direct.responsesUrl, FX_E2E_OPENAI_CODEX_MODELS_URL: direct.modelsUrl,
+        FX_E2E_XAI_GROK_RESPONSES_URL: direct.responsesUrl, FX_E2E_XAI_GROK_MODELS_URL: direct.modelsUrl,
+        FX_E2E_XAI_GROK_MODALITIES_URL: "modalitiesUrl" in direct ? direct.modalitiesUrl : undefined,
+      };
+      const first = await runFx(["ask", "--json", "--auto", "Please read the notes.txt file and explain the result."], { cwd: profile, env, timeoutMs: TIMEOUT });
+      expect(first.code, provider + "/" + mismatch + "/" + multiple + ": " + first.stdout + first.stderr).toBe(0);
+      expect(first.signal).toBeNull();
+      const result = JSON.parse(first.stdout);
+      expect(result.tool_calls).toEqual([{ name: "read_file", status: "success" }]);
+      expect(result.output).toBe(mismatch ? "The notes were checked." : messages.map(() => prose).join("\n\n") + "\n\nThe notes were checked.");
+      expect(direct.bodies).toHaveLength(2);
+      const trace = readFileSync(tracePath, "utf8");
+      expect(trace.includes("prose_discarded=true")).toBe(mismatch);
+      const detail = await runFx(["session", "--json", "--id", result.session_id], { cwd: profile, env });
+      expect(detail.code).toBe(0);
+      expect(JSON.parse(detail.stdout).history).toHaveLength(1);
+      const resumed = await runFx(["ask", "--json", "--auto", "--resume-id", result.session_id, "Please confirm the saved result without tools."], { cwd: profile, env, timeoutMs: TIMEOUT });
+      expect(resumed.code, resumed.stdout + resumed.stderr).toBe(0);
+      expect(resumed.stderr).toBe("");
+      expect(JSON.parse(resumed.stdout).tool_calls).toEqual([]);
+      expect(JSON.parse(resumed.stdout).output).toBe("The saved session remains usable.");
+      expect(direct.bodies).toHaveLength(3);
+      for (const body of direct.bodies.slice(1)) {
+        const input = JSON.parse(body).input;
+        expect(input.filter((item: { type?: string }) => item.type === "reasoning")).toEqual([reasoning]);
+        expect(input.filter((item: { type?: string }) => item.type === "function_call").map((item: { call_id: string }) => item.call_id)).toEqual([call.call_id]);
+        expect(input.filter((item: { type?: string }) => item.type === "function_call_output")).toHaveLength(1);
+        expect(body).toContain("FILTERED_READ_RESULT");
+        if (mismatch) expect(body).not.toContain(prose);
+      }
+      expect(gateway.requests).toHaveLength(0);
+    } finally {
+      direct.stop(); gateway.stop();
+      rmSync(profile, { recursive: true, force: true });
+    }
+  }
+}, 60_000);
+
 test("native terminal outcomes preserve recovery and incomplete warnings", async () => {
   for (const provider of ["gateway", "codex", "grok"] as const) for (const mode of ["transient", "partial", "tool", "rejected", "rejected-partial", "length", "length-with-status"]) {
     const native = provider !== "gateway";
@@ -5229,7 +5360,7 @@ test("provider context accounting is independent of image encoding size", async 
         const parts = (request.input ?? request.prompt).flatMap((message: { content: unknown }) => Array.isArray(message.content) ? message.content : []);
         const image = parts.find((part: { type?: string }) => part.type === (provider === "gateway" ? "file" : "input_image"));
         expect(image).toBeDefined();
-        expect(provider === "gateway" ? image.data : image.image_url).toBe((provider === "gateway" ? "" : "data:image/png;base64,") + bytes.toString("base64"));
+        expect(provider === "gateway" ? image.data.data : image.image_url).toBe((provider === "gateway" ? "" : "data:image/png;base64,") + bytes.toString("base64"));
         const decision = readFileSync(trace, "utf8");
         expect(decision).toContain("decision=no_op");
         expect(decision).toContain("has_images=true image_baseline=false");
@@ -6282,7 +6413,7 @@ tmuxTest(
         pane.includes("Welcome to fx") &&
         pane.includes("Sign in with Vercel") &&
         pane.includes("Add an API key") &&
-        pane.includes("Esc to set up later"),
+        pane.includes("esc to set up later"),
       TIMEOUT,
     );
     expect(onboarding).not.toMatch(/^\s+fx login\s+/m);
@@ -6358,21 +6489,30 @@ tmuxTest(
     await Bun.sleep(Math.max(0, expiresAt - 60_000 + 100 - Date.now()));
     await session.sendText("/status");
     await session.waitForText("auth_expired=true", TIMEOUT);
+    const sessionIds = readdirSync(join(home, ".fx", "sessions")).filter((id) => existsSync(join(home!, ".fx", "sessions", id, "session.json")));
+    expect(sessionIds).toHaveLength(1);
+    const historyPath = join(home, ".fx", "sessions", sessionIds[0], "events.jsonl");
+    const before = readFileSync(historyPath, "utf8");
     await session.sendText("/compact");
     await waitForTrace(tracePath, "manual_compaction_auth_pending", TIMEOUT);
     expect(gateway.requests).toHaveLength(2);
     await session.sendText("/compact");
     await session.sendLiteral("PRESERVE_COMPACTION_DRAFT");
     await session.waitForText("PRESERVE_COMPACTION_DRAFT", 1_000);
-    await session.waitForText("Context compacted.", TIMEOUT);
-    expect(await session.captureFullScrollback()).toContain("PRESERVE_COMPACTION_DRAFT");
+    // Success is silent; wait for durable publication and the activity row to clear.
+    await session.waitForPane((pane) =>
+      pane.includes("PRESERVE_COMPACTION_DRAFT") &&
+      !/Preparing compaction|Compacting|Stopping compaction/.test(pane) &&
+      readFileSync(historyPath, "utf8").includes('"context_checkpoint"'),
+    TIMEOUT);
+    const scrollback = await session.captureFullScrollback();
+    expect(scrollback).toContain("PRESERVE_COMPACTION_DRAFT");
+    expect(scrollback).not.toContain("Context compacted.");
     expect(oauth.requests.filter((request) => request.grantType === "refresh_token")).toHaveLength(1);
     expect(gateway.requests).toHaveLength(3);
     expect(gateway.requests[2].headers.get("authorization")).toBe(`Bearer ${ACQUIRED_LOGIN_TOKEN}`);
     expect(JSON.parse(gateway.requests[2].body).tools ?? []).toHaveLength(0);
-    const sessionIds = readdirSync(join(home, ".fx", "sessions")).filter((id) => existsSync(join(home!, ".fx", "sessions", id, "session.json")));
-    expect(sessionIds).toHaveLength(1);
-    const historyPath = join(home, ".fx", "sessions", sessionIds[0], "events.jsonl");
+    expect(readFileSync(historyPath, "utf8").startsWith(before)).toBe(true);
     const records = readFileSync(historyPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
     expect(records.filter((record) => record.event.context_checkpoint)).toHaveLength(1);
     await session.sendKeys("C-u");
@@ -6427,9 +6567,9 @@ for (const outcome of ["failure", "cancel"] as const) {
     await session.waitForText("DRAFT_DURING_AUTH_BOUNDARY", 1_000);
     if (outcome === "cancel") {
       await session.sendKeys("C-c");
-      await session.waitForText("Context compaction cancelled.", 3_000);
+      await session.waitForText("Compaction cancelled. Try /compact again when ready.", 3_000);
     } else {
-      await session.waitForText("Your conversation is unchanged.", TIMEOUT);
+      await session.waitForText("Compaction was not started. Check authentication and try /compact again.", TIMEOUT);
       const scrollback = await session.captureFullScrollback();
       expect(scrollback).toContain("/compact again");
       expect(scrollback).not.toContain("Your prompt is saved.");
@@ -6481,7 +6621,7 @@ tmuxTest(
     const failed = await session.waitForPane(
       (pane) =>
         pane.includes("fx login sign-in expired.") &&
-        pane.includes("Press Enter to sign in again.") &&
+        pane.includes("press enter to sign in again.") &&
         !pane.includes("Setup"),
       TIMEOUT,
     );
@@ -6897,7 +7037,7 @@ tmuxTest(
       (pane) =>
         pane.includes(FAKE_GATEWAY_MODEL) &&
         pane.includes("Vercel sign-in must refresh before team-private models can load.") &&
-        pane.includes("Esc Close"),
+        pane.includes("esc close"),
       TIMEOUT,
     );
 
@@ -6969,7 +7109,7 @@ tmuxTest(
 
     await session.sendKeys("Escape");
     await session.waitForPane(
-      (pane) => !pane.includes("Models ") && !pane.includes("Esc Close"),
+      (pane) => !pane.includes("Models ") && !pane.includes("esc close"),
       TIMEOUT,
     );
     await session.waitForComposer(TIMEOUT);
@@ -6979,7 +7119,7 @@ tmuxTest(
       (pane) =>
         pane.includes(blockedPrompt) &&
         pane.includes("fx login sign-in expired.") &&
-        pane.includes("Press Enter to sign in again.") &&
+        pane.includes("press enter to sign in again.") &&
         !pane.includes("Model provider"),
       TIMEOUT,
     );
@@ -7047,7 +7187,7 @@ tmuxTest(
       (pane) =>
         pane.includes(firstPrompt) &&
         pane.includes("fx login sign-in expired.") &&
-        pane.includes("Press Enter to sign in again.") &&
+        pane.includes("press enter to sign in again.") &&
         !pane.includes("Model provider"),
       TIMEOUT,
     );
@@ -7065,12 +7205,12 @@ tmuxTest(
     await session.waitForPane(
       (pane) =>
         pane.includes("Vercel sign-in refresh failed; using the public model catalog.") &&
-        pane.includes("Esc Close"),
+        pane.includes("esc close"),
       TIMEOUT,
     );
     expect(gateway.modelRequests).toHaveLength(1);
     await session.sendKeys("Escape");
-    await session.waitForPane((pane) => !pane.includes("Esc Close"), TIMEOUT);
+    await session.waitForPane((pane) => !pane.includes("esc close"), TIMEOUT);
     await session.waitForComposer(TIMEOUT);
     expect(gateway.requests).toHaveLength(0);
     expect(gateway.modelRequests).toHaveLength(1);
@@ -7199,7 +7339,7 @@ tmuxTest(
     const failed = await session.waitForPane(
       (pane) =>
         pane.includes("fx login sign-in expired.") &&
-        pane.includes("Press Enter to sign in again.") &&
+        pane.includes("press enter to sign in again.") &&
         pane.includes("/credits"),
       TIMEOUT,
     );
