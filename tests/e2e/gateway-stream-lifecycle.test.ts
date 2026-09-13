@@ -7736,7 +7736,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       const parts = prompt.slice(lastUser + 1).flatMap((message) => Array.isArray(message.content) ? message.content : []) as Array<Record<string, unknown>>;
       const result = parts.find((part) => part.type === "tool-result" && part.toolCallId === "replayed_delegation");
       if (result) {
-        seen.push(JSON.parse(contentText(result.output)));
+        seen.push(JSON.parse(toolResultPayload(contentText(result.output))));
         return fakeGatewayFinalText("REPLAY_PARENT_DONE");
       }
       if (contentText(prompt[lastUser]?.content).includes(task)) {
