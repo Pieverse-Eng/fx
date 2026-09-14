@@ -307,3 +307,21 @@ Third-party licenses and attributions are listed in
 ## Credits
 
 Interface sounds by [cuelume](https://github.com/Danilaa1/cuelume).
+
+### Scoped headless calls
+
+Hosts can inject a base system prompt and select an exact set of native tools:
+
+```sh
+fx ask --json --no-save --no-context --system 'Analyze the supplied evidence; return JSON.' --tools '[]' -- 'Evidence and question'
+```
+
+`--tools` accepts a JSON array of unique registered native tool names. An empty
+array grants no tools. Unknown or duplicate names fail before inference. The
+selection governs both advertised schemas and dispatch, including in `--yolo`
+mode; ambient MCP servers are disabled and skills load only when `skill` is
+selected. `--no-context` omits workspace instructions. `--no-save` gives each
+invocation a fresh, unsaved conversation. Without these options, normal ask
+behavior is unchanged. Hosts own role prompts and selections; fx owns native
+tool implementations. This is a tool boundary, not an OS sandbox: an explicitly
+selected shell or agent tool still has its ordinary capabilities.

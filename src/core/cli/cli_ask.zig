@@ -334,6 +334,8 @@ const AskOptions = struct {
     image_paths: std.ArrayList([]u8) = .empty,
     images: std.ArrayList(ImageAttachment) = .empty,
     system_prompt_override: ?[]u8 = null,
+    tools_json: ?[]u8 = null,
+    no_context: bool = false,
     json_output: bool = false,
     prompt_permissions: bool = false,
     timeout_ms: ?usize = null,
@@ -350,6 +352,7 @@ const AskOptions = struct {
         for (self.images.items) |image| types.freeImageAttachment(alloc, image);
         self.images.deinit(alloc);
         if (self.system_prompt_override) |s| alloc.free(s);
+        if (self.tools_json) |s| alloc.free(s);
     }
 };
 
@@ -429,6 +432,8 @@ const RunDeps = struct {
     load_skills: LoadSkillsFn = app_runtime_setup.loadSkills,
     context_registry: context_contract.Registry,
     tool_set: tool_set_contract.ToolSet,
+    strict_tool_set: bool = false,
+    omit_workspace_context: bool = false,
     load_mcp_runtime: mcp_runtime.LoadRuntimeFn,
     process_queued_prompt: ProcessQueuedPromptFn = processQueuedPromptDefault,
     persist_yolo_acknowledgment: PersistYoloAcknowledgmentFn = persistYoloAcknowledgmentDefault,
@@ -1272,6 +1277,24 @@ fn runWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: 
     }
     if (interrupt_scope.requested()) return headless_interrupt.exitCode();
 
+    var selection: ?tool_set_contract.Selection = null;
+    defer if (selection) |*selected| selected.deinit(alloc);
+    var effective_deps = deps;
+    if (options.tools_json) |json| {
+        selection = tool_set_contract.Selection.init(alloc, deps.tool_set, json) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            if (options.json_output) {
+                const output = try renderErrorJsonResult(alloc, "InvalidToolSelection");
+                defer alloc.free(output);
+                try deps.write_stdout(deps.stdout_ctx, output);
+            } else try deps.write_stderr(deps.stderr_ctx, "fx ask: --tools requires a JSON array of unique registered native tool names\n");
+            return 1;
+        };
+        effective_deps.tool_set = selection.?.toolSet();
+        effective_deps.strict_tool_set = true;
+    }
+    effective_deps.omit_workspace_context = options.no_context;
+
     var effective_cfg = cfg;
     if (options.system_prompt_override) |sp| {
         effective_cfg.prompt_policy.system_prompt = sp;
@@ -1292,7 +1315,7 @@ fn runWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: 
         .resume_target = options.resume_target,
         .color_enabled = !options.no_color,
         .continue_recovery = options.continue_recovery,
-        .deps = deps,
+        .deps = effective_deps,
     }) catch |err| {
         if (interrupt_scope.requested()) return headless_interrupt.exitCode();
         if (err == error.OutOfMemory) return err;
@@ -1528,7 +1551,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     ctx.permission_mode = permission_mode;
     ctx.mode_id = mode_id;
     ctx.permission_rules = try takeCorePermissionRules(alloc, &startup);
-    ctx.context_enabled = startup.context_enabled;
+    ctx.context_enabled = startup.context_enabled and !options.deps.omit_workspace_context;
     if (options.output_mode.isTerminal()) {
         presenter = try ask_presentation.Runtime.init(alloc, .{
             .text = owned_prompt,
@@ -1670,17 +1693,19 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     defer types.freeImageAttachmentSlice(alloc, authorized_image_catalog);
 
     try ctx.checkCancellation();
-    ctx.loaded_skills = try options.deps.load_skills(
-        alloc,
-        startup.workspace_root,
-        cfg.skill_root_policy,
-    );
+    if (!options.deps.strict_tool_set or ctx.toolRegistry().lookup("skill") != null) {
+        ctx.loaded_skills = try options.deps.load_skills(
+            alloc,
+            startup.workspace_root,
+            cfg.skill_root_policy,
+        );
+    }
     const loaded_skills = &ctx.loaded_skills;
     try ctx.checkCancellation();
     skill_runtime.traceDiagnostics("ask_startup", loaded_skills.diagnostics);
     ctx.skills_dir = loaded_skills.dir;
     loaded_skills.dir = &.{};
-    if (startup.context_enabled) {
+    if (ctx.context_enabled) {
         try ctx.checkCancellation();
         const context_targets = try context_contract.applicableTargetsForImages(alloc, current_images);
         defer if (context_targets.len > 0) alloc.free(context_targets);
@@ -1695,11 +1720,13 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     }
 
     try ctx.checkCancellation();
-    ctx.mcp = try options.deps.load_mcp_runtime(
-        alloc,
-        startup.workspace_root,
-        ctx.mcp_elicitation_capabilities,
-    );
+    if (!options.deps.strict_tool_set) {
+        ctx.mcp = try options.deps.load_mcp_runtime(
+            alloc,
+            startup.workspace_root,
+            ctx.mcp_elicitation_capabilities,
+        );
+    }
     if (ctx.mcp) |mcp| {
         var health_snapshot = try mcp.snapshotHealth(
             alloc,
@@ -2258,6 +2285,9 @@ fn snapshotMcpDefinition(raw_ctx: *anyopaque, arena: Allocator, name: []const u8
 
 fn validateToolCall(raw_ctx: *anyopaque, arena: Allocator, call: ToolCall) !agent_runtime.ToolCallValidationResult {
     const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
+    if (ctx.deps.strict_tool_set and ctx.toolRegistry().lookup(call.name) == null) {
+        return .{ .failure = try arena.dupe(u8, "Tool is not enabled for this request.") };
+    }
     if (try ctx.cfg.mode_registry.toolPolicyDeniedJson(arena, ctx.deps.tool_set, ctx.mode_id, call.name)) |reason| {
         return .{ .failure = reason };
     }
@@ -3725,6 +3755,13 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
             if (i >= args.len) return error.MissingPrompt;
             if (opts.system_prompt_override) |old| alloc.free(old);
             opts.system_prompt_override = try alloc.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--tools")) {
+            if (opts.tools_json != null) return error.InvalidAskArgs;
+            i += 1;
+            if (i >= args.len) return error.InvalidAskArgs;
+            opts.tools_json = try alloc.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--no-context")) {
+            opts.no_context = true;
         } else if (std.mem.eql(u8, arg, "--json")) {
             opts.json_output = true;
         } else if (std.mem.eql(u8, arg, "--prompt-permissions")) {

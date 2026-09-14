@@ -138,6 +138,95 @@ function fakeGatewayStreamingText(lines: string[], delayMs: number) {
 }
 
 describe("fx ask presentation", () => {
+  test("scoped ask limits discovery and dispatch even in yolo mode", async () => {
+    const root = createRoot();
+    const marker = join(root.workspace, "unexpected-shell");
+    writeFileSync(join(root.workspace, "AGENTS.md"), "PRIVATE_WORKSPACE_INSTRUCTION");
+    mkdirSync(join(root.home, ".fx", "skills", "private-skill"), { recursive: true });
+    writeFileSync(join(root.home, ".fx", "skills", "private-skill", "SKILL.md"),
+      "---\nname: private-skill\ndescription: PRIVATE_SKILL_INSTRUCTION\n---\nPrivate instructions");
+    writeFileSync(join(root.workspace, ".mcp.json"), JSON.stringify({
+      mcpServers: { unexpected: { command: "/bin/sh", args: ["-c", `touch '${marker}'`] } },
+    }));
+    const gateway = startFakeGateway([
+      fakeShellRun("forbidden-shell", `touch '${marker}'`),
+      fakeGatewayFinalText("Scoped result"),
+    ]);
+    gateways.push(gateway);
+    const result = await runFx([
+      "ask", "--json", "--yolo", "--no-save", "--no-context",
+      "--system", "CALLER_ROLE_PROMPT", "--tools", '["discover_markets","search_tokens"]',
+      "--", "Inspect the supplied asset",
+    ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+    expect(result.code).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(gateway.requests).toHaveLength(2);
+    const first = JSON.parse(gateway.requests[0]!.body);
+    expect(first.tools.map((tool: { name: string }) => tool.name).sort())
+      .toEqual(["discover_markets", "search_tokens"]);
+    expect(gateway.requests[0]!.body).toContain("CALLER_ROLE_PROMPT");
+    expect(gateway.requests[0]!.body).not.toContain("PRIVATE_WORKSPACE_INSTRUCTION");
+    expect(gateway.requests[0]!.body).not.toContain("PRIVATE_SKILL_INSTRUCTION");
+    expect(gateway.requests[1]!.body).toContain("Tool is not enabled for this request.");
+  }, TIMEOUT);
+
+  test("scoped ask executes selected tools and leaves ordinary ask defaults intact", async () => {
+    const root = createRoot();
+    writeFileSync(join(root.workspace, "fixture.txt"), "SCOPED_FILE_EVIDENCE");
+    writeFileSync(join(root.workspace, "AGENTS.md"), "DEFAULT_WORKSPACE_CONTEXT");
+    const gateway = startFakeGateway([
+      fakeGatewayToolCall("selected-read", "read_file", { path: "fixture.txt" }),
+      fakeGatewayFinalText("Read selected file"),
+      fakeGatewayFinalText("Default call"),
+    ]);
+    gateways.push(gateway);
+    const selected = await runFx([
+      "ask", "--json", "--yolo", "--no-save", "--no-context", "--tools", '["read_file"]',
+      "--", "Read fixture.txt",
+    ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+    expect(selected.code).toBe(0);
+    expect(gateway.requests[1]!.body).toContain("SCOPED_FILE_EVIDENCE");
+    const ordinary = await runFx(["ask", "--json", "--no-save", "Default request"],
+      { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+    expect(ordinary.code).toBe(0);
+    const request = gateway.requests[2]!.body;
+    expect(request).toContain("DEFAULT_WORKSPACE_CONTEXT");
+    expect(JSON.parse(request).tools.some((tool: { name: string }) => tool.name === "shell")).toBe(true);
+  }, TIMEOUT);
+
+  test("scoped ask supports an empty tool set and independent caller contexts", async () => {
+    const root = createRoot();
+    const gateway = startDynamicFakeGateway(() => fakeGatewayFinalText("Supplied evidence only"));
+    gateways.push(gateway);
+    for (const prompt of ["FIRST_ROLE_CONTEXT", "SECOND_ROLE_CONTEXT"]) {
+      const result = await runFx([
+        "ask", "--json", "--no-save", "--no-context", "--tools", "[]", "--system", prompt,
+        "--", "Analyze supplied material",
+      ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+      expect(result.code).toBe(0);
+    }
+    expect(gateway.requests).toHaveLength(2);
+    for (const request of gateway.requests) {
+      expect(JSON.parse(request.body).tools ?? []).toEqual([]);
+    }
+    expect(gateway.requests[1]!.body).toContain("SECOND_ROLE_CONTEXT");
+    expect(gateway.requests[1]!.body).not.toContain("FIRST_ROLE_CONTEXT");
+  }, TIMEOUT);
+
+  test("scoped ask rejects unknown, duplicate and malformed tool lists before inference", async () => {
+    const root = createRoot();
+    const gateway = startDynamicFakeGateway(() => fakeGatewayFinalText("unexpected"));
+    gateways.push(gateway);
+    for (const tools of ['["unknown"]', '["shell","shell"]', '{}', '[1]', 'shell']) {
+      const result = await runFx([
+        "ask", "--json", "--no-save", "--tools", tools, "--", "Analyze",
+      ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+      expect(result.code).toBe(1);
+      expect(JSON.parse(result.stdout).error).toBe("InvalidToolSelection");
+    }
+    expect(gateway.requests).toHaveLength(0);
+  }, TIMEOUT);
+
   test("JSON rejects result references outside the current request", async () => {
     const root = createRoot();
     const gateway = startFakeGateway([
