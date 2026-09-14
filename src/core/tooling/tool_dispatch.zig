@@ -428,6 +428,11 @@ pub const LabelArgKind = enum {
 pub const PermissionTargetKind = core_permissions.PermissionTargetKind;
 
 pub const ExecutorKind = enum {
+    agentkey_discover,
+    agentkey_describe,
+    agentkey_execute,
+    agentkey_request,
+    read_reference,
     get_markets,
     get_market_candles,
     compare_trade_routes,

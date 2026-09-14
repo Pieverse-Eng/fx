@@ -250,6 +250,104 @@ describe("fx ask presentation", () => {
     }
   }, TIMEOUT);
 
+  test("AgentKey native tools preserve scoped authentication, refreshed quotes and uncertain receipts", async () => {
+    const root = createRoot();
+    const calls: Array<{ path: string; body: any }> = [];
+    const requestId = "a".repeat(64);
+    const version = `ak-v1-${"b".repeat(64)}`;
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
+      expect(request.headers.get("x-pieverse-agentkey-research")).toBe("scoped-run-capability");
+      expect(request.headers.has("authorization")).toBe(false);
+      const path = new URL(request.url).pathname;
+      const body = request.method === "POST" ? await request.json() : null;
+      calls.push({ path, body });
+      if (path.endsWith("/discover")) return Response.json({ tools: [{ name: "Provider/filing" }] });
+      if (path.endsWith("/describe")) return Response.json({ execute_as: { name: "Provider/filing", params: {} }, params: { type: "object" }, price: { credits: "0.100000", version } });
+      return Response.json({ requestId, state: "indeterminate", result: null, billing: { status: "not_charged" } });
+    } });
+    const gateway = startFakeGateway([
+      fakeGatewayToolCall("discover", "agentkey_discover", { query: "Find the reported revenue and reporting period" }),
+      fakeGatewayToolCall("describe", "agentkey_describe", { name: "Provider/filing" }),
+      fakeGatewayToolCall("paid", "agentkey_execute", { name: "returned/path", params_json: '{"symbol":"ABC"}', maxCredits: "0.2" }),
+      fakeGatewayToolCall("receipt", "agentkey_request", { requestId }),
+      fakeGatewayFinalText('{"result_refs":["paid","receipt"]}'),
+    ]);
+    gateways.push(gateway);
+    try {
+      const result = await runFx([
+        "ask", "--json", "--evidence", "--auto", "--no-save", "--no-context", "--tools",
+        '["agentkey_discover","agentkey_describe","agentkey_execute","agentkey_request"]', "--", "Research financial evidence",
+      ], { cwd: root.workspace, env: { ...gatewayEnv(root.home, gateway),
+        FX_AGENTKEY_BASE_URL: `http://127.0.0.1:${server.port}/agentkey`, FX_AGENTKEY_RESEARCH_TOKEN: "scoped-run-capability",
+      }, timeoutMs: TIMEOUT });
+      expect(result.code).toBe(0);
+      expect(calls.map((call) => call.path)).toEqual(["/agentkey/discover", "/agentkey/describe", "/agentkey/describe", "/agentkey/execute", `/agentkey/requests/${requestId}`]);
+      expect(calls[3]!.body).toEqual({ name: "Provider/filing", params: { symbol: "ABC" }, priceVersion: version, maxCredits: "0.2" });
+      const final = JSON.parse(JSON.parse(result.stdout).final_output);
+      expect(final.results.map((entry: any) => [entry.tool, entry.payload.state, entry.payload.requestId])).toEqual([
+        ["agentkey_execute", "indeterminate", requestId], ["agentkey_request", "indeterminate", requestId],
+      ]);
+      expect(gateway.requests.map((request) => request.body).join("\n")).not.toContain("scoped-run-capability");
+    } finally { server.stop(true); }
+  }, TIMEOUT);
+
+  test("AgentKey rejects a refreshed price above its ceiling and preserves error receipt IDs without retries", async () => {
+    const root = createRoot();
+    let paidCalls = 0;
+    const version = `ak-v1-${"c".repeat(64)}`;
+    const requestId = "d".repeat(64);
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+      if (new URL(request.url).pathname.endsWith("/describe")) return Response.json({ execute_as: { name: "Provider/read" }, price: { credits: "0.2", version } });
+      paidCalls++;
+      return Response.json({ code: "AGENTKEY_BILLING_UNAVAILABLE" }, { status: 503, headers: { "X-AgentKey-Request-Id": requestId } });
+    } });
+    try {
+      for (const ceiling of ["0.1", "0.3"]) {
+        const gateway = startFakeGateway([
+          fakeGatewayToolCall("paid", "agentkey_execute", { name: "Provider/read", params_json: '[]', maxCredits: ceiling }),
+          fakeGatewayFinalText('{"result_refs":["paid"]}'),
+        ]);
+        gateways.push(gateway);
+        const result = await runFx([
+          "ask", "--json", "--evidence", "--auto", "--no-save", "--no-context", "--tools", '["agentkey_execute"]', "--", "Collect evidence within the ceiling",
+        ], { cwd: root.workspace, env: { ...gatewayEnv(root.home, gateway), FX_AGENTKEY_BASE_URL: `http://127.0.0.1:${server.port}`, FX_AGENTKEY_RESEARCH_TOKEN: "cap" }, timeoutMs: TIMEOUT });
+        expect(result.code).toBe(0);
+        const payload = JSON.parse(JSON.parse(result.stdout).final_output).results[0].payload;
+        if (ceiling === "0.1") {
+          expect(payload.code).toBe("AGENTKEY_PRICE_EXCEEDS_LIMIT");
+          expect(payload.executionAttempted).toBe(false);
+          expect(paidCalls).toBe(0);
+        } else {
+          expect(payload.code).toBe("AGENTKEY_BILLING_UNAVAILABLE");
+          expect(payload.requestId).toBe(requestId);
+          expect(payload.automaticRetry).toBe(false);
+          expect(paidCalls).toBe(1);
+        }
+      }
+    } finally { server.stop(true); }
+  }, TIMEOUT);
+
+  test("approved references cannot escape the per-request file catalog", async () => {
+    const root = createRoot();
+    writeFileSync(join(root.workspace, "reference.md"), "ORIGINAL_KNOWLEDGE_REFERENCE");
+    writeFileSync(join(root.workspace, "private.txt"), "PRIVATE_UNAPPROVED_CONTENT");
+    const gateway = startFakeGateway([
+      fakeGatewayToolCall("approved", "read_reference", { id: "knowledge/trend" }),
+      fakeGatewayToolCall("denied", "read_reference", { id: join(root.workspace, "private.txt") }),
+      fakeGatewayFinalText('{"result_refs":["approved"]}'),
+    ]);
+    gateways.push(gateway);
+    const result = await runFx([
+      "ask", "--json", "--evidence", "--auto", "--no-save", "--no-context", "--tools", '["read_reference"]', "--", "Read relevant knowledge",
+    ], { cwd: root.workspace, env: { ...gatewayEnv(root.home, gateway), FX_REFERENCE_FILES: JSON.stringify({ "knowledge/trend": join(root.workspace, "reference.md") }) }, timeoutMs: TIMEOUT });
+    expect(result.code).toBe(0);
+    const messages = gateway.requests.map((request) => request.body).join("\n");
+    expect(messages).toContain("ORIGINAL_KNOWLEDGE_REFERENCE");
+    expect(messages).toContain("Reference is not allowed");
+    expect(messages).not.toContain("PRIVATE_UNAPPROVED_CONTENT");
+    expect(JSON.parse(JSON.parse(result.stdout).final_output).results[0].tool).toBe("read_reference");
+  }, TIMEOUT);
+
   test("JSON rejects result references outside the current request", async () => {
     const root = createRoot();
     const gateway = startFakeGateway([

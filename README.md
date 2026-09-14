@@ -342,3 +342,17 @@ never falls back. Optional `indicators` supports SMA, EMA and Wilder RSI (period
 2–200; up to 64 series points). Calculations use closed bars, mean seeds and three
 additional warm-up periods for EMA/RSI; missing bars or insufficient bounded history
 produce explicit gaps. Ticker-only candle calls retain their existing behavior.
+
+A host may supply `FX_AGENTKEY_BASE_URL` and `FX_AGENTKEY_RESEARCH_TOKEN` for the
+four native `agentkey_discover`, `agentkey_describe`, `agentkey_execute` and
+`agentkey_request` bindings. They use the canonical platform HTTP contract,
+refresh execution quotes, retain receipt errors and never retry paid execution.
+`params_json` accepts a JSON-encoded object or array. No general wallet credential
+or upstream AgentKey key is loaded. The platform must enforce read-only operations,
+endpoint/tenant scope and cumulative credits; a per-call ceiling alone is insufficient.
+
+`read_reference` reads only exact IDs in the host-supplied `FX_REFERENCE_FILES`
+JSON map (ID to absolute file). It cannot browse paths, install skills, or read an
+unlisted file. Bodies are bounded to 1 MiB, and artifacts carrying an expired
+`expiresAt` are rejected. Hosts grant only selected references and approved
+knowledge files, and remain responsible for freshness and artifact retention.
