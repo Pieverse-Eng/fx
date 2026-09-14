@@ -2657,7 +2657,12 @@ fn executeToolCallAuthorized(
     if (ctx.output_mode == .json) {
         ctx.tool_call_records_mutex.lockUncancelable(io_mod.getIo());
         defer ctx.tool_call_records_mutex.unlock(io_mod.getIo());
-        if (try ctx.result_store.captureForModel(ctx.alloc, request.result_allocator, request.call.id, request.call.name, result.model_output)) |annotated| {
+        const view = if (builtin_tools.lookup(request.call.name)) |spec|
+            if (spec.retained_result_view) |project| try project(request.result_allocator, result.model_output) else null
+        else
+            null;
+        defer if (view) |owned| request.result_allocator.free(owned);
+        if (try ctx.result_store.captureForModelView(ctx.alloc, request.result_allocator, request.call.id, request.call.name, result.model_output, view)) |annotated| {
             result.model_output = annotated;
         }
     }

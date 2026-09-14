@@ -909,6 +909,7 @@ pub const get_market_candles = ToolSpec{
             .additional_properties = false,
         },
     },
+    .retained_result_view = @import("../tools/market/candle_projection.zig").project,
     .executor_kind = .get_market_candles,
     .activity_kind = .read,
     .action_label = "Reading market candles",

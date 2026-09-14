@@ -492,6 +492,8 @@ pub const Tool = struct {
     description: []const u8,
     model_schema: model_tool_schema.FunctionSchema,
     model_visible: bool = true,
+    /// Optional code projection after the JSON caller has retained the original.
+    retained_result_view: ?*const fn (std.mem.Allocator, []const u8) anyerror!?[]u8 = null,
     write_provider_advertisement_fn: ?WriteProviderAdvertisementFn = null,
     /// Set when the provider runs the tool instead of fx dispatch. Such a tool
     /// never reaches a call-time permission check, so advertisement is its only

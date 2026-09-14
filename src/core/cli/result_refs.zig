@@ -56,6 +56,10 @@ pub const Store = struct {
     /// reference. The caller owns the annotation using output_alloc; originals
     /// remain owned by the store. Serialize access with capture/resolve.
     pub fn captureForModel(self: *Store, store_alloc: Allocator, output_alloc: Allocator, id: []const u8, tool: []const u8, json: []const u8) !?[]u8 {
+        return self.captureForModelView(store_alloc, output_alloc, id, tool, json, null);
+    }
+
+    pub fn captureForModelView(self: *Store, store_alloc: Allocator, output_alloc: Allocator, id: []const u8, tool: []const u8, json: []const u8, view: ?[]const u8) !?[]u8 {
         const count = self.entries.items.len;
         self.capture_checked(store_alloc, id, tool, json) catch |err| {
             self.failure = err;
@@ -66,7 +70,7 @@ pub const Store = struct {
         try output.writer.writeAll("FX result reference: ");
         try std.json.Stringify.value(.{ .result_ref = id }, .{}, &output.writer);
         try output.writer.writeAll("\n");
-        try output.writer.writeAll(json);
+        try output.writer.writeAll(view orelse json);
         return try output.toOwnedSlice();
     }
 
@@ -248,4 +252,18 @@ test "evidence mode binds native tool names and keeps analysis separate from exa
     try std.testing.expectEqualStrings("{\"version\":1,\"results\":[]}", empty);
     try std.testing.expectError(error.InvalidResultReferences, store.resolve(alloc, "{\"result_refs\":[\"call\"],\"tool\":\"invented\"}"));
     try std.testing.expectError(error.InvalidResultReferences, store.resolve(alloc, "{\"result_refs\":[\"call\"],\"analysis\":[]}"));
+}
+
+test "model projections never replace retained originals" {
+    const alloc = std.testing.allocator;
+    var store: Store = .{};
+    defer store.deinit(alloc);
+    const original = "{\"closed\":[1,2,3,4]}";
+    const view = "{\"closed\":[3,4],\"retainedClosedCandles\":4}";
+    const annotated = (try store.captureForModelView(alloc, alloc, "call", "candles", original, view)).?;
+    defer alloc.free(annotated);
+    try std.testing.expect(std.mem.endsWith(u8, annotated, view));
+    const resolved = (try store.resolve(alloc, "{\"result_refs\":[\"call\"]}")).?;
+    defer alloc.free(resolved);
+    try std.testing.expectEqualStrings(original, resolved);
 }

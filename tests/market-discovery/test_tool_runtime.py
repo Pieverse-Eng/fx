@@ -157,7 +157,16 @@ def exercise(kind, tool_name="get_markets", references=False, multiple=False, ev
                 assert payload is not None, content
                 if references:
                     final = json.loads(output["final_output"])
-                    if evidence:
+                    if evidence and kind == "indicators":
+                        assert final['version'] == 1 and final['results'][0]['result_ref'] == call_ids[0]
+                        full = final['results'][0]['payload']
+                        assert len(full['results'][0]['timeframes']['15m']['closed']) == 60
+                        projected = json.loads(json.dumps(full))
+                        frame = projected['results'][0]['timeframes']['15m']
+                        frame['retainedClosedCandles'] = len(frame['closed'])
+                        frame['closed'] = frame['closed'][-2:]
+                        assert projected == payload, payload
+                    elif evidence:
                         assert final == {"version": 1, "results": [{"result_ref": call, "tool": tool_name, "payload": payload} for call in reversed(call_ids)]}, final
                     else:
                         assert final == ([payload, payload] if multiple else payload), output
