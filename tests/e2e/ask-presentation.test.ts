@@ -291,6 +291,53 @@ describe("fx ask presentation", () => {
     } finally { server.stop(true); }
   }, TIMEOUT);
 
+  test("completed paid evidence persists across successful synthesis, invalid answers and forced timeout", async () => {
+    const root = createRoot();
+    const requestId = "e".repeat(64);
+    let executions = 0;
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+      if (new URL(request.url).pathname.endsWith("/describe")) return Response.json({ execute_as: {name:"Provider/read"}, price: {credits:"0.1", version:`ak-v1-${"f".repeat(64)}`} });
+      executions++;
+      return Response.json({requestId, state:"completed", billing:{status:"charged"}, result:{text:"Completed paid report"}});
+    }});
+    try {
+      for (const outcome of ["success", "invalid", "timeout"]) {
+        const directory = join(root.root, outcome);
+        mkdirSync(directory, {mode:0o700});
+        let release: ((response: Response) => void) | undefined;
+        const gateway = startFakeGateway([
+          fakeGatewayToolCall("paid", "agentkey_execute", {name:"Provider/read", params_json:'{}'}),
+          outcome === "timeout"
+            ? () => new Promise<Response>((resolve) => { release = resolve; })
+            : fakeGatewayFinalText(outcome === "success" ? '{"result_refs":["paid"]}' : "Missing result references"),
+        ]);
+        gateways.push(gateway);
+        try {
+          const value = await runFx(["ask", "--json", "--evidence", "--auto", "--no-save", "--no-context", "--tools", '["agentkey_execute"]', "--", "Read report"], {
+            cwd:root.workspace, timeoutMs:outcome === "timeout" ? 3000 : TIMEOUT,
+            env:{...gatewayEnv(root.home, gateway), FX_EVIDENCE_DIR:directory, FX_AGENTKEY_BASE_URL:`http://127.0.0.1:${server.port}/agentkey`, FX_AGENTKEY_RESEARCH_TOKEN:"fixture"},
+          });
+          if (outcome === "success") {
+            expect(value.code).toBe(0);
+            expect(value.stderr.trim()).toBe("Researching external evidence");
+            expect(JSON.parse(JSON.parse(value.stdout).final_output).results[0].payload.requestId).toBe(requestId);
+          } else if (outcome === "invalid") {
+            expect(value.code).toBe(1);
+            expect(JSON.parse(value.stdout).error).toBe("ResultReferencesRequired");
+          } else {
+            expect(value.timedOut).toBe(true);
+            expect(value.signal).toBe("SIGKILL");
+          }
+          const record = JSON.parse(readFileSync(join(directory, "0.json"), "utf8"));
+          expect(record.result_ref).toBe("paid");
+          expect(record.tool).toBe("agentkey_execute");
+          expect(JSON.parse(record.payload_json)).toMatchObject({requestId, state:"completed", billing:{status:"charged"}});
+        } finally { release?.(fakeGatewayFinalText('{"result_refs":[]}')); }
+      }
+      expect(executions).toBe(3);
+    } finally {server.stop(true);}
+  }, TIMEOUT);
+
   test("AgentKey rejects a refreshed price above its ceiling and preserves error receipt IDs without retries", async () => {
     const root = createRoot();
     let paidCalls = 0;

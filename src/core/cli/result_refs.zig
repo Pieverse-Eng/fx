@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const io_mod = @import("../shared/io.zig");
 
 pub const prompt =
     \\# Result reference output
@@ -36,6 +37,9 @@ pub const Store = struct {
     bytes: usize = 0,
     failure: ?anyerror = null,
     evidence_mode: bool = false,
+    /// Private per-invocation directory supplied by the host. Completed results
+    /// survive failed synthesis or termination; the host owns its cleanup.
+    evidence_dir: ?[]const u8 = null,
 
     pub fn deinit(self: *Store, alloc: Allocator) void {
         for (self.entries.items) |entry| {
@@ -93,7 +97,17 @@ pub const Store = struct {
         errdefer alloc.free(owned_json);
         const owned_tool = try alloc.dupe(u8, tool);
         errdefer alloc.free(owned_tool);
-        try self.entries.append(alloc, .{ .id = owned_id, .tool = owned_tool, .json = owned_json });
+        try self.entries.ensureUnusedCapacity(alloc, 1);
+        if (self.evidence_dir) |directory| {
+            const path = try std.fmt.allocPrint(alloc, "{s}/{d}.json", .{ directory, self.entries.items.len });
+            defer alloc.free(path);
+            // Store the original as a string so hosts can decode the record
+            // without rounding numbers in its retained payload.
+            const record = try std.json.Stringify.valueAlloc(alloc, .{ .result_ref = id, .tool = tool, .payload_json = json }, .{});
+            defer alloc.free(record);
+            try io_mod.writeFileAtomic(alloc, path, record);
+        }
+        self.entries.appendAssumeCapacity(.{ .id = owned_id, .tool = owned_tool, .json = owned_json });
         self.bytes += id.len + tool.len + json.len;
     }
 
@@ -266,4 +280,46 @@ test "model projections never replace retained originals" {
     const resolved = (try store.resolve(alloc, "{\"result_refs\":[\"call\"]}")).?;
     defer alloc.free(resolved);
     try std.testing.expectEqualStrings(original, resolved);
+}
+
+test "evidence directory retains independent exact payloads before synthesis" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const directory = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(directory);
+    var store: Store = .{ .evidence_mode = true, .evidence_dir = directory };
+    defer store.deinit(alloc);
+    const original = "{\"value\":1.2300,\"id\":9007199254740993}";
+    const annotated = (try store.captureForModel(alloc, alloc, "first", "fixture", original)).?;
+    defer alloc.free(annotated);
+    const other = (try store.captureForModel(alloc, alloc, "other", "fixture", "{\"text\":\"UNSELECTED\"}")).?;
+    defer alloc.free(other);
+    const path = try std.fs.path.join(alloc, &.{ directory, "0.json" });
+    defer alloc.free(path);
+    var file = try std.Io.Dir.openFileAbsolute(io_mod.getIo(), path, .{});
+    defer file.close(io_mod.getIo());
+    const raw = try io_mod.readFileToEnd(alloc, &file, 1024);
+    defer alloc.free(raw);
+    const record = try std.json.parseFromSlice(struct { result_ref: []const u8, tool: []const u8, payload_json: []const u8 }, alloc, raw, .{});
+    defer record.deinit();
+    try std.testing.expectEqualStrings("first", record.value.result_ref);
+    try std.testing.expectEqualStrings(original, record.value.payload_json);
+    try std.testing.expectEqual(null, std.mem.find(u8, raw, "UNSELECTED"));
+}
+
+test "evidence directory write failure does not retain freed entries" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const directory = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(directory);
+    const missing = try std.fs.path.join(alloc, &.{ directory, "missing" });
+    defer alloc.free(missing);
+    var store: Store = .{ .evidence_mode = true, .evidence_dir = missing };
+    defer store.deinit(alloc);
+    try std.testing.expectEqual(null, try store.captureForModel(alloc, alloc, "call", "fixture", "{}"));
+    try std.testing.expect(store.failure != null);
+    try std.testing.expectEqual(0, store.entries.items.len);
+    try std.testing.expectEqual(0, store.bytes);
 }

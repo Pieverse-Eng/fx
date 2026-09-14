@@ -1523,6 +1523,12 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     var ctx = AskContext.init(alloc, effective_cfg, options.deps, startup.workspace_root);
     defer ctx.deinit();
     ctx.result_store.evidence_mode = options.evidence;
+    if (options.evidence) {
+        if (io_mod.getenv("FX_EVIDENCE_DIR")) |directory| {
+            if (!std.fs.path.isAbsolute(directory)) return error.InvalidEvidenceDirectory;
+            ctx.result_store.evidence_dir = directory;
+        }
+    }
     if (options.save_session) {
         _ = try ctx.session.initializeProfileUsage(alloc, io_mod.getenv("HOME"));
         ctx.session.attachProfileUsagePublisher(alloc);

@@ -335,6 +335,12 @@ from retained originals; optional model `analysis` is kept separately for host
 validation. Invented payloads and unknown IDs fail. An empty results list means
 no evidence, never successful research. These references expire with the request;
 the host must explicitly retain bounded artifacts before offering later retrieval.
+With `--evidence`, a host may supply an existing private absolute directory in
+`FX_EVIDENCE_DIR`. Each completed JSON tool result is atomically written there as
+`{result_ref,tool,payload_json}` before further inference; `payload_json` preserves
+the original numeric text. These files survive failed synthesis or termination.
+The host owns per-invocation directory isolation, retention limits and cleanup;
+this sink never turns a failed model answer into successful research.
 
 `get_markets` replaces `discover_markets`. It returns compact identities by default;
 optional `metrics` selects funding, openInterest, depth, or markPrice. Cost comparison
