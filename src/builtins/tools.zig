@@ -27,7 +27,7 @@ const read_tool_result_impl = @import("../tools/session/read_tool_result.zig");
 const compare_trade_routes_impl = @import("../tools/market/compare_trade_routes.zig");
 const get_market_candles_impl = @import("../tools/market/get_market_candles.zig");
 const search_tokens_impl = @import("../tools/market/search_tokens.zig");
-const discover_markets_impl = @import("../tools/market/discover_markets.zig");
+const discover_markets_impl = @import("../tools/market/get_markets.zig");
 const shell_impl = @import("../tools/shell/shell.zig");
 const install_skill_impl = @import("../tools/skills/install_skill.zig");
 const skill_impl = @import("../tools/skills/skill.zig");
@@ -839,17 +839,18 @@ pub const read_tool_result = ToolSpec{
 };
 
 const discover_markets_description =
-    "This tool allows you to find spot and perpetual markets for multiple base tickers across supported venues, including issuer-verified stock token deployments on BNB, Solana and Robinhood Chain. Returns exact trading symbols or chain/contract/provider identities, restrictions, and query errors. Onchain deployment_only entries identify supported purchase channels, not confirmed liquidity or executable quotes; use compare_trade_routes with an amount to compare entry costs.";
+    "This tool allows you to find spot and perpetual markets for multiple base tickers across supported venues, including issuer-verified stock token deployments on BNB, Solana and Robinhood Chain. Returns a compact market list by default: exact trading symbols or chain/contract/provider identities, restrictions, and query errors. Request metrics explicitly for funding, open interest, depth or mark price; no amount or direction is needed. Onchain deployment_only entries identify supported purchase channels, not confirmed liquidity or executable quotes; use compare_trade_routes with an amount to compare entry costs.";
 
-pub const discover_markets = ToolSpec{
-    .name = "discover_markets",
+pub const get_markets = ToolSpec{
+    .name = "get_markets",
     .description = discover_markets_description,
     .model_schema = .{
-        .name = "discover_markets",
+        .name = "get_markets",
         .description = discover_markets_description,
         .input_schema = .{
             .properties = &.{
                 .{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 64 }, .description = "Base tickers used by supported venues, case-insensitive; not trading pairs. Matches tickers and verified venue-scoped aliases; does not resolve company names or listing codes. Resolve asset identity and candidate venue tickers before calling. An empty result means no match for the supplied ticker. Quantity-prefixed contracts retain their native symbols." },
+                .{ .name = "metrics", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string, .enum_values = &.{ "funding", "openInterest", "depth", "markPrice" } } }, .bounds = &.{ .min_items = 1, .max_items = 4 }, .description = "Optional requested market measurements. Omit for identity/availability only. Funding and open interest are not applicable to spot. Missing observations stay explicit." },
                 .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp", "all" } }, .description = "Optional product filter; defaults to all. Includes stock tokens and stock-linked perpetuals. Excludes dated futures. Aster supports perpetuals only." },
                 .{ .name = "quote", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Use only for a requested currency, or ALL for all quotes. Omit for defaults: USDT at Binance/Bitget/Gate/OKX, USDC at Hyperliquid/Lighter, USD at Kraken, all at Aster. For perps: Hyperliquid filters collateral, Lighter settlement, Kraken price denomination." },
             },
@@ -857,7 +858,7 @@ pub const discover_markets = ToolSpec{
             .additional_properties = false,
         },
     },
-    .executor_kind = .discover_markets,
+    .executor_kind = .get_markets,
     .activity_kind = .read,
     .action_label = "Finding markets",
     .completed_action_label = "Found markets",
@@ -868,7 +869,26 @@ pub const discover_markets = ToolSpec{
 };
 
 const get_market_candles_description =
-    "This tool allows you to retrieve 15m, 1h, and 4h OHLCV candles and the latest trade for multiple base tickers. Automatically selects a reference market by comparable 24h trading volume across the eight supported venues. Returns quote currency, timestamps, up to 50 closed candles and the current candle per timeframe, and query errors. Rows follow columns; timestamps are ISO 8601 UTC strings, prices are per underlying unit, and volume is underlying quantity or null. Current candles are unconfirmed. Does not generate trade recommendations.";
+    "Retrieve requested reference OHLCV intervals and optional deterministic SMA, EMA or Wilder RSI. Ticker-only calls retain 15m/1h/4h candles. Optional market selects one exact venue/product/native symbol without fallback; otherwise select a reference by comparable public volume. Returns actual market identity, quote units, observation/closed-candle times and data gaps. Indicators use closed candles and documented bounded initialization; missing bars or insufficient history produce unavailable values. Request bounded indicator series for crossover/divergence analysis. Periods are measurements, not trading instructions.";
+
+const candle_market_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "venue", .json_type = .string },
+        .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp" } } },
+        .{ .name = "symbol", .json_type = .string },
+    },
+    .required = &.{ "venue", "product", "symbol" },
+    .additional_properties = false,
+};
+const candle_indicator_schema = model_tool_schema.ObjectSchema{
+    .properties = &.{
+        .{ .name = "name", .json_type = .string, .shape = &.{ .enum_values = &.{ "sma", "ema", "rsi" } } },
+        .{ .name = "period", .json_type = .integer, .bounds = &.{ .minimum = 2, .maximum = 200 }, .description = "SMA needs period closes; EMA/RSI also require three periods after seeding. Provider history limits may cause an unavailable result." },
+        .{ .name = "series", .json_type = .integer, .bounds = &.{ .minimum = 0, .maximum = 64 }, .description = "Optional latest initialized readings. Omit for a scalar; request when historical relationships matter." },
+    },
+    .required = &.{ "name", "period" },
+    .additional_properties = false,
+};
 
 pub const get_market_candles = ToolSpec{
     .name = "get_market_candles",
@@ -877,7 +897,12 @@ pub const get_market_candles = ToolSpec{
         .name = "get_market_candles",
         .description = get_market_candles_description,
         .input_schema = .{
-            .properties = &.{.{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 16 }, .description = "Resolved base tickers used by supported venues, case-insensitive. Verify asset identity and venue identifiers first; do not pass unresolved names or listing codes. Pass related resolved assets together." }},
+            .properties = &.{
+                .{ .name = "tickers", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string } }, .bounds = &.{ .min_items = 1, .max_items = 16 }, .description = "Resolved base tickers. Group related assets. An explicit market requires exactly one ticker." },
+                .{ .name = "intervals", .json_type = .array, .shape = &.{ .array_values = .{ .json_type = .string, .enum_values = &.{ "15m", "1h", "4h" } } }, .bounds = &.{ .min_items = 1, .max_items = 3 }, .description = "Optional unique requested intervals; defaults to all three. Other intervals are unsupported." },
+                .{ .name = "market", .json_type = .object, .shape = &.{ .object = &candle_market_schema }, .description = "Exact identity from get_markets. Never substituted with another market. Unsupported identities return a coverage gap." },
+                .{ .name = "indicators", .json_type = .array, .shape = &.{ .array_objects = &candle_indicator_schema }, .bounds = &.{ .min_items = 1, .max_items = 8 }, .description = "Calculate only these indicators for requested intervals, reusing each fetched series. No arbitrary formulas or unsupported indicators." },
+            },
             .required = &.{"tickers"},
             .additional_properties = false,
         },
@@ -893,7 +918,7 @@ pub const get_market_candles = ToolSpec{
 };
 
 const compare_trade_routes_description =
-    "Retrieve per-market funding, open interest and displayed depth across supported venues. Omit amount and direction for snapshots only. With amount, compare taker entry costs, also including supported onchain stock spot routes. Returns markets with timestamps, units and fill estimates, plus bestRoute, rankedRoutes and gaps. rankedRoutes is ordered by cost, keeps the cheapest eligible route for each venue, and preserves separate onchain routes when the issuer, contract, provider, or payment token differs. Lower costRank is cheaper; ties share a rank. The caller selects a route using its account configuration and constraints. Market discovery is included; do not call discover_markets solely to supplement or recheck this comparison. Perp amount is sized at each venue midpoint and rounded down to its lot step. estimatedFillPrice excludes fees; effectivePrice includes fees, so do not apply fees again. Funding is reported separately from entry costs. Missing data is unknown, not zero. Does not place orders.";
+    "Compare taker entry costs for a concrete amount, including supported onchain stock spot routes. Use get_markets for unsized snapshots. Discovery and required market observations are included in this call. Returns markets with timestamps, units and fill estimates, plus bestRoute, rankedRoutes and gaps. rankedRoutes is ordered by cost, keeps the cheapest eligible route for each venue, and preserves separate onchain routes when the issuer, contract, provider, or payment token differs. Lower costRank is cheaper; ties share a rank. The caller selects a route using its account configuration and constraints. Market discovery is included; do not call get_markets solely to supplement or recheck this comparison. Perp amount is sized at each venue midpoint and rounded down to its lot step. estimatedFillPrice excludes fees; effectivePrice includes fees, so do not apply fees again. Funding is reported separately from entry costs. Missing data is unknown, not zero. Does not place orders.";
 
 pub const compare_trade_routes = ToolSpec{
     .name = "compare_trade_routes",
@@ -905,12 +930,12 @@ pub const compare_trade_routes = ToolSpec{
             .properties = &.{
                 .{ .name = "ticker", .json_type = .string, .description = "One resolved base ticker used by a supported venue. Verify asset identity and venue identifiers first; do not pass an unresolved name or listing code." },
                 .{ .name = "product", .json_type = .string, .shape = &.{ .enum_values = &.{ "spot", "perp" } }, .description = "Spot buys or perpetual opening positions." },
-                .{ .name = "amount", .json_type = .string, .description = "Optional positive decimal: total budget including fees/gas for spot, position notional (not margin) for perps. Omit for market snapshots." },
+                .{ .name = "amount", .json_type = .string, .description = "Required positive decimal: total budget including fees/gas for spot, position notional (not margin) for perps." },
                 .{ .name = "currency", .json_type = .string, .shape = &.{ .enum_values = &.{ "USDT", "USDC", "USD" } }, .description = "Budget and comparison currency; defaults to USDT. Does not filter markets." },
                 .{ .name = "quote", .json_type = .string, .description = "Optional venue quote filter. Defaults to USDT, USDC on Hyperliquid/Lighter, USD on Kraken. Override only when requested; ALL searches all quotes. Onchain routes use their supported payment assets." },
-                .{ .name = "direction", .json_type = .string, .shape = &.{ .enum_values = &.{ "long", "short" } }, .description = "Required with amount for perps; omit for snapshots and spot buys." },
+                .{ .name = "direction", .json_type = .string, .shape = &.{ .enum_values = &.{ "long", "short" } }, .description = "Required for perps; omit for spot buys." },
             },
-            .required = &.{ "ticker", "product" },
+            .required = &.{ "ticker", "product", "amount" },
             .additional_properties = false,
         },
     },
@@ -971,7 +996,7 @@ pub const all = [_]tool_dispatch.Tool{
     ask_user_question,
     vision,
     read_tool_result,
-    discover_markets,
+    get_markets,
     get_market_candles,
     compare_trade_routes,
     search_tokens,
@@ -980,7 +1005,7 @@ pub const all = [_]tool_dispatch.Tool{
 pub const registry = tool_dispatch.Registry{ .tools = all[0..] };
 
 pub const advertisement_order = [_][]const u8{
-    "discover_markets",
+    "get_markets",
     "get_market_candles",
     "compare_trade_routes",
     "search_tokens",
@@ -1002,7 +1027,7 @@ pub const advertisement_order = [_][]const u8{
 };
 
 pub const read_only_tool_names = [_][]const u8{
-    "discover_markets",
+    "get_markets",
     "get_market_candles",
     "compare_trade_routes",
     "search_tokens",
@@ -1129,7 +1154,7 @@ test "built-in tools register exact active local order" {
         "ask_user_question",
         "vision",
         "read_tool_result",
-        "discover_markets",
+        "get_markets",
         "get_market_candles",
         "compare_trade_routes",
         "search_tokens",
@@ -1898,7 +1923,7 @@ test "built-in registry uses executable web_fetch implementation" {
 
 test "built-in read-only tool set matches plan inspection tools" {
     const expected_names = [_][]const u8{
-        "discover_markets",
+        "get_markets",
         "get_market_candles",
         "compare_trade_routes",
         "search_tokens",

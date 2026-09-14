@@ -17,7 +17,7 @@ const Input = struct {
 
 pub fn decode(ctx: dispatch.DispatchContext, arguments: []const u8) dispatch.DispatchError!dispatch.DecodeResult {
     const parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, arguments, .{ .allocate = .alloc_always }) catch {
-        return .{ .failure = try ctx.allocator.dupe(u8, "discover_markets requires a JSON object.") };
+        return .{ .failure = try ctx.allocator.dupe(u8, "get_markets requires a JSON object.") };
     };
     errdefer parsed.deinit();
     if (inputError(parsed.value)) |message| {
@@ -37,10 +37,10 @@ fn alphanumeric(value: []const u8) bool {
 }
 
 fn inputError(value: std.json.Value) ?[]const u8 {
-    if (value != .object) return "discover_markets requires a JSON object.";
+    if (value != .object) return "get_markets requires a JSON object.";
     const args = value.object;
     for (args.keys()) |key| {
-        if (!oneOf(key, &.{ "tickers", "product", "quote" })) return "Unknown discover_markets argument.";
+        if (!oneOf(key, &.{ "tickers", "product", "quote", "metrics" })) return "Unknown get_markets argument.";
     }
     const tickers = args.get("tickers") orelse return "tickers is required.";
     if (tickers != .array or tickers.array.items.len == 0 or tickers.array.items.len > 64) return "tickers must contain 1 to 64 base tickers.";
@@ -53,6 +53,16 @@ fn inputError(value: std.json.Value) ?[]const u8 {
     if (args.get("quote")) |quote| {
         if (quote != .string or !alphanumeric(quote.string)) return "quote must be a currency ticker or ALL.";
     }
+    if (args.get("metrics")) |metrics| {
+        if (metrics != .array or metrics.array.items.len == 0 or metrics.array.items.len > 4)
+            return "metrics must contain 1 to 4 requested measurements.";
+        for (metrics.array.items, 0..) |metric, index| {
+            if (metric != .string or !oneOf(metric.string, &.{ "funding", "openInterest", "depth", "markPrice" }))
+                return "Supported metrics: funding, openInterest, depth, markPrice.";
+            for (metrics.array.items[0..index]) |prior| if (std.mem.eql(u8, prior.string, metric.string))
+                return "Duplicate metric.";
+        }
+    }
     return null;
 }
 
@@ -64,13 +74,21 @@ fn oneOf(value: []const u8, options: []const []const u8) bool {
 fn command(alloc: std.mem.Allocator, input: *Input) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
-    // Embed the trusted program; never accept a script path or shell fragment.
-    try out.writer.writeAll("exec bash --noprofile --norc -c '");
-    for (script) |char| {
-        if (char == '\'') try out.writer.writeAll("'\\''") else try out.writer.writeByte(char);
-    }
-    try out.writer.writeAll("' discover-markets");
+    var program: std.Io.Writer.Allocating = .init(alloc);
+    defer program.deinit();
     const args = input.parsed.value.object;
+    if (args.get("metrics")) |metrics| {
+        var json: std.Io.Writer.Allocating = .init(alloc);
+        defer json.deinit();
+        try std.json.Stringify.value(metrics, .{}, &json.writer);
+        try program.writer.writeAll("market_metrics=");
+        try public_command.writeQuoted(&program.writer, json.written());
+        try program.writer.writeAll("\nroute_input='{}'\n");
+        try program.writer.writeAll(@import("compare_trade_routes.zig").script);
+    } else try program.writer.writeAll(script);
+    try out.writer.writeAll("exec bash --noprofile --norc -c ");
+    try public_command.writeQuoted(&out.writer, program.written());
+    try out.writer.writeAll(" discover-markets");
     for (args.get("tickers").?.array.items) |ticker| try out.writer.print(" {s}", .{ticker.string});
     if (args.get("product")) |product| try out.writer.print(" --product {s}", .{if (std.mem.eql(u8, product.string, "perp")) "perpetual" else product.string});
     if (args.get("quote")) |quote| try out.writer.print(" --quote {s}", .{quote.string});
@@ -96,7 +114,7 @@ pub fn isIrreversible(_: dispatch.ToolInput) bool {
     return false;
 }
 
-test "discover_markets validates typed inputs before building a command" {
+test "get_markets validates typed inputs before building a command" {
     const alloc = std.testing.allocator;
     for ([_][]const u8{
         "{}",

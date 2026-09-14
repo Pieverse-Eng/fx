@@ -89,6 +89,7 @@ jq -ne "$math"'
   ([usd({};"USDT")]|length==0)
 ' >/dev/null
 # Nonlinear quotes: reduced budget must trigger another request, not rescale output.
+source "$root/src/tools/market/market-data.sh"
 source "$root/src/tools/market/get-market-candles.sh"
 source "$root/src/tools/market/issuer-discovery.sh"
 source "$root/src/tools/market/onchain-routes.sh"

@@ -336,6 +336,7 @@ const AskOptions = struct {
     system_prompt_override: ?[]u8 = null,
     tools_json: ?[]u8 = null,
     no_context: bool = false,
+    evidence: bool = false,
     json_output: bool = false,
     prompt_permissions: bool = false,
     timeout_ms: ?usize = null,
@@ -461,6 +462,7 @@ const OutputMode = enum {
 
 const RunOptions = struct {
     output_mode: OutputMode,
+    evidence: bool = false,
     prompt_permissions: bool = false,
     images: []const ImageAttachment = &.{},
     command_timeout_ms: ?usize = null,
@@ -1308,6 +1310,7 @@ fn runWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: 
     );
     const result = runPromptInternal(alloc, options.prompt, options.permission_override, effective_cfg, .{
         .output_mode = output_mode,
+        .evidence = options.evidence,
         .prompt_permissions = options.prompt_permissions,
         .images = if (options.images.items.len > 0) options.images.items else &.{},
         .command_timeout_ms = options.timeout_ms,
@@ -1511,7 +1514,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     var owned_resumed_model: ?[]u8 = null;
     defer if (owned_resumed_model) |model| alloc.free(model);
     const reference_system_prompt = if (options.output_mode == .json)
-        try std.fmt.allocPrint(alloc, "{s}\n\n{s}", .{ cfg.prompt_policy.system_prompt, result_refs.prompt })
+        try std.fmt.allocPrint(alloc, "{s}\n\n{s}", .{ cfg.prompt_policy.system_prompt, if (options.evidence) result_refs.evidence_prompt else result_refs.prompt })
     else
         null;
     defer if (reference_system_prompt) |value| alloc.free(value);
@@ -1519,6 +1522,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     if (reference_system_prompt) |value| effective_cfg.prompt_policy.system_prompt = value;
     var ctx = AskContext.init(alloc, effective_cfg, options.deps, startup.workspace_root);
     defer ctx.deinit();
+    ctx.result_store.evidence_mode = options.evidence;
     if (options.save_session) {
         _ = try ctx.session.initializeProfileUsage(alloc, io_mod.getenv("HOME"));
         ctx.session.attachProfileUsagePublisher(alloc);
@@ -2653,7 +2657,7 @@ fn executeToolCallAuthorized(
     if (ctx.output_mode == .json) {
         ctx.tool_call_records_mutex.lockUncancelable(io_mod.getIo());
         defer ctx.tool_call_records_mutex.unlock(io_mod.getIo());
-        if (try ctx.result_store.captureForModel(ctx.alloc, request.result_allocator, request.call.id, result.model_output)) |annotated| {
+        if (try ctx.result_store.captureForModel(ctx.alloc, request.result_allocator, request.call.id, request.call.name, result.model_output)) |annotated| {
             result.model_output = annotated;
         }
     }
@@ -3064,6 +3068,11 @@ fn pushEvent(raw_ctx: *anyopaque, event: WorkerEvent) !void {
                         if (resolved) |json| {
                             defer ctx.alloc.free(json);
                             try ctx.final_output.appendSlice(ctx.alloc, json);
+                            return;
+                        }
+                        if (ctx.result_store.evidence_mode) {
+                            ctx.failed = true;
+                            ctx.typed_error_code = "ResultReferencesRequired";
                             return;
                         }
                     }
@@ -3760,6 +3769,8 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
             i += 1;
             if (i >= args.len) return error.InvalidAskArgs;
             opts.tools_json = try alloc.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--evidence")) {
+            opts.evidence = true;
         } else if (std.mem.eql(u8, arg, "--no-context")) {
             opts.no_context = true;
         } else if (std.mem.eql(u8, arg, "--json")) {
@@ -3801,6 +3812,7 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
         opts.prompt = try readPromptFromStdinSource(alloc, stdin);
     }
     if (!text_utils.isModelSafeText(opts.prompt)) return error.InvalidPromptText;
+    if (opts.evidence and !opts.json_output) return error.InvalidAskArgs;
     if (opts.no_save and opts.resume_target != null) return error.NoSaveResumeConflict;
 
     return opts;

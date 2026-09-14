@@ -30,7 +30,7 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .ask,
         .token = "ask",
-        .usage = "ask [--auto|--full-access] [--image PATH] [--system TEXT] [--tools JSON] [--no-context] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--continue-recovery] [--] <prompt>",
+        .usage = "ask [--auto|--full-access] [--image PATH] [--system TEXT] [--tools JSON] [--no-context] [--json] [--evidence] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--continue-recovery] [--] <prompt>",
         .summary = "Run one noninteractive request",
         .options = &.{
             .{ .flag = "--auto", .description = "Automatically review unresolved permission requests" },
@@ -39,6 +39,7 @@ pub const top_level_specs = [_]TopLevelSpec{
             .{ .flag = "--image PATH", .description = "Attach an image file; repeat for multiple images" },
             .{ .flag = "--system TEXT", .description = "Replace the built-in system prompt for this request" },
             .{ .flag = "--tools JSON", .description = "Allow only these native tool names (JSON array); disables ambient MCP and unselected skills" },
+            .{ .flag = "--evidence", .description = "Require retained result references and emit versioned evidence (requires --json)" },
             .{ .flag = "--no-context", .description = "Omit workspace instructions from this request" },
             json_option,
             .{ .flag = "--quiet", .description = "Suppress assistant output" },

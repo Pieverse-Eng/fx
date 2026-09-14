@@ -225,7 +225,7 @@ an explicit notice.
 
 Skills are advertised in a stable catalog sized to the selected model's context window. The default budget is approximately 2% of context, or 8,000 characters when the context size is unknown, with up to 1,024 characters per description. Explicit byte overrides take precedence. When space is limited, fx shortens descriptions before omitting skill identities; `capability_search` can find skills outside that catalog.
 
-This fork registers `discover_markets` directly in the agent's tool context. For example, `{"tickers":["IREN","APLD","HUT"]}` searches all nine supported venues concurrently, reusing catalogs across tickers. Optional `product` (`spot`, `perp`, or `all`) and `quote` filters narrow the products and currencies. Aster defaults to all quotes; Binance, Bitget, Gate, and OKX default to USDT; Hyperliquid, Lighter, and Orderly default to USDC; Kraken defaults to USD. Use `quote: "ALL"` to search all supported quotes.
+This fork registers `get_markets` directly in the agent's tool context. For example, `{"tickers":["IREN","APLD","HUT"]}` searches all nine supported venues concurrently, reusing catalogs across tickers. Optional `product` (`spot`, `perp`, or `all`) and `quote` filters narrow the products and currencies. Aster defaults to all quotes; Binance, Bitget, Gate, and OKX default to USDT; Hyperliquid, Lighter, and Orderly default to USDC; Kraken defaults to USD. Use `quote: "ALL"` to search all supported quotes.
 
 Spot discovery also reads the bStocks, xStocks and Robinhood issuer catalogs for stock deployments on BNB, Solana and Robinhood Chain. These entries appear alongside venue markets with `issuer`, `chain`, `symbol`, `contract`, `product`, `representation`, `provider`, and `availability: "deployment_only"`. Providers identify the supported purchase channel: PancakeSwap, DFlow or Uniswap. Deployment discovery needs no amount or wallet credential and does not establish liquidity or an executable quote. Different issuers and contracts remain distinct. An explicit `quote` filters the supported payment assets; omission includes all supported chain payment assets. Issuer failures remain in `errors`, while a confirmed missing asset is an empty match. Perpetual-only discovery skips issuer queries. Cost comparison reuses this discovery before requesting quotes with the supplied amount.
 
@@ -325,3 +325,20 @@ invocation a fresh, unsaved conversation. Without these options, normal ask
 behavior is unchanged. Hosts own role prompts and selections; fx owns native
 tool implementations. This is a tool boundary, not an OS sandbox: an explicitly
 selected shell or agent tool still has its ordinary capabilities.
+
+Hosted callers can add `--evidence` to `ask --json`. The child must select exact
+`result_refs` from this invocation. FX assembles `final_output` as
+`{"version":1,"results":[{"result_ref":"…","tool":"…","payload":{…}}]}`
+from retained originals; optional model `analysis` is kept separately for host
+validation. Invented payloads and unknown IDs fail. An empty results list means
+no evidence, never successful research. These references expire with the request;
+the host must explicitly retain bounded artifacts before offering later retrieval.
+
+`get_markets` replaces `discover_markets`. It returns compact identities by default;
+optional `metrics` selects funding, openInterest, depth, or markPrice. Cost comparison
+requires an amount and performs its own discovery. Candle requests can select from
+15m/1h/4h and bind one ticker to `{venue,product,symbol}`. An unavailable exact market
+never falls back. Optional `indicators` supports SMA, EMA and Wilder RSI (periods
+2–200; up to 64 series points). Calculations use closed bars, mean seeds and three
+additional warm-up periods for EMA/RSI; missing bars or insufficient bounded history
+produce explicit gaps. Ticker-only candle calls retain their existing behavior.

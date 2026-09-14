@@ -231,6 +231,24 @@ run_routes() {
   local snapshots=("$scratch_root/routes/"*/snapshot.json)
   if [[ -f ${snapshots[0]} ]]; then jq -s '[.[]|del(.nativeBook)]' "${snapshots[@]}" >"$scratch_root/routes/snapshots.json"
   else echo '[]' >"$scratch_root/routes/snapshots.json"; fi
+  if [[ -n ${market_metrics:-} ]]; then
+    jq -n --argjson metrics "$market_metrics" --argjson tickers "$(printf '%s\n' "${tickers[@]}" | jq -Rsc 'split("\n")[:-1]')" \
+      --slurpfile markets "$scratch_root/routes/snapshots.json" \
+      --slurpfile coverage <(jq -s '[.[]|.venue as $v|.errors[]|.+{venue:$v}]' "$@") '
+      def project:
+        . as $row |
+        del(.funding,.openInterest,.book,.nativeBook,.markPrice,.gaps) +
+        (reduce $metrics[] as $metric ({};
+          (if $metric=="depth" then "book" else $metric end) as $key |
+          . + {($key):$row[$key]})) |
+        .gaps = [ $metrics[] as $metric |
+          (if $metric=="depth" then "book" else $metric end) as $key |
+          select($row[$key]==null or (try ($row[$key].status=="unknown") catch false)) |
+          "Requested " + $metric + " is unavailable" ];
+      {metrics:$metrics,results:[$tickers[] as $ticker |
+        {ticker:$ticker,markets:[$markets[0][]|select(.underlying==$ticker)|project]}],errors:$coverage[0]}'
+    return
+  fi
   if [[ $(jq -r '.amount // empty' <<<"$route_input") == "" ]]; then
     jq -n --slurpfile markets "$scratch_root/routes/snapshots.json" --slurpfile coverage <(jq -s '[.[]|.venue as $v|.errors[]|.+{venue:$v}]' "$@") \
       '{markets:$markets[0],bestRoute:null,rankedRoutes:[],gaps:$coverage[0]}'

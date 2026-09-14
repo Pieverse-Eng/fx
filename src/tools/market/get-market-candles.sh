@@ -1,97 +1,8 @@
-# Embedded ahead of discover-markets.sh; uses its resolved catalogs and identifiers.
-# All reads below are public. Source selection and conversion evidence stay in the host log.
-market_read() (
-  local target=$1; shift
-  local child
-  timeout --kill-after=2s 25s "$@" >"$target.raw" 2>"$target.stderr" & child=$!
-  trap 'kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; exit 130' INT TERM
-  if wait "$child" && jq -e 'type=="array" or type=="object"' "$target.raw" >/dev/null 2>&1; then
-    mv "$target.raw" "$target"
-  else
-    echo null >"$target"
-  fi
-)
-market_launch() { market_read "$@" & pids+=("$!"); }
-
-# Numeric and unit normalization is shared by the adapters, never left to the model.
-candle_jq='
-def num: try tonumber catch null;
-def positive: num | if .!=null and .>0 and isfinite then . else null end;
-def iso_ms: sub("\\.[0-9]+Z$";"Z") | fromdateiso8601 * 1000;
-def rows: if type=="array" then . elif .data!=null then .data elif .result!=null then .result else . end;
-def exposure($m):
-  ($m.baseAsset // ""|ascii_upcase) as $base | ($m.ticker|ascii_upcase) as $t |
-  if $base==$t then 1
-  elif $m.venue=="hyperliquid" and $base==("K"+$t) then 1000
-  elif $base==("1000"+$t) then 1000
-  elif $base==("1000000"+$t) or $base==("1M"+$t) then 1000000
-  else 1 end;
-def quote_ccy($m): $m.quoteAsset // $m.collateralAsset // $m.settlementAsset;
-def currency: ascii_upcase | if .=="XBT" then "BTC" elif .=="XDG" then "DOGE" else . end;
-def kraken_inverse($m): $m.venue=="kraken" and $m.product!="spot" and
-  ($m.symbol|ascii_upcase|startswith("PI_")) and $m.contractType=="futures_inverse" and
-  $m.quoteAsset=="USD" and ($m.contractSize|positive)!=null and
-  ($m.sizeDecimals|num)==0;
-# Direct USD and reversed USD pairs take priority over a USDT bridge.
-def reference_rates($pairs;$kr;$bn;$catalog;$now):
-  ($kr|rows) as $k |
-  reduce ($pairs[]|select(.status=="online")|. as $p|
-    (.wsname|split("/")|map(currency)) as $ccys |
-    ($k[$p.key] // $k[$p.altname] // $k[($p.wsname|gsub("/";""))]) as $v |
-    select(($v.a[0]|positive)!=null and ($v.b[0]|positive)!=null and ($v.v[1]|positive)!=null and
-      ($v.a[0]|num)>=($v.b[0]|num) and ($v.a[0]|num)/($v.b[0]|num)<1.01) |
-    ((($v.a[0]|num)+($v.b[0]|num))/2) as $mid |
-    if $ccys[1]=="USD" then {ccy:$ccys[0],rate:$mid}
-    elif $ccys[0]=="USD" then {ccy:$ccys[1],rate:(1/$mid)} else empty end) as $p
-    ({USD:1}; .[$p.ccy]=$p.rate) |
-  . as $direct |
-  ([$bn[]?|select((.count|positive)!=null and (.lastPrice|positive)!=null and
-    (.closeTime|num)!=null and (($now-(.closeTime|num))|fabs)<300000)]|INDEX(.symbol)) as $stats |
-  reduce ($catalog.symbols[]?|select(.status=="TRADING")|
-    . as $p | $stats[$p.symbol] as $v | select($v!=null and $direct.USDT!=null) |
-    if .quoteAsset=="USDT" then {ccy:(.baseAsset|currency),rate:(($v.lastPrice|num)*$direct.USDT)}
-    elif .baseAsset=="USDT" then {ccy:(.quoteAsset|currency),rate:($direct.USDT/($v.lastPrice|num))} else empty end) as $p
-    ($direct; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end) |
-  . as $anchors |
-  # One cross through an independently priced base, without recursively deriving rates.
-  [ $pairs[]|select(.status=="online")|. as $p|
-    (.wsname|split("/")|map(currency)) as $ccys |
-    select((["BTC","ETH"]|index($ccys[0]))!=null and $anchors[$ccys[1]]==null and ($anchors[$ccys[0]]|positive)!=null) |
-    ($k[$p.key] // $k[$p.altname] // $k[($p.wsname|gsub("/";""))]) as $v |
-    select(($v.a[0]|positive)!=null and ($v.b[0]|positive)!=null and ($v.v[1]|positive)!=null and
-      ($v.a[0]|num)>=($v.b[0]|num) and ($v.a[0]|num)/($v.b[0]|num)<1.01) |
-    {ccy:$ccys[1],rate:($anchors[$ccys[0]]/((($v.a[0]|num)+($v.b[0]|num))/2)),volume:(($v.v[1]|num)*$anchors[$ccys[0]])}
-  ] | sort_by(-.volume) |
-  reduce .[] as $p ($anchors; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end);
-# Venue-native tokens must not borrow the price of a same-name asset elsewhere.
-def venue_reference_rates($rates;$gate_pairs;$gate_tickers;$hl):
-  (if ($gate_pairs|type)=="array" then $gate_pairs else [] end) as $gate_pairs |
-  (if ($gate_tickers|type)=="array" then $gate_tickers else [] end) as $gate_tickers |
-  (if ($hl|type)=="array" and ($hl|length)==2 and ($hl[0]|type)=="object" and ($hl[1]|type)=="array" then $hl else [{},[]] end) as $hl |
-  ([$gate_tickers[]?|{key:.currency_pair,value:.}]|from_entries) as $gate |
-  (reduce ($gate_pairs[]?|select(.trade_status=="tradable")|
-    select(.quote as $q | (["USD","USDT","USDC"]|index($q))!=null) |
-    . as $p | $gate[$p.id] as $v |
-    select(($rates[$p.quote]|positive)!=null and ($v.lowest_ask|positive)!=null and
-      ($v.highest_bid|positive)!=null and ($v.quote_volume|positive)!=null and
-      ($v.lowest_ask|num)>=($v.highest_bid|num) and ($v.lowest_ask|num)/($v.highest_bid|num)<1.01) |
-    {ccy:$p.base,rate:(((($v.lowest_ask|num)+($v.highest_bid|num))/2)*$rates[$p.quote])}) as $p
-    ({}; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end)) as $gate_rates |
-  (reduce ($hl[0].universe[]? | . as $pair |
-    ([$hl[0].tokens[]?|select(.index==$pair.tokens[0])][0]) as $base |
-    ([$hl[0].tokens[]?|select(.index==$pair.tokens[1])][0]) as $quote |
-    select($quote.name=="USDC" and $quote.index==0 and ($rates.USDC|positive)!=null and
-      ([$hl[0].tokens[]?|select(.name==$base.name)]|length)==1) |
-    ([$hl[1][]?|select(.coin==$pair.name)]|if length==1 then .[0] else null end) as $ctx |
-    select(($ctx.midPx|positive)!=null and ($ctx.dayNtlVlm|positive)!=null) |
-    {ccy:$base.name,rate:(($ctx.midPx|num)*$rates.USDC)}) as $p
-    ({}; if .[$p.ccy]==null then .[$p.ccy]=$p.rate else . end)) as $hl_rates |
-  $rates + {venues:{gate:$gate_rates,hyperliquid:$hl_rates}};
-def reference_rate($rates;$m): (quote_ccy($m)|currency) as $ccy |
-  $rates.venues[$m.venue][$ccy] // $rates[$ccy] // null;
-
-def findrow($data;$key;$symbol): first($data|rows|.[]?|select(.[$key]==$symbol)) // null;
-'
+# These limits apply to the entire request, not one fetch per indicator.
+candle_input=${candle_input:-'{}'}
+candle_intervals=()
+while IFS= read -r interval; do candle_intervals+=("$interval"); done < <(jq -r '.intervals // ["15m","1h","4h"] | .[]' <<<"$candle_input")
+candle_history=$(jq -r '[50, (.indicators[]? | (if .name=="sma" then .period else 4*.period+(if .name=="rsi" then 1 else 0 end) end) + ([0,((.series//0)-1)]|max))] | max' <<<"$candle_input")
 
 load_volume() {
   local m=$1
@@ -183,29 +94,33 @@ fetch_candle() {
   symbol=$(jq -r '.symbol' <<<"$m"); product=$(jq -r '.product' <<<"$m")
   seconds=900; [[ $tf != 1h ]] || seconds=3600; [[ $tf != 4h ]] || seconds=14400
   interval=$tf; [[ $tf != 1h ]] || interval=1H; [[ $tf != 4h ]] || interval=4H
-  local start=$((now/1000-seconds*200))
+  local limit=$((candle_history+1))
+  # OKX recent candles caps each response at 300. If that cannot cover the
+  # requested initialization, the calculation reports insufficient history.
+  if [[ $(jq -r .venue <<<"$m") == okx-cex && $limit -gt 300 ]]; then limit=300; fi
+  local start=$((now/1000-seconds*limit))
   case $(jq -r '.venue' <<<"$m") in
-    aster) market_read "$file" curl -fsS --max-time 20 --get 'https://fapi.asterdex.com/fapi/v1/klines' --data-urlencode "symbol=$symbol" --data-urlencode "interval=$tf" --data-urlencode 'limit=51' ;;
+    aster) market_read "$file" curl -fsS --max-time 20 --get 'https://fapi.asterdex.com/fapi/v1/klines' --data-urlencode "symbol=$symbol" --data-urlencode "interval=$tf" --data-urlencode "limit=$limit" ;;
     binance)
       if [[ $product == spot ]]; then kind=spot; else kind=perp; fi
       local url='https://api.binance.com/api/v3/klines'; [[ $kind != perp ]] || url='https://fapi.binance.com/fapi/v1/klines'
-      market_read "$file" curl -fsS --max-time 20 --get "$url" --data-urlencode "symbol=$symbol" --data-urlencode "interval=$tf" --data-urlencode 'limit=51' ;;
-    bitget) market_read "$file" bgc market --action candles --category "$(jq -r '.category' <<<"$m")" --symbol "$symbol" --interval "$interval" --limit 51 ;;
+      market_read "$file" curl -fsS --max-time 20 --get "$url" --data-urlencode "symbol=$symbol" --data-urlencode "interval=$tf" --data-urlencode "limit=$limit" ;;
+    bitget) market_read "$file" bgc market --action candles --category "$(jq -r '.category' <<<"$m")" --symbol "$symbol" --interval "$interval" --limit "$limit" ;;
     gate)
       if [[ $product == spot ]]; then
-        market_read "$file" gate-cli cex spot market candlesticks --pair "$symbol" --interval "$tf" --limit 51 --format json
-      else market_read "$file" gate-cli cex futures market candlesticks --contract "$symbol" --settle usdt --interval "$tf" --limit 51 --format json; fi ;;
+        market_read "$file" gate-cli cex spot market candlesticks --pair "$symbol" --interval "$tf" --limit "$limit" --format json
+      else market_read "$file" gate-cli cex futures market candlesticks --contract "$symbol" --settle usdt --interval "$tf" --limit "$limit" --format json; fi ;;
     kraken)
       if [[ $product == spot ]]; then
         local opts=(); [[ $(jq -r '.assetClass' <<<"$m") != tokenized_asset ]] || opts=(--asset-class tokenized_asset)
         market_read "$file" kraken ohlc "$symbol" --interval "$((seconds/60))" "${opts[@]}" -o json
-      else market_read "$file" curl -fsS --max-time 20 "https://futures.kraken.com/api/charts/v1/trade/$symbol/$tf?count=51"; fi ;;
+      else market_read "$file" curl -fsS --max-time 20 "https://futures.kraken.com/api/charts/v1/trade/$symbol/$tf?count=$limit"; fi ;;
     hyperliquid)
       [[ $product != spot ]] || symbol=$(jq -r '.pairId' <<<"$m")
       market_read "$file" purr hyperliquid candles --coin "$symbol" --interval "$tf" --start-time "$((start*1000))" --end-time "$now" ;;
     orderly) market_read "$file" purr orderly candles --symbol "$symbol" --interval "$tf" --start-t "$((start*1000))" --end-t "$now" ;;
-    lighter) market_read "$file" curl -fsS --max-time 20 --get 'https://mainnet.zklighter.elliot.ai/api/v1/candles' --data-urlencode "market_id=$(jq -r '.marketId' <<<"$m")" --data-urlencode "resolution=$tf" --data-urlencode "start_timestamp=$start" --data-urlencode "end_timestamp=$((now/1000))" --data-urlencode 'count_back=51' ;;
-    okx-cex) market_read "$file" okx market candles "$symbol" --bar "$interval" --limit 51 --site global --json ;;
+    lighter) market_read "$file" curl -fsS --max-time 20 --get 'https://mainnet.zklighter.elliot.ai/api/v1/candles' --data-urlencode "market_id=$(jq -r '.marketId' <<<"$m")" --data-urlencode "resolution=$tf" --data-urlencode "start_timestamp=$start" --data-urlencode "end_timestamp=$((now/1000))" --data-urlencode "count_back=$limit" ;;
+    okx-cex) market_read "$file" okx market candles "$symbol" --bar "$interval" --limit "$limit" --site global --json ;;
   esac
 }
 
@@ -239,7 +154,7 @@ fetch_last_trade() {
 normalize_candles() {
   local m=$1 tf=$2 file=$3 now=$4 duration=900000
   [[ $tf != 1h ]] || duration=3600000; [[ $tf != 4h ]] || duration=14400000
-  jq --argjson m "$m" --argjson now "$now" --argjson duration "$duration" "$candle_jq"'
+  jq --argjson m "$m" --argjson now "$now" --argjson duration "$duration" --argjson history "$candle_history" "$candle_jq"'
     def entry($row;$confirmed): {row:$row,confirmed:$confirmed};
     if .==null then error("query failed") else . end |
     (if $m.venue=="aster" or $m.venue=="binance" then
@@ -261,9 +176,11 @@ normalize_candles() {
     if any(.[]; (.row|length)!=6 or any(.row[0:5][];.==null or (isfinite|not) or .<=0) or
        (.row[2]<([.row[1],.row[3],.row[4]]|max)) or (.row[3]>([.row[1],.row[2],.row[4]]|min)) or
        (.row[5]!=null and ((.row[5]|isfinite|not) or .row[5]<0))) then error("invalid OHLCV values") else . end |
-    map(select(.row[0]<=$now)) | sort_by(.row[0]) | unique_by(.row[0]) |
+    map(select(.row[0]<=$now)) | sort_by(.row[0]) |
+    (if any(group_by(.row[0])[];length>1) then ["Duplicate candle timestamps"] else [] end) as $quality |
+    unique_by(.row[0]) |
     map(.row |= [.[0],(.[1]/exposure($m)),(.[2]/exposure($m)),(.[3]/exposure($m)),(.[4]/exposure($m)),(if .[5]==null then null else .[5]*exposure($m) end)]) |
-    {closed:([.[]|select(.row[0]+$duration<=$now and .confirmed!=false)|.row]|.[-50:]),
+    {qualityGaps:$quality,closed:([.[]|select(.row[0]+$duration<=$now and .confirmed!=false)|.row]|.[-$history:]),
      current:([.[]|select(.row[0]<=$now and .row[0]+$duration>$now and .confirmed!=true)|.row]|last // null)} |
     if (.closed|length)==0 then error("no closed candles") else . end' "$file"
 }
@@ -299,12 +216,12 @@ candle_asset() (
     attempt=$((attempt+1)); local trial="$dir/$attempt"; mkdir "$trial"
     now=$(date +%s%3N)
     pids=()
-    for tf in 15m 1h 4h; do fetch_candle "$m" "$tf" "$trial/$tf.raw.json" "$now" & pids+=("$!"); done
+    for tf in "${candle_intervals[@]}"; do fetch_candle "$m" "$tf" "$trial/$tf.raw.json" "$now" & pids+=("$!"); done
     fetch_last_trade "$m" "$trial/trade.json" & pids+=("$!")
     wait_queries
     now=$(date +%s%3N)
     : >"$trial/errors.jsonl"; count=0
-    for tf in 15m 1h 4h; do
+    for tf in "${candle_intervals[@]}"; do
       if normalize_candles "$m" "$tf" "$trial/$tf.raw.json" "$now" >"$trial/$tf.json" 2>"$trial/$tf.error"; then count=$((count+1))
       else
         echo null >"$trial/$tf.json"
@@ -317,16 +234,20 @@ candle_asset() (
     elif jq -e --argjson now "$now" '$now-.time>86400000' "$trial/last.json" >/dev/null; then
       jq -cn --arg ticker "$ticker" '{ticker:$ticker,query:"lastTrade",message:"Latest available trade is more than 24 hours old"}' >>"$trial/errors.jsonl"
     fi
-    jq -n --arg ticker "$ticker" --argjson now "$now" --argjson m "$m" \
-      --slurpfile m15 "$trial/15m.json" --slurpfile h1 "$trial/1h.json" --slurpfile h4 "$trial/4h.json" --slurpfile last "$trial/last.json" --slurpfile errors "$trial/errors.jsonl" "$candle_jq"'
-      {result:{ticker:$ticker,quote:quote_ccy($m),asOf:$now,lastTrade:$last[0],timeframes:{"15m":$m15[0],"1h":$h1[0],"4h":$h4[0]}},errors:$errors}' >"$trial/result.json"
+    local frames='{}'
+    for tf in "${candle_intervals[@]}"; do
+      frames=$(jq -cn --argjson frames "$frames" --arg tf "$tf" --slurpfile frame "$trial/$tf.json" '$frames + {($tf):$frame[0]}')
+    done
+    jq -n --arg ticker "$ticker" --argjson now "$now" --argjson m "$m" --argjson frames "$frames" \
+      --slurpfile last "$trial/last.json" --slurpfile errors "$trial/errors.jsonl" "$candle_jq"'
+      {result:{ticker:$ticker,market:($m|del(.volumeUSD,.volumeEstimated)),quote:quote_ccy($m),asOf:$now,lastTrade:$last[0],timeframes:$frames},errors:$errors}' >"$trial/result.json"
     jq -cn --argjson m "$m" --argjson now "$now" --argjson count "$count" '{ticker:$m.ticker,venue:$m.venue,symbol:$m.symbol,product:$m.product,quote:($m.quoteAsset // $m.collateralAsset // $m.settlementAsset),volumeUSD:$m.volumeUSD,volumeEstimated:($m.volumeEstimated // false),exposureMultiplier:($m.exposureMultiplier // 1),time:$now,usableTimeframes:$count}' >>"$dir/sources.jsonl"
     if (( count>best_count )); then best_count=$count; best_dir=$trial; fi
-    (( count<3 )) || break
+    (( count<${#candle_intervals[@]} )) || break
   done < <(jq -c --arg ticker "$ticker" '[.[]|select(.ticker==$ticker)]|sort_by([(-.volumeUSD),.venue,.product,.symbol])[]' "$rank_file")
   if [[ -n $best_dir ]]; then cp "$best_dir/result.json" "$dir/result.json"
   else
-    jq -n --arg ticker "$ticker" --argjson now "$(date +%s%3N)" '{result:{ticker:$ticker,quote:null,asOf:$now,lastTrade:null,timeframes:{"15m":null,"1h":null,"4h":null}},errors:[{ticker:$ticker,query:"candles",message:"No reference market with usable candles and comparable volume"}]}' >"$dir/result.json"
+    jq -n --arg ticker "$ticker" --argjson now "$(date +%s%3N)" '{result:{ticker:$ticker,quote:null,asOf:$now,lastTrade:null,timeframes:{"15m":null,"1h":null,"4h":null}},errors:[{ticker:$ticker,query:"candles",message:"No usable requested/reference market; unsupported identity or missing candle coverage"}]}' >"$dir/result.json"
   fi
   # Source diagnostics are optional; a cache permission failure must not discard candles.
   if [[ -n $cache_dir && -f $dir/sources.jsonl ]]; then
@@ -351,13 +272,22 @@ format_candle_times() {
         if . == null then null else
           .closed |= map(.[0] |= utc) |
           if .current == null then . else .current[0] |= utc end
-        end))'
+        end) |
+      (if .indicators then .indicators |= map(.lastClosedAt |= utc |
+        if .series then .series |= map(.time |= utc) else . end) else . end))'
 }
 
 run_candles() {
   local candidates="$scratch_root/candidates.json" m rate volume ticker venue
   jq -s '[.[]|.venue as $venue|.results[]|.ticker as $ticker|.markets[]|.+{venue:$venue,ticker:$ticker}]' "$@" >"$candidates"
   jq -s '[.[]|.venue as $venue|.errors[]|.+{venue:$venue,query:("discovery:"+.query)}]' "$@" >"$scratch_root/candle-errors.json"
+  if jq -e '.market!=null' <<<"$candle_input" >/dev/null; then
+    jq --argjson requested "$(jq -c .market <<<"$candle_input")" '
+      [.[] | select(.venue==$requested.venue and .symbol==$requested.symbol and
+        (if .product=="perpetual" then "perp" else .product end)==$requested.product)]' "$candidates" >"$scratch_root/exact.json"
+    cp "$scratch_root/exact.json" "$candidates"
+  fi
+  if ! jq -e '.market!=null' <<<"$candle_input" >/dev/null; then
   fetch_volumes "$candidates"
   # Rates are observed public prices, never hardcoded stablecoin parity.
   jq -n --argjson now "$(date +%s%3N)" --slurpfile pairs "$scratch_root/stats/kraken-pairs.json" \
@@ -380,6 +310,10 @@ run_candles() {
       jq -cn --arg ticker "$ticker" --arg venue "$venue" '{ticker:$ticker,venue:$venue,query:"volume",message:"Some markets excluded: 24h volume or quote conversion unavailable"}' >>"$scratch_root/rank-errors.jsonl"
     fi
   done < <(jq -c '.[]' "$candidates")
+  else
+    : >"$scratch_root/rank-errors.jsonl"
+    jq -c '.[] + {volumeUSD:0,volumeEstimated:false}' "$candidates" >"$scratch_root/ranked.jsonl"
+  fi
   jq -s '.' "$scratch_root/ranked.jsonl" >"$scratch_root/ranked.json"
   workers=()
   for ticker in "${tickers[@]}"; do
@@ -399,5 +333,8 @@ run_candles() {
   workers=()
   local files=(); for ticker in "${tickers[@]}"; do files+=("$scratch_root/candles-$ticker/result.json"); done
   jq -sc --slurpfile discovery "$scratch_root/candle-errors.json" --slurpfile rank "$scratch_root/rank-errors.jsonl" '
-    {columns:["openTime","open","high","low","close","volume"],results:map(.result),errors:([.[].errors[]]+$discovery[0]+($rank|unique_by(.ticker,.venue)))}' "${files[@]}" | format_candle_times
+    {columns:["openTime","open","high","low","close","volume"],results:map(.result),errors:([.[].errors[]]+$discovery[0]+($rank|unique_by(.ticker,.venue)))}' "${files[@]}" >"$scratch_root/candle-result.json"
+  if jq -e '(.indicators // [] | length)>0' <<<"$candle_input" >/dev/null; then
+    python3 -c "$indicator_python" "$candle_input" <"$scratch_root/candle-result.json" | format_candle_times
+  else format_candle_times <"$scratch_root/candle-result.json"; fi
 }

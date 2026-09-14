@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+source "$repo_root/src/tools/market/market-data.sh"
 source "$repo_root/src/tools/market/get-market-candles.sh"
 fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT
@@ -179,3 +180,5 @@ grep -q 'BTC (exit 23)' "$fixture/worker-stderr"
 echo 'Diagnostic cache failure isolation and worker error reporting passed.'
 
 bash "$repo_root/tests/market-discovery/test_orderly.sh"
+
+python3 "$repo_root/tests/market-discovery/test_indicators.py"

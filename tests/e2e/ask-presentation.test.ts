@@ -155,7 +155,7 @@ describe("fx ask presentation", () => {
     gateways.push(gateway);
     const result = await runFx([
       "ask", "--json", "--yolo", "--no-save", "--no-context",
-      "--system", "CALLER_ROLE_PROMPT", "--tools", '["discover_markets","search_tokens"]',
+      "--system", "CALLER_ROLE_PROMPT", "--tools", '["get_markets","search_tokens"]',
       "--", "Inspect the supplied asset",
     ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
     expect(result.code).toBe(0);
@@ -163,7 +163,7 @@ describe("fx ask presentation", () => {
     expect(gateway.requests).toHaveLength(2);
     const first = JSON.parse(gateway.requests[0]!.body);
     expect(first.tools.map((tool: { name: string }) => tool.name).sort())
-      .toEqual(["discover_markets", "search_tokens"]);
+      .toEqual(["get_markets", "search_tokens"]);
     expect(gateway.requests[0]!.body).toContain("CALLER_ROLE_PROMPT");
     expect(gateway.requests[0]!.body).not.toContain("PRIVATE_WORKSPACE_INSTRUCTION");
     expect(gateway.requests[0]!.body).not.toContain("PRIVATE_SKILL_INSTRUCTION");
@@ -225,6 +225,29 @@ describe("fx ask presentation", () => {
       expect(JSON.parse(result.stdout).error).toBe("InvalidToolSelection");
     }
     expect(gateway.requests).toHaveLength(0);
+  }, TIMEOUT);
+
+  test("evidence mode rejects invented payloads and permits explicit empty evidence", async () => {
+    const root = createRoot();
+    const gateway = startFakeGateway([
+      ...["{}", '{"error":"unavailable"}', '{"results":[{"price":100}]}', '{"result_refs":[]}']
+        .map(fakeGatewayFinalText),
+    ]);
+    gateways.push(gateway);
+    for (let i = 0; i < 4; i++) {
+      const result = await runFx([
+        "ask", "--json", "--evidence", "--no-save", "--no-context", "--tools", "[]", "--", "Research",
+      ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+      const output = JSON.parse(result.stdout);
+      if (i < 3) {
+        expect(result.code).toBe(1);
+        expect(output.error).toBe("ResultReferencesRequired");
+        expect(output.final_output).toBe("");
+      } else {
+        expect(result.code).toBe(0);
+        expect(JSON.parse(output.final_output)).toEqual({ version: 1, results: [] });
+      }
+    }
   }, TIMEOUT);
 
   test("JSON rejects result references outside the current request", async () => {
