@@ -28,6 +28,7 @@ ticker=SKHX; match_orderly | jq -e '.markets|length==1 and .[0].symbol=="PERP_SK
 ticker=OLD; match_orderly | jq -e '.markets==[]' >/dev/null
 ticker=UNKNOWN; match_orderly | jq -e '.markets==[]' >/dev/null
 ticker=ETH; quote=USDT; match_orderly | jq -e '.markets==[]' >/dev/null
+source "$root/src/tools/market/market-data.sh"
 source "$root/src/tools/market/get-market-candles.sh"
 math=$(cat "$root/src/tools/market/route_math.jq")
 snap=$(cat "$root/src/tools/market/snapshot_math.jq")

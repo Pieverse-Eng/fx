@@ -1,7 +1,7 @@
 const std = @import("std");
 const dispatch = @import("../../core/tooling/tool_dispatch.zig");
 const public_command = @import("public_market_command.zig");
-const script = @embedFile("get-market-candles.sh") ++ "\nFX_MARKET_MODE=candles\n" ++ @embedFile("discover-markets.sh");
+const script = @embedFile("market-data.sh") ++ "\n" ++ @embedFile("get-market-candles.sh") ++ "\nFX_MARKET_MODE=candles\n" ++ @embedFile("discover-markets.sh");
 
 const Input = struct {
     parsed: std.json.Parsed(std.json.Value),
@@ -19,7 +19,7 @@ pub fn decode(ctx: dispatch.DispatchContext, arguments: []const u8) dispatch.Dis
     };
     errdefer parsed.deinit();
     if (!validInput(parsed.value)) {
-        const failure = try ctx.allocator.dupe(u8, "Pass only tickers: an array of 1 to 16 alphanumeric base tickers, not names, pairs, or commands.");
+        const failure = try ctx.allocator.dupe(u8, "Invalid candle request. Supply 1-16 base tickers; optional unique intervals: 15m, 1h, 4h; indicators: sma/ema/rsi with integer period 2-200 and series 0-64; an exact market {venue,product,symbol} requires one ticker.");
         parsed.deinit();
         return .{ .failure = failure };
     }
@@ -29,14 +29,52 @@ pub fn decode(ctx: dispatch.DispatchContext, arguments: []const u8) dispatch.Dis
 }
 
 fn validInput(value: std.json.Value) bool {
-    if (value != .object or value.object.count() != 1) return false;
+    if (value != .object) return false;
+    for (value.object.keys()) |key| {
+        if (!oneOf(key, &.{ "tickers", "intervals", "indicators", "market" })) return false;
+    }
     const tickers = value.object.get("tickers") orelse return false;
     if (tickers != .array or tickers.array.items.len == 0 or tickers.array.items.len > 16) return false;
     for (tickers.array.items) |ticker| {
         if (ticker != .string or ticker.string.len == 0 or ticker.string.len > 32) return false;
         for (ticker.string) |char| if (!std.ascii.isAlphanumeric(char)) return false;
     }
+    if (value.object.get("intervals")) |intervals| {
+        if (intervals != .array or intervals.array.items.len == 0 or intervals.array.items.len > 3) return false;
+        for (intervals.array.items, 0..) |interval, index| {
+            if (interval != .string or !oneOf(interval.string, &.{ "15m", "1h", "4h" })) return false;
+            for (intervals.array.items[0..index]) |prior| if (std.mem.eql(u8, prior.string, interval.string)) return false;
+        }
+    }
+    if (value.object.get("indicators")) |indicators| {
+        if (indicators != .array or indicators.array.items.len == 0 or indicators.array.items.len > 8) return false;
+        for (indicators.array.items) |spec| {
+            if (spec != .object) return false;
+            for (spec.object.keys()) |key| if (!oneOf(key, &.{ "name", "period", "series" })) return false;
+            const name = spec.object.get("name") orelse return false;
+            if (name != .string or !oneOf(name.string, &.{ "sma", "ema", "rsi" })) return false;
+            const period = spec.object.get("period") orelse return false;
+            if (period != .integer or period.integer < 2 or period.integer > 200) return false;
+            if (spec.object.get("series")) |series| if (series != .integer or series.integer < 0 or series.integer > 64) return false;
+        }
+    }
+    if (value.object.get("market")) |market| {
+        if (market != .object or market.object.count() != 3 or tickers.array.items.len != 1) return false;
+        const venue = market.object.get("venue") orelse return false;
+        const product = market.object.get("product") orelse return false;
+        const symbol = market.object.get("symbol") orelse return false;
+        if (venue != .string or venue.string.len == 0 or venue.string.len > 32) return false;
+        if (product != .string or !oneOf(product.string, &.{ "spot", "perp" })) return false;
+        if (symbol != .string or symbol.string.len == 0 or symbol.string.len > 128) return false;
+        for (venue.string) |char| if (!std.ascii.isAlphanumeric(char) and char != '-') return false;
+        for (symbol.string) |char| if (!std.ascii.isAlphanumeric(char) and std.mem.findScalar(u8, ":_./-", char) == null) return false;
+    }
     return true;
+}
+
+fn oneOf(value: []const u8, choices: []const []const u8) bool {
+    for (choices) |choice| if (std.mem.eql(u8, value, choice)) return true;
+    return false;
 }
 
 pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.DispatchError!dispatch.ToolResult {
@@ -49,7 +87,18 @@ fn command(alloc: std.mem.Allocator, workspace: []const u8, input: *Input) ![]u8
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try public_command.prefix(alloc, &out.writer, workspace);
-    try public_command.writeQuoted(&out.writer, script);
+    var program: std.Io.Writer.Allocating = .init(alloc);
+    defer program.deinit();
+    var json: std.Io.Writer.Allocating = .init(alloc);
+    defer json.deinit();
+    try std.json.Stringify.value(input.parsed.value, .{}, &json.writer);
+    try program.writer.writeAll("candle_input=");
+    try public_command.writeQuoted(&program.writer, json.written());
+    try program.writer.writeAll("\nindicator_python=");
+    try public_command.writeQuoted(&program.writer, @embedFile("candle_indicators.py"));
+    try program.writer.writeAll("\n");
+    try program.writer.writeAll(script);
+    try public_command.writeQuoted(&out.writer, program.written());
     try out.writer.writeAll(" get-market-candles --quote ALL");
     for (input.parsed.value.object.get("tickers").?.array.items) |ticker| try out.writer.print(" {s}", .{ticker.string});
     return out.toOwnedSlice();

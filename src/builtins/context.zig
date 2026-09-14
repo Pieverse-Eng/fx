@@ -3122,9 +3122,12 @@ fn expectDefaultPromptDoesNotContain(needle: []const u8) !void {
 
 test "gateway_system_prompt: compact ordered sections" {
     const sections = [_][]const u8{
-        "# Identity",
-        "# Boundaries",
-        "# Response",
+        "# Identity and context",
+        "# Workspace behavior",
+        "# Source routing",
+        "# Interaction",
+        "# Safety",
+        "# Tools and verification",
     };
 
     var previous_index: ?usize = null;
@@ -3137,13 +3140,11 @@ test "gateway_system_prompt: compact ordered sections" {
     try std.testing.expect(gateway_system_prompt.len < 8 * 1024);
 }
 
-test "gateway_system_prompt: market research identity" {
-    try expectDefaultPromptContains("You are Pieverse's Market Research Agent.");
-    try expectDefaultPromptContains("Answer the calling agent's asset and market research requests using the available tools.");
-    try expectDefaultPromptDoesNotContain("News-derived requests:");
-    try expectDefaultPromptDoesNotContain("Trading strategies:");
-    try expectDefaultPromptDoesNotContain("Market inquiries:");
-    try expectDefaultPromptDoesNotContain("You are fx, a local coding CLI assistant");
+test "gateway_system_prompt: generic identity leaves hosted roles to the caller" {
+    try expectDefaultPromptContains("You are fx, a local coding CLI assistant with tool access.");
+    try expectDefaultPromptDoesNotContain("Pieverse's Market Research Agent");
+    try expectDefaultPromptDoesNotContain("Research only.");
+    try expectDefaultPromptDoesNotContain("return the tool result JSON verbatim");
 }
 
 test "gateway_system_prompt: static guidance is capability-neutral" {

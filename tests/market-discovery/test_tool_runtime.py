@@ -14,7 +14,7 @@ binary = str(Path(sys.argv[1]).resolve())
 fixtures = Path(sys.argv[2]).resolve()
 
 
-def exercise(kind, tool_name="discover_markets", references=False, multiple=False):
+def exercise(kind, tool_name="get_markets", references=False, multiple=False, evidence=False):
     if os.environ.get("FX_MARKET_TEST_CASE") and kind != os.environ["FX_MARKET_TEST_CASE"]:
         return
     with tempfile.TemporaryDirectory(prefix="fx-discovery-runtime-") as directory:
@@ -33,15 +33,18 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                 args = {"ticker": "CRCL", "product": "spot", "amount": "1000"}
             if kind == "gate_fractional":
                 args["amount"] = "0.003"  # 0.3 contracts at the fixture's 100 USDT price.
-            if kind == "snapshot":
-                args.pop("amount")
-                args.pop("direction")
             if kind.startswith("quote_"):
                 args["quote"] = kind.removeprefix("quote_").upper()
             if kind == "currency_usdc":
                 args["currency"] = "USDC"
             if kind == "invalid_quote":
                 args["quote"] = "USDT;echo bad"
+        if kind in ("snapshot", "funding_only"):
+            args = {"tickers": ["BTC"], "product": "perp", "metrics": ["funding"] if kind == "funding_only" else ["funding", "openInterest", "depth", "markPrice"]}
+        if kind in ("indicators", "exact_missing"):
+            args = {"tickers": ["BTC"], "intervals": ["15m"],
+                    "market": {"venue": "binance", "product": "perp", "symbol": "BTCUSDT" if kind == "indicators" else "BTCMISSING"},
+                    "indicators": [{"name": "sma", "period": 60}, {"name": "rsi", "period": 14, "series": 3}, {"name": "ema", "period": 30}]}
         if kind == "invalid":
             args["venues"] = ["binance"]
         if kind == "aliases":
@@ -65,8 +68,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                         tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
                         if kind != "denied":
                             schema = tools[tool_name]["parameters"]
-                            assert set(schema["properties"]) == ({"ticker", "product", "amount", "currency", "quote", "direction"} if tool_name == "compare_trade_routes" else {"tickers", "product", "quote"} if tool_name == "discover_markets" else {"tickers"}), schema
-                            assert schema["required"] == (["ticker", "product"] if tool_name == "compare_trade_routes" else ["tickers"])
+                            assert set(schema["properties"]) == ({"ticker", "product", "amount", "currency", "quote", "direction"} if tool_name == "compare_trade_routes" else {"tickers", "product", "quote", "metrics"} if tool_name == "get_markets" else {"tickers", "intervals", "market", "indicators"}), schema
+                            assert schema["required"] == (["ticker", "product", "amount"] if tool_name == "compare_trade_routes" else ["tickers"])
                         delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": call_ids[0], "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
                         if multiple:
                             delta["tool_calls"].append({"index": 1, "id": call_ids[1], "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}})
@@ -108,7 +111,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             env.update(FX_PLATFORM_UNISWAP_QUOTE_URL="http://fixture/wallet/uniswap/quote", FX_PLATFORM_QUOTE_TOKEN="fixture")
         try:
             prompt = "Research SKHYNIX and SAMSUNG markets." if kind == "aliases" else "Find available BTC and CRCL markets."
-            result = subprocess.run([binary, "ask", "--auto", "--json", "--no-save", "--", prompt], cwd=home, env=env, text=True, capture_output=True, timeout=40)
+            result = subprocess.run([binary, "ask", "--auto", "--json", "--no-save", *(["--evidence"] if evidence else []), "--", prompt], cwd=home, env=env, text=True, capture_output=True, timeout=40)
             assert not failures, failures
             assert result.returncode == 0, (result.returncode, result.stderr)
             assert not any(text in result.stderr.lower() for text in ("panic:", "segmentation fault", "error:", "assertion failed")), result.stderr
@@ -123,7 +126,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             if kind in ("invalid", "invalid_quote", "denied"):
                 assert not calls, calls
             else:
-                if tool_name == "discover_markets" and not multiple:
+                if tool_name == "get_markets" and not multiple and kind not in ("snapshot", "funding_only"):
                     # CRCL needs one extra Gate stock metadata query.
                     expected_calls = 19 if kind in ("aliases", "orderly") else 20
                     catalogs = [call for call in calls if not call.startswith("route-")]
@@ -146,15 +149,28 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                         continue
                     try:
                         candidate, _ = decoder.raw_decode(content[offset:])
-                        if isinstance(candidate, dict) and set(candidate) == ({"bestRoute", "rankedRoutes", "gaps", "markets"} if tool_name == "compare_trade_routes" else {"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
+                        if isinstance(candidate, dict) and set(candidate) == ({"bestRoute", "rankedRoutes", "gaps", "markets"} if tool_name == "compare_trade_routes" else {"results", "errors", "metrics"} if kind in ("snapshot", "funding_only") else {"results", "errors"} if tool_name != "get_market_candles" else {"columns", "results", "errors"}):
                             payload = candidate
                             break
                     except ValueError:
                         pass
                 assert payload is not None, content
                 if references:
-                    assert json.loads(output["final_output"]) == ([payload, payload] if multiple else payload), output
-                    if tool_name == "get_market_candles":
+                    final = json.loads(output["final_output"])
+                    if evidence and kind == "indicators":
+                        assert final['version'] == 1 and final['results'][0]['result_ref'] == call_ids[0]
+                        full = final['results'][0]['payload']
+                        assert len(full['results'][0]['timeframes']['15m']['closed']) == 60
+                        projected = json.loads(json.dumps(full))
+                        frame = projected['results'][0]['timeframes']['15m']
+                        frame['retainedClosedCandles'] = len(frame['closed'])
+                        frame['closed'] = frame['closed'][-2:]
+                        assert projected == payload, payload
+                    elif evidence:
+                        assert final == {"version": 1, "results": [{"result_ref": call, "tool": tool_name, "payload": payload} for call in reversed(call_ids)]}, final
+                    else:
+                        assert final == ([payload, payload] if multiple else payload), output
+                    if tool_name == "get_market_candles" and kind == "success":
                         assert len(output["final_output"]) > 10_000
                     # The model emitted only IDs, while the binary returned the payload.
                     assert len(output["output"]) < 100
@@ -167,7 +183,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                         assert [m["symbol"] for m in row["markets"] if m["venue"] == "orderly"] == [symbol], row
                 elif kind == "aliases":
                     commands = (fixtures / "commands").read_text()
-                    if tool_name == "discover_markets":
+                    if tool_name == "get_markets":
                         assert payload["errors"] == [], payload
                         expected = [{("aster", "SKHYNIXUSDT"), ("hyperliquid", "xyz:SKHX"), ("lighter", "SKHYNIXUSD")},
                                     {("aster", "SAMSUNGUSDT"), ("hyperliquid", "xyz:SMSN"), ("lighter", "SAMSUNGUSD")}]
@@ -191,13 +207,31 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                         assert lighter["openInterest"]["value"] == 500 and lighter["markPrice"] == 100, lighter
                         assert "--market SKHYNIXUSD --market-type perp" in commands, commands
                         assert any("xyz:SKHX" in gap and "HIP-3" in gap for gap in payload["gaps"]), payload
-                elif tool_name == "discover_markets" and kind == "onchain":
+                elif tool_name == "get_markets" and kind == "onchain":
                     markets = [m for r in payload["results"] for m in r["markets"] if m.get("chain")]
                     assert {(m["chain"], m["provider"]) for m in markets} == {("bnb", "pancakeswap"), ("robinhood", "uniswap")}, payload
                     assert all(m["availability"] == "deployment_only" and m["contract"] for m in markets)
                     commands = (fixtures / "commands").read_text()
                     assert "pancake swap" not in commands and "wallet uniswap" not in commands and "dflow" not in commands, commands
-                elif tool_name == "discover_markets":
+                elif kind == "snapshot":
+                    assert len(payload["results"][0]["markets"]) >= 7, payload
+                    assert all("entryEstimate" not in m and "nativeBook" not in m for m in payload["results"][0]["markets"]), payload
+                    by_venue = {m["venue"]: m for m in payload["results"][0]["markets"]}
+                    assert by_venue["bitget"]["funding"]["value"] == 0, payload
+                    assert by_venue["okx-cex"]["openInterest"]["usdValue"] == 10000, payload
+                    assert by_venue["gate"]["book"]["bestBid"] == 99, payload
+                    kraken_linear = next(m for m in payload["results"][0]["markets"] if m["venue"] == "kraken" and m["symbol"] == "PF_XBTUSD")
+                    assert kraken_linear["funding"]["value"] == -0.000003, payload
+                    assert kraken_linear["funding"]["unit"] == "ratio", payload
+                    assert "snapshot-kraken-funding" in calls, calls
+                    assert "route-rates" not in calls, calls
+                elif kind == "funding_only":
+                    assert payload["metrics"] == ["funding"]
+                    assert len(payload["results"][0]["markets"]) >= 7
+                    assert all(not any(key in m for key in ("book", "openInterest", "markPrice", "nativeBook")) for m in payload["results"][0]["markets"])
+                    assert not any("book" in c or "-oi" in c for c in calls), calls
+                    assert "route-rates" not in calls, calls
+                elif tool_name == "get_markets":
                     assert {market["venue"] for entry in payload["results"] for market in entry["markets"]} == {"aster", "binance", "bitget", "gate", "hyperliquid", "kraken", "okx-cex"}, payload
                     assert "lighter" in calls
                     assert bool(payload["errors"]) == (kind == "partial"), payload
@@ -212,19 +246,6 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert pancake["route"][0]["pools"][0] == {"provider": "pancakeswap", "type": "v3", "fee": 2500}, pancake
                     assert len(pancake["route"][0]["path"]) == 2, pancake
                     assert payload["bestRoute"]["chain"] == "bnb", payload
-                elif tool_name == "compare_trade_routes" and kind == "snapshot":
-                    assert payload["bestRoute"] is None and payload["rankedRoutes"] == [], payload
-                    assert len(payload["markets"]) >= 7, payload
-                    assert all("entryEstimate" not in m and "nativeBook" not in m for m in payload["markets"]), payload
-                    by_venue = {m["venue"]: m for m in payload["markets"]}
-                    assert by_venue["bitget"]["funding"]["value"] == 0, payload
-                    assert by_venue["okx-cex"]["openInterest"]["usdValue"] == 10000, payload
-                    assert by_venue["gate"]["book"]["bestBid"] == 99, payload
-                    kraken_linear = next(m for m in payload["markets"] if m["venue"] == "kraken" and m["symbol"] == "PF_XBTUSD")
-                    assert kraken_linear["funding"]["value"] == -0.000003, payload
-                    assert kraken_linear["funding"]["unit"] == "ratio", payload
-                    assert "snapshot-kraken-funding" in calls, calls
-                    assert "route-rates" not in calls, calls
                 elif tool_name == "compare_trade_routes":
                     if kind == "inverse":
                         inverse = next(m for m in payload["markets"] if m["symbol"] == "PI_XBTUSD")
@@ -263,6 +284,22 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert any("--symbol BTCUSDC " in c for c in books) == (kind in ("quote_usdc", "quote_all")), books
                     assert "route-hl" in calls, calls
                     assert ("route-kraken" in calls) == (kind != "quote_usdc"), calls
+                elif kind in ("indicators", "exact_missing"):
+                    entry = payload["results"][0]
+                    if kind == "indicators":
+                        assert entry["market"]["venue"] == "binance" and entry["market"]["symbol"] == "BTCUSDT", entry
+                        assert set(entry["timeframes"]) == {"15m"}, entry
+                        sma, rsi, ema = entry["indicators"]
+                        assert sma["value"] == 102 and sma["availableClosedCandles"] == 60, sma
+                        assert rsi["value"] == 50 and len(rsi["series"]) == 3, rsi
+                        assert ema["value"] is None and ema["gaps"], ema
+                        assert rsi["lastClosedAt"].endswith("Z"), rsi
+                        assert calls.count("candles-15m") == 1, calls
+                    else:
+                        assert payload["errors"] and all(i["value"] is None for i in entry["indicators"]), payload
+                        assert not any("candles-" in c for c in calls), calls
+                    assert not any(c.startswith("stats-") for c in calls), calls
+                    assert "candles-1h" not in calls and "candles-4h" not in calls, calls
                 else:
                     for entry in payload["results"]:
                         assert "source" not in entry and "markets" not in entry
@@ -289,7 +326,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
 for case in ("success", "partial", "invalid", "denied"):
     exercise(case)
 
-for tool_name in ("discover_markets", "get_market_candles", "compare_trade_routes"):
+for tool_name in ("get_markets", "get_market_candles", "compare_trade_routes"):
     exercise("aliases", tool_name)
 
 for case in ("success", "partial", "invalid", "denied"):
@@ -304,7 +341,12 @@ exercise("success", "get_market_candles", references=True)
 exercise("success", "compare_trade_routes", references=True)
 exercise("success", references=True, multiple=True)
 
-exercise("snapshot", "compare_trade_routes")
+exercise("snapshot")
+exercise("funding_only")
+exercise("indicators", "get_market_candles")
+exercise("exact_missing", "get_market_candles")
+exercise("indicators", "get_market_candles", references=True, evidence=True)
+exercise("partial", references=True, evidence=True)
 
 (fixtures / "orderly.json").write_text(json.dumps([
     {"symbol": symbol, "status": "ACTIVE"} for symbol in
@@ -348,4 +390,4 @@ kraken_prices = json.loads((fixtures / "stats-kraken.json").read_text())
 kraken_prices["USDGUSD"] = {"a": ["1.002"], "b": ["1"], "v": ["1", "10"]}
 (fixtures / "stats-kraken.json").write_text(json.dumps(kraken_prices))
 exercise("evm", "compare_trade_routes")
-exercise("onchain", "discover_markets")
+exercise("onchain", "get_markets")

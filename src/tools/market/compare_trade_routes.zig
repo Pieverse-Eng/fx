@@ -1,7 +1,7 @@
 const std = @import("std");
 const dispatch = @import("../../core/tooling/tool_dispatch.zig");
 const public_command = @import("public_market_command.zig");
-const script = "snapshot_math=$(cat <<'FX_SNAPSHOT_MATH'\n" ++ @embedFile("snapshot_math.jq") ++ "\nFX_SNAPSHOT_MATH\n)\n" ++ "route_math=$(cat <<'FX_ROUTE_MATH'\n" ++ @embedFile("route_math.jq") ++ "\nFX_ROUTE_MATH\n)\n" ++ @embedFile("get-market-candles.sh") ++ "\n" ++ @embedFile("issuer-discovery.sh") ++ "\n" ++ @embedFile("onchain-routes.sh") ++ "\n" ++ @embedFile("market-snapshots.sh") ++ "\n" ++ @embedFile("compare-trade-routes.sh") ++ "\nFX_MARKET_MODE=routes\n" ++ @embedFile("discover-markets.sh");
+pub const script = "snapshot_math=$(cat <<'FX_SNAPSHOT_MATH'\n" ++ @embedFile("snapshot_math.jq") ++ "\nFX_SNAPSHOT_MATH\n)\n" ++ "route_math=$(cat <<'FX_ROUTE_MATH'\n" ++ @embedFile("route_math.jq") ++ "\nFX_ROUTE_MATH\n)\n" ++ @embedFile("market-data.sh") ++ "\n" ++ @embedFile("issuer-discovery.sh") ++ "\n" ++ @embedFile("onchain-routes.sh") ++ "\n" ++ @embedFile("market-snapshots.sh") ++ "\n" ++ @embedFile("compare-trade-routes.sh") ++ "\nFX_MARKET_MODE=routes\n" ++ @embedFile("discover-markets.sh");
 const Input = struct {
     parsed: std.json.Parsed(std.json.Value),
     fn deinit(ptr: *anyopaque, alloc: std.mem.Allocator) void {
@@ -35,10 +35,7 @@ fn inputError(value: std.json.Value) ?[]const u8 {
         if (q != .string or q.string.len == 0 or q.string.len > 32) return "quote must be a currency ticker or ALL.";
         for (q.string) |c| if (!std.ascii.isAlphanumeric(c)) return "quote must be a currency ticker or ALL.";
     }
-    const amount = a.get("amount") orelse {
-        if (a.get("direction") != null) return "Direction requires an amount.";
-        return null;
-    };
+    const amount = a.get("amount") orelse return "amount is required; use get_markets with metrics for snapshots.";
     if (amount != .string or amount.string.len == 0 or amount.string.len > 32) return "amount must be a positive decimal string.";
     for (amount.string) |c| if (!std.ascii.isDigit(c) and c != '.') return "amount must be a positive decimal string.";
     const n = std.fmt.parseFloat(f64, amount.string) catch return "Invalid amount.";
@@ -99,18 +96,9 @@ test "comparison validates budget product and direction" {
     }
 }
 
-test "snapshots omit sizing but still validate filters" {
+test "comparison never invents snapshot sizing" {
     const alloc = std.testing.allocator;
-    const good = try decode(.{ .allocator = alloc }, "{\"ticker\":\"H100\",\"product\":\"perp\"}");
-    try std.testing.expect(good == .input);
-    good.input.deinit(alloc);
-    for ([_][]const u8{
-        "{\"ticker\":\"H100\",\"product\":\"perp\",\"quote\":\"USDT;id\"}",
-        "{\"ticker\":\"H100\",\"product\":\"perp\",\"currency\":\"BAD\"}",
-        "{\"ticker\":\"H100\",\"product\":\"perp\",\"direction\":\"short\"}",
-    }) |args| {
-        const bad = try decode(.{ .allocator = alloc }, args);
-        try std.testing.expect(bad == .failure);
-        alloc.free(bad.failure);
-    }
+    const result = try decode(.{ .allocator = alloc }, "{\"ticker\":\"H100\",\"product\":\"perp\"}");
+    try std.testing.expect(result == .failure);
+    alloc.free(result.failure);
 }

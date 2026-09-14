@@ -138,6 +138,263 @@ function fakeGatewayStreamingText(lines: string[], delayMs: number) {
 }
 
 describe("fx ask presentation", () => {
+  test("scoped ask limits discovery and dispatch even in yolo mode", async () => {
+    const root = createRoot();
+    const marker = join(root.workspace, "unexpected-shell");
+    writeFileSync(join(root.workspace, "AGENTS.md"), "PRIVATE_WORKSPACE_INSTRUCTION");
+    mkdirSync(join(root.home, ".fx", "skills", "private-skill"), { recursive: true });
+    writeFileSync(join(root.home, ".fx", "skills", "private-skill", "SKILL.md"),
+      "---\nname: private-skill\ndescription: PRIVATE_SKILL_INSTRUCTION\n---\nPrivate instructions");
+    writeFileSync(join(root.workspace, ".mcp.json"), JSON.stringify({
+      mcpServers: { unexpected: { command: "/bin/sh", args: ["-c", `touch '${marker}'`] } },
+    }));
+    const gateway = startFakeGateway([
+      fakeShellRun("forbidden-shell", `touch '${marker}'`),
+      fakeGatewayFinalText("Scoped result"),
+    ]);
+    gateways.push(gateway);
+    const result = await runFx([
+      "ask", "--json", "--yolo", "--no-save", "--no-context",
+      "--system", "CALLER_ROLE_PROMPT", "--tools", '["get_markets","search_tokens"]',
+      "--", "Inspect the supplied asset",
+    ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+    expect(result.code).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(gateway.requests).toHaveLength(2);
+    const first = JSON.parse(gateway.requests[0]!.body);
+    expect(first.tools.map((tool: { name: string }) => tool.name).sort())
+      .toEqual(["get_markets", "search_tokens"]);
+    expect(gateway.requests[0]!.body).toContain("CALLER_ROLE_PROMPT");
+    expect(gateway.requests[0]!.body).not.toContain("PRIVATE_WORKSPACE_INSTRUCTION");
+    expect(gateway.requests[0]!.body).not.toContain("PRIVATE_SKILL_INSTRUCTION");
+    expect(gateway.requests[1]!.body).toContain("Tool is not enabled for this request.");
+  }, TIMEOUT);
+
+  test("scoped ask executes selected tools and leaves ordinary ask defaults intact", async () => {
+    const root = createRoot();
+    writeFileSync(join(root.workspace, "fixture.txt"), "SCOPED_FILE_EVIDENCE");
+    writeFileSync(join(root.workspace, "AGENTS.md"), "DEFAULT_WORKSPACE_CONTEXT");
+    const gateway = startFakeGateway([
+      fakeGatewayToolCall("selected-read", "read_file", { path: "fixture.txt" }),
+      fakeGatewayFinalText("Read selected file"),
+      fakeGatewayFinalText("Default call"),
+    ]);
+    gateways.push(gateway);
+    const selected = await runFx([
+      "ask", "--json", "--yolo", "--no-save", "--no-context", "--tools", '["read_file"]',
+      "--", "Read fixture.txt",
+    ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+    expect(selected.code).toBe(0);
+    expect(gateway.requests[1]!.body).toContain("SCOPED_FILE_EVIDENCE");
+    const ordinary = await runFx(["ask", "--json", "--no-save", "Default request"],
+      { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+    expect(ordinary.code).toBe(0);
+    const request = gateway.requests[2]!.body;
+    expect(request).toContain("DEFAULT_WORKSPACE_CONTEXT");
+    expect(JSON.parse(request).tools.some((tool: { name: string }) => tool.name === "shell")).toBe(true);
+  }, TIMEOUT);
+
+  test("scoped ask supports an empty tool set and independent caller contexts", async () => {
+    const root = createRoot();
+    const gateway = startDynamicFakeGateway(() => fakeGatewayFinalText("Supplied evidence only"));
+    gateways.push(gateway);
+    for (const prompt of ["FIRST_ROLE_CONTEXT", "SECOND_ROLE_CONTEXT"]) {
+      const result = await runFx([
+        "ask", "--json", "--no-save", "--no-context", "--tools", "[]", "--system", prompt,
+        "--", "Analyze supplied material",
+      ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+      expect(result.code).toBe(0);
+    }
+    expect(gateway.requests).toHaveLength(2);
+    for (const request of gateway.requests) {
+      expect(JSON.parse(request.body).tools ?? []).toEqual([]);
+    }
+    expect(gateway.requests[1]!.body).toContain("SECOND_ROLE_CONTEXT");
+    expect(gateway.requests[1]!.body).not.toContain("FIRST_ROLE_CONTEXT");
+  }, TIMEOUT);
+
+  test("scoped ask rejects unknown, duplicate and malformed tool lists before inference", async () => {
+    const root = createRoot();
+    const gateway = startDynamicFakeGateway(() => fakeGatewayFinalText("unexpected"));
+    gateways.push(gateway);
+    for (const tools of ['["unknown"]', '["shell","shell"]', '{}', '[1]', 'shell']) {
+      const result = await runFx([
+        "ask", "--json", "--no-save", "--tools", tools, "--", "Analyze",
+      ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+      expect(result.code).toBe(1);
+      expect(JSON.parse(result.stdout).error).toBe("InvalidToolSelection");
+    }
+    expect(gateway.requests).toHaveLength(0);
+  }, TIMEOUT);
+
+  test("evidence mode rejects invented payloads and permits explicit empty evidence", async () => {
+    const root = createRoot();
+    const gateway = startFakeGateway([
+      ...["{}", '{"error":"unavailable"}', '{"results":[{"price":100}]}', '{"result_refs":[]}']
+        .map(fakeGatewayFinalText),
+    ]);
+    gateways.push(gateway);
+    for (let i = 0; i < 4; i++) {
+      const result = await runFx([
+        "ask", "--json", "--evidence", "--no-save", "--no-context", "--tools", "[]", "--", "Research",
+      ], { cwd: root.workspace, env: gatewayEnv(root.home, gateway), timeoutMs: TIMEOUT });
+      const output = JSON.parse(result.stdout);
+      if (i < 3) {
+        expect(result.code).toBe(1);
+        expect(output.error).toBe("ResultReferencesRequired");
+        expect(output.final_output).toBe("");
+      } else {
+        expect(result.code).toBe(0);
+        expect(JSON.parse(output.final_output)).toEqual({ version: 1, results: [] });
+      }
+    }
+  }, TIMEOUT);
+
+  test("AgentKey native tools preserve scoped authentication, refreshed quotes and uncertain receipts", async () => {
+    const root = createRoot();
+    const calls: Array<{ path: string; body: any }> = [];
+    const requestId = "a".repeat(64);
+    const version = `ak-v1-${"b".repeat(64)}`;
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
+      expect(request.headers.get("x-pieverse-agentkey-research")).toBe("scoped-run-capability");
+      expect(request.headers.has("authorization")).toBe(false);
+      const path = new URL(request.url).pathname;
+      const body = request.method === "POST" ? await request.json() : null;
+      calls.push({ path, body });
+      if (path.endsWith("/discover")) return Response.json({ tools: [{ name: "Provider/filing" }] });
+      if (path.endsWith("/describe")) return Response.json({ execute_as: { name: "Provider/filing", params: {} }, params: { type: "object" }, price: { credits: "0.100000", version } });
+      return Response.json({ requestId, state: "indeterminate", result: null, billing: { status: "not_charged" } });
+    } });
+    const gateway = startFakeGateway([
+      fakeGatewayToolCall("discover", "agentkey_discover", { query: "Find the reported revenue and reporting period" }),
+      fakeGatewayToolCall("describe", "agentkey_describe", { name: "Provider/filing" }),
+      fakeGatewayToolCall("paid", "agentkey_execute", { name: "returned/path", params_json: '{"symbol":"ABC"}', maxCredits: "0.2" }),
+      fakeGatewayToolCall("receipt", "agentkey_request", { requestId }),
+      fakeGatewayFinalText('{"result_refs":["paid","receipt"]}'),
+    ]);
+    gateways.push(gateway);
+    try {
+      const result = await runFx([
+        "ask", "--json", "--evidence", "--auto", "--no-save", "--no-context", "--tools",
+        '["agentkey_discover","agentkey_describe","agentkey_execute","agentkey_request"]', "--", "Research financial evidence",
+      ], { cwd: root.workspace, env: { ...gatewayEnv(root.home, gateway),
+        FX_AGENTKEY_BASE_URL: `http://127.0.0.1:${server.port}/agentkey`, FX_AGENTKEY_RESEARCH_TOKEN: "scoped-run-capability",
+      }, timeoutMs: TIMEOUT });
+      expect(result.code).toBe(0);
+      expect(calls.map((call) => call.path)).toEqual(["/agentkey/discover", "/agentkey/describe", "/agentkey/describe", "/agentkey/execute", `/agentkey/requests/${requestId}`]);
+      expect(calls[3]!.body).toEqual({ name: "Provider/filing", params: { symbol: "ABC" }, priceVersion: version, maxCredits: "0.2" });
+      const final = JSON.parse(JSON.parse(result.stdout).final_output);
+      expect(final.results.map((entry: any) => [entry.tool, entry.payload.state, entry.payload.requestId])).toEqual([
+        ["agentkey_execute", "indeterminate", requestId], ["agentkey_request", "indeterminate", requestId],
+      ]);
+      expect(gateway.requests.map((request) => request.body).join("\n")).not.toContain("scoped-run-capability");
+    } finally { server.stop(true); }
+  }, TIMEOUT);
+
+  test("completed paid evidence persists across successful synthesis, invalid answers and forced timeout", async () => {
+    const root = createRoot();
+    const requestId = "e".repeat(64);
+    let executions = 0;
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+      if (new URL(request.url).pathname.endsWith("/describe")) return Response.json({ execute_as: {name:"Provider/read"}, price: {credits:"0.1", version:`ak-v1-${"f".repeat(64)}`} });
+      executions++;
+      return Response.json({requestId, state:"completed", billing:{status:"charged"}, result:{text:"Completed paid report"}});
+    }});
+    try {
+      for (const outcome of ["success", "invalid", "timeout"]) {
+        const directory = join(root.root, outcome);
+        mkdirSync(directory, {mode:0o700});
+        let release: ((response: Response) => void) | undefined;
+        const gateway = startFakeGateway([
+          fakeGatewayToolCall("paid", "agentkey_execute", {name:"Provider/read", params_json:'{}'}),
+          outcome === "timeout"
+            ? () => new Promise<Response>((resolve) => { release = resolve; })
+            : fakeGatewayFinalText(outcome === "success" ? '{"result_refs":["paid"]}' : "Missing result references"),
+        ]);
+        gateways.push(gateway);
+        try {
+          const value = await runFx(["ask", "--json", "--evidence", "--auto", "--no-save", "--no-context", "--tools", '["agentkey_execute"]', "--", "Read report"], {
+            cwd:root.workspace, timeoutMs:outcome === "timeout" ? 3000 : TIMEOUT,
+            env:{...gatewayEnv(root.home, gateway), FX_EVIDENCE_DIR:directory, FX_AGENTKEY_BASE_URL:`http://127.0.0.1:${server.port}/agentkey`, FX_AGENTKEY_RESEARCH_TOKEN:"fixture"},
+          });
+          if (outcome === "success") {
+            expect(value.code).toBe(0);
+            expect(value.stderr.trim()).toBe("Researching external evidence");
+            expect(JSON.parse(JSON.parse(value.stdout).final_output).results[0].payload.requestId).toBe(requestId);
+          } else if (outcome === "invalid") {
+            expect(value.code).toBe(1);
+            expect(JSON.parse(value.stdout).error).toBe("ResultReferencesRequired");
+          } else {
+            expect(value.timedOut).toBe(true);
+            expect(value.signal).toBe("SIGKILL");
+          }
+          const record = JSON.parse(readFileSync(join(directory, "0.json"), "utf8"));
+          expect(record.result_ref).toBe("paid");
+          expect(record.tool).toBe("agentkey_execute");
+          expect(JSON.parse(record.payload_json)).toMatchObject({requestId, state:"completed", billing:{status:"charged"}});
+        } finally { release?.(fakeGatewayFinalText('{"result_refs":[]}')); }
+      }
+      expect(executions).toBe(3);
+    } finally {server.stop(true);}
+  }, TIMEOUT);
+
+  test("AgentKey rejects a refreshed price above its ceiling and preserves error receipt IDs without retries", async () => {
+    const root = createRoot();
+    let paidCalls = 0;
+    const version = `ak-v1-${"c".repeat(64)}`;
+    const requestId = "d".repeat(64);
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+      if (new URL(request.url).pathname.endsWith("/describe")) return Response.json({ execute_as: { name: "Provider/read" }, price: { credits: "0.2", version } });
+      paidCalls++;
+      return Response.json({ code: "AGENTKEY_BILLING_UNAVAILABLE" }, { status: 503, headers: { "X-AgentKey-Request-Id": requestId } });
+    } });
+    try {
+      for (const ceiling of ["0.1", "0.3"]) {
+        const gateway = startFakeGateway([
+          fakeGatewayToolCall("paid", "agentkey_execute", { name: "Provider/read", params_json: '[]', maxCredits: ceiling }),
+          fakeGatewayFinalText('{"result_refs":["paid"]}'),
+        ]);
+        gateways.push(gateway);
+        const result = await runFx([
+          "ask", "--json", "--evidence", "--auto", "--no-save", "--no-context", "--tools", '["agentkey_execute"]', "--", "Collect evidence within the ceiling",
+        ], { cwd: root.workspace, env: { ...gatewayEnv(root.home, gateway), FX_AGENTKEY_BASE_URL: `http://127.0.0.1:${server.port}`, FX_AGENTKEY_RESEARCH_TOKEN: "cap" }, timeoutMs: TIMEOUT });
+        expect(result.code).toBe(0);
+        const payload = JSON.parse(JSON.parse(result.stdout).final_output).results[0].payload;
+        if (ceiling === "0.1") {
+          expect(payload.code).toBe("AGENTKEY_PRICE_EXCEEDS_LIMIT");
+          expect(payload.executionAttempted).toBe(false);
+          expect(paidCalls).toBe(0);
+        } else {
+          expect(payload.code).toBe("AGENTKEY_BILLING_UNAVAILABLE");
+          expect(payload.requestId).toBe(requestId);
+          expect(payload.automaticRetry).toBe(false);
+          expect(paidCalls).toBe(1);
+        }
+      }
+    } finally { server.stop(true); }
+  }, TIMEOUT);
+
+  test("approved references cannot escape the per-request file catalog", async () => {
+    const root = createRoot();
+    writeFileSync(join(root.workspace, "reference.md"), "ORIGINAL_KNOWLEDGE_REFERENCE");
+    writeFileSync(join(root.workspace, "private.txt"), "PRIVATE_UNAPPROVED_CONTENT");
+    const gateway = startFakeGateway([
+      fakeGatewayToolCall("approved", "read_reference", { id: "knowledge/trend" }),
+      fakeGatewayToolCall("denied", "read_reference", { id: join(root.workspace, "private.txt") }),
+      fakeGatewayFinalText('{"result_refs":["approved"]}'),
+    ]);
+    gateways.push(gateway);
+    const result = await runFx([
+      "ask", "--json", "--evidence", "--auto", "--no-save", "--no-context", "--tools", '["read_reference"]', "--", "Read relevant knowledge",
+    ], { cwd: root.workspace, env: { ...gatewayEnv(root.home, gateway), FX_REFERENCE_FILES: JSON.stringify({ "knowledge/trend": join(root.workspace, "reference.md") }) }, timeoutMs: TIMEOUT });
+    expect(result.code).toBe(0);
+    const messages = gateway.requests.map((request) => request.body).join("\n");
+    expect(messages).toContain("ORIGINAL_KNOWLEDGE_REFERENCE");
+    expect(messages).toContain("Reference is not allowed");
+    expect(messages).not.toContain("PRIVATE_UNAPPROVED_CONTENT");
+    expect(JSON.parse(JSON.parse(result.stdout).final_output).results[0].tool).toBe("read_reference");
+  }, TIMEOUT);
+
   test("JSON rejects result references outside the current request", async () => {
     const root = createRoot();
     const gateway = startFakeGateway([

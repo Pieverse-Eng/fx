@@ -225,19 +225,21 @@ an explicit notice.
 
 Skills are advertised in a stable catalog sized to the selected model's context window. The default budget is approximately 2% of context, or 8,000 characters when the context size is unknown, with up to 1,024 characters per description. Explicit byte overrides take precedence. When space is limited, fx shortens descriptions before omitting skill identities; `capability_search` can find skills outside that catalog.
 
-This fork registers `discover_markets` directly in the agent's tool context. For example, `{"tickers":["IREN","APLD","HUT"]}` searches all nine supported venues concurrently, reusing catalogs across tickers. Optional `product` (`spot`, `perp`, or `all`) and `quote` filters narrow the products and currencies. Aster defaults to all quotes; Binance, Bitget, Gate, and OKX default to USDT; Hyperliquid, Lighter, and Orderly default to USDC; Kraken defaults to USD. Use `quote: "ALL"` to search all supported quotes.
+This fork registers `get_markets` directly in the agent's tool context. For example, `{"tickers":["IREN","APLD","HUT"]}` searches all nine supported venues concurrently, reusing catalogs across tickers. Optional `product` (`spot`, `perp`, or `all`) and `quote` filters narrow the products and currencies. Aster defaults to all quotes; Binance, Bitget, Gate, and OKX default to USDT; Hyperliquid, Lighter, and Orderly default to USDC; Kraken defaults to USD. Use `quote: "ALL"` to search all supported quotes.
 
 Spot discovery also reads the bStocks, xStocks and Robinhood issuer catalogs for stock deployments on BNB, Solana and Robinhood Chain. These entries appear alongside venue markets with `issuer`, `chain`, `symbol`, `contract`, `product`, `representation`, `provider`, and `availability: "deployment_only"`. Providers identify the supported purchase channel: PancakeSwap, DFlow or Uniswap. Deployment discovery needs no amount or wallet credential and does not establish liquidity or an executable quote. Different issuers and contracts remain distinct. An explicit `quote` filters the supported payment assets; omission includes all supported chain payment assets. Issuer failures remain in `errors`, while a confirmed missing asset is an empty match. Perpetual-only discovery skips issuer queries. Cost comparison reuses this discovery before requesting quotes with the supplied amount.
 
-The research workflow instructs the agent to verify asset identity and supported-market identifiers using available read-only market or issuer information before ticker-based research. Names, listing codes, and symbols are identification clues; discovery matches venue base tickers and verified venue-scoped aliases, but does not resolve company names or listing codes. An empty result does not establish asset unavailability. Unresolved identifiers must be clarified before their candles or route comparisons are requested. Related resolved legs stay together where supported, unresolved legs remain explicit, and the response retains relevant unchanged JSON results from earlier calls.
+Hosted callers supply role-specific research instructions; fx itself remains a general harness. Verify asset identity and supported-market identifiers before ticker-based research. Names, listing codes, and symbols are identification clues; discovery matches venue base tickers and verified venue-scoped aliases, but does not resolve company names or listing codes. An empty result does not establish asset unavailability. Unresolved identifiers must be clarified before their candles or route comparisons are requested. Related resolved legs stay together where supported, unresolved legs remain explicit, and the response retains relevant unchanged JSON results from earlier calls.
 
 Discovery, candles, and route comparisons share a bounded perpetual alias table: `SKHYNIX`/`SKHX` and `SAMSUNG`/`SMSN` map to XYZ's `xyz:SKHX`/`xyz:SMSN`, Lighter's `SKHYNIXUSD`/`SAMSUNGUSD`, and Aster's `SKHYNIX`/`SAMSUNG` bases; `HYUNDAI` also matches Lighter's `HYUNDAIUSD`. XYZ identities are documented in its [Korean asset specifications](https://docs.trade.xyz/asset-directory/korea); native symbols were checked against the [Lighter catalog](https://mainnet.zklighter.elliot.ai/api/v1/orderBooks?filter=all) and [Aster catalog](https://fapi.asterdex.com/fapi/v3/exchangeInfo). Add mappings only after verifying the same underlying exposure and units, scoped to the actual venue and product. These aliases do not include the `SKHY` ADR, leveraged funds, arbitrary builders, or arbitrary `USD` suffixes. Current catalog status and currency filters still apply. Aster also recognizes `1000`, `1000000`, and `1M` quantity prefixes, preserving the native contract symbol and normalizing candles to the requested underlying unit.
 
-The tool returns only `results` grouped by ticker and `errors` for unresolved coverage. Markets retain exact venue-native symbols, spot/perp types, required order-routing identifiers, and material restrictions. Partial venue failures preserve successful findings. Sizing specifications, query scope, timestamps, and debug metadata are omitted. It uses public market commands only and does not place orders. The query script is embedded in the binary; no market-discovery skill or workspace script installation is needed. The native host must provide Bash 4+, jq, GNU timeout, curl, and the selected venue CLIs. Tests live in `tests/market-discovery/`.
+Default discovery returns `results` grouped by ticker and `errors` for unresolved coverage; explicitly requested snapshots also identify their `metrics`. Markets retain exact venue-native symbols, spot/perp types, required order-routing identifiers, and material restrictions. Partial venue failures preserve successful findings. Sizing specifications, query scope, timestamps, and debug metadata are omitted. It uses public market commands only and does not place orders. The query script is embedded in the binary; no market-discovery skill or workspace script installation is needed. The native host must provide Bash 4+, jq, GNU timeout, curl, and the selected venue CLIs. Tests live in `tests/market-discovery/`.
 
 `search_tokens` searches Bitget Wallet's public token catalog for onchain memecoins and long-tail tokens; stocks, stock-linked tokens, and major cryptocurrencies are out of scope. `{"query":"cashcat"}` searches without a chain filter and returns only the provider's first match. Optional `chain` accepts a provider chain code (for example `bnb`, `sol`, or `robinhood`); optional `limit` accepts 1–20. Omit `limit` by default and set it only when additional candidates are needed. Results preserve provider order and return `name`, `symbol`, `chain`, `contract`, `twitter`, `website`, and `telegram` inside `results`. Social links are supplied by the provider; missing, empty, or non-string links become `null`. A successful empty search returns `{"results":[]}`; transport and provider failures are tool errors. Search ranking is not an identity verification. This read-only tool requires curl, no wallet credentials or skill installation.
 
-`get_market_candles` accepts only `{"tickers":["IREN","APLD"]}`. It selects a reference market across the same eight venues using public 24-hour turnover converted to USD (OKX perpetual turnover is estimated from base volume and current price). It fetches 15m, 1h, and 4h candles plus the latest actual trade in parallel, keeping every timeframe on the same market and falling back if candle retrieval fails. Each timeframe returns up to 50 closed candles and a separate current candle, with ISO 8601 UTC timestamps (including milliseconds) and prices/volumes normalized to the underlying unit. Unknown volume units remain null. The response contains `columns`, per-ticker `results` (quote currency, retrieval time, latest trade, timeframes), and `errors`; source markets stay in internal logs. Missing or stale data is reported rather than manufactured.
+`get_market_candles` accepts ticker-only queries such as `{"tickers":["IREN","APLD"]}`, optional requested `intervals` (15m/1h/4h), an exact single-ticker `market: {venue,product,symbol}`, and requested SMA/EMA/Wilder RSI indicators. General reference selection uses the discovery catalog's supported venues, including Orderly, and public 24-hour turnover converted to USD. An exact requested market never falls back to another venue or product. Ticker-only calls retain up to 50 closed candles and a separate current candle per interval. Indicator calls retrieve bounded history according to lookback and documented initialization requirements, reusing each series for all requested calculations. Missing/stale bars and unsupported measurements remain explicit gaps.
+
+Responses include the actual market identity, quote currency, retrieval time, latest trade, timeframes and errors, with ISO UTC timestamps and underlying price/volume units. JSON asks retain full originals while indicator-only model views show the last two closed candles and `retainedClosedCandles`; requested bounded indicator series and quality gaps remain visible. References resolve to the full original data. Ordinary ticker-only output is unchanged. Market capabilities and aliases are owned by the shared discovery adapter registry in `src/tools/market/discover-markets.sh`; candle normalization/currency helpers live in `market-data.sh`. Callers consume that coverage rather than maintaining an independent venue-count list.
 
 Reference-market selection supports direct and reversed USD quotes, BTC/XBT and DOGE/XDG currency aliases, and live USDT conversion pairs using existing Kraken/Binance data. A single cross through independently priced BTC/ETH can fill missing Kraken quote currencies. Gate and Hyperliquid token conversion rates remain scoped to their venue; Hyperliquid contexts are matched by returned pair ID and token indices. Missing or inactive conversion markets remain unknown; stablecoins are not assumed to equal one dollar.
 
@@ -307,3 +309,58 @@ Third-party licenses and attributions are listed in
 ## Credits
 
 Interface sounds by [cuelume](https://github.com/Danilaa1/cuelume).
+
+### Scoped headless calls
+
+Hosts can inject a base system prompt and select an exact set of native tools:
+
+```sh
+fx ask --json --no-save --no-context --system 'Analyze the supplied evidence; return JSON.' --tools '[]' -- 'Evidence and question'
+```
+
+`--tools` accepts a JSON array of unique registered native tool names. An empty
+array grants no tools. Unknown or duplicate names fail before inference. The
+selection governs both advertised schemas and dispatch, including in `--yolo`
+mode; ambient MCP servers are disabled and skills load only when `skill` is
+selected. `--no-context` omits workspace instructions. `--no-save` gives each
+invocation a fresh, unsaved conversation. Without these options, normal ask
+behavior is unchanged. Hosts own role prompts and selections; fx owns native
+tool implementations. This is a tool boundary, not an OS sandbox: an explicitly
+selected shell or agent tool still has its ordinary capabilities.
+
+Hosted callers can add `--evidence` to `ask --json`. The child must select exact
+`result_refs` from this invocation. FX assembles `final_output` as
+`{"version":1,"results":[{"result_ref":"…","tool":"…","payload":{…}}]}`
+from retained originals; optional model `analysis` is kept separately for host
+validation. Invented payloads and unknown IDs fail. An empty results list means
+no evidence, never successful research. These references expire with the request;
+the host must explicitly retain bounded artifacts before offering later retrieval.
+With `--evidence`, a host may supply an existing private absolute directory in
+`FX_EVIDENCE_DIR`. Each completed JSON tool result is atomically written there as
+`{result_ref,tool,payload_json}` before further inference; `payload_json` preserves
+the original numeric text. These files survive failed synthesis or termination.
+The host owns per-invocation directory isolation, retention limits and cleanup;
+this sink never turns a failed model answer into successful research.
+
+`get_markets` replaces `discover_markets`. It returns compact identities by default;
+optional `metrics` selects funding, openInterest, depth, or markPrice. Cost comparison
+requires an amount and performs its own discovery. Candle requests can select from
+15m/1h/4h and bind one ticker to `{venue,product,symbol}`. An unavailable exact market
+never falls back. Optional `indicators` supports SMA, EMA and Wilder RSI (periods
+2–200; up to 64 series points). Calculations use closed bars, mean seeds and three
+additional warm-up periods for EMA/RSI; missing bars or insufficient bounded history
+produce explicit gaps. Ticker-only candle calls retain their existing behavior.
+
+A host may supply `FX_AGENTKEY_BASE_URL` and `FX_AGENTKEY_RESEARCH_TOKEN` for the
+four native `agentkey_discover`, `agentkey_describe`, `agentkey_execute` and
+`agentkey_request` bindings. They use the canonical platform HTTP contract,
+refresh execution quotes, retain receipt errors and never retry paid execution.
+`params_json` accepts a JSON-encoded object or array. No general wallet credential
+or upstream AgentKey key is loaded. The platform must enforce read-only operations,
+endpoint/tenant scope and cumulative credits; a per-call ceiling alone is insufficient.
+
+`read_reference` reads only exact IDs in the host-supplied `FX_REFERENCE_FILES`
+JSON map (ID to absolute file). It cannot browse paths, install skills, or read an
+unlisted file. Bodies are bounded to 1 MiB, and artifacts carrying an expired
+`expiresAt` are rejected. Hosts grant only selected references and approved
+knowledge files, and remain responsible for freshness and artifact retention.

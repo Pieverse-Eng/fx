@@ -383,7 +383,7 @@ describe("cli: help", () => {
 Run one noninteractive request
 
 Usage:
-  fx ask [--auto|--full-access] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--continue-recovery] [--] <prompt>
+  fx ask [--auto|--full-access] [--image PATH] [--system TEXT] [--tools JSON] [--no-context] [--json] [--evidence] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--continue-recovery] [--] <prompt>
 
 Options:
   --auto                Automatically review unresolved permission requests
@@ -391,6 +391,9 @@ Options:
   --yolo                Alias for --full-access
   --image PATH          Attach an image file; repeat for multiple images
   --system TEXT         Replace the built-in system prompt for this request
+  --tools JSON          Allow only these native tool names (JSON array); disables ambient MCP and unselected skills
+  --evidence            Require retained result references and emit versioned evidence (requires --json)
+  --no-context          Omit workspace instructions from this request
   --json                Emit machine-readable JSON instead of text
   --quiet               Suppress assistant output
   --prompt-permissions  Prompt for Y/N permission approval when stdin is a TTY
@@ -405,7 +408,8 @@ The prompt may be passed as arguments or piped on stdin when no prompt args are 
 TTY stdout uses the Minimal transcript presentation; redirected stdout emits raw assistant Markdown.
 Operational progress and diagnostics are written to stderr. JSON \`output\` keeps accumulated assistant Markdown; \`final_output\` contains only the completed final response, or an empty string when absent.
 JSON usage sums reported main-agent input_tokens and output_tokens, including with --no-save; unreported counts are null. Nested usage and dollar spend are excluded.
---system replaces only the built-in base prompt for this request; tool, skill, project, and runtime context still apply.
+--system replaces only the built-in base prompt for this request; use --no-context to omit workspace instructions.
+--tools accepts an exact JSON array of registered native tool names, including [] for no tools. Other tools are rejected at dispatch. Skills are loaded only when skill is selected, and ambient MCP is disabled.
 With --prompt-permissions, JSON and quiet requests may prompt on stderr only when stdin is a TTY.
 `;
 
@@ -4930,7 +4934,7 @@ describe("cli: error handling", () => {
             "fx ask: --no-save cannot be used with --resume or --resume-id",
           );
           expect(rejected.stderr).toContain(
-            "usage: fx ask [--auto|--full-access] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save]",
+            "usage: fx ask [--auto|--full-access] [--image PATH] [--system TEXT] [--tools JSON] [--no-context] [--json] [--evidence] [--quiet] [--prompt-permissions] [--no-save]",
           );
         }
         expect(gateway.requests).toHaveLength(0);

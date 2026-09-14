@@ -428,7 +428,12 @@ pub const LabelArgKind = enum {
 pub const PermissionTargetKind = core_permissions.PermissionTargetKind;
 
 pub const ExecutorKind = enum {
-    discover_markets,
+    agentkey_discover,
+    agentkey_describe,
+    agentkey_execute,
+    agentkey_request,
+    read_reference,
+    get_markets,
     get_market_candles,
     compare_trade_routes,
     search_tokens,
@@ -487,6 +492,8 @@ pub const Tool = struct {
     description: []const u8,
     model_schema: model_tool_schema.FunctionSchema,
     model_visible: bool = true,
+    /// Optional code projection after the JSON caller has retained the original.
+    retained_result_view: ?*const fn (std.mem.Allocator, []const u8) anyerror!?[]u8 = null,
     write_provider_advertisement_fn: ?WriteProviderAdvertisementFn = null,
     /// Set when the provider runs the tool instead of fx dispatch. Such a tool
     /// never reaches a call-time permission check, so advertisement is its only
