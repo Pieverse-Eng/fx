@@ -1066,7 +1066,7 @@ pub const agentkey_request = ToolSpec{
 pub const read_reference = ToolSpec{
     .name = "read_reference",
     .description = "Load one host-approved knowledge reference or explicitly shared evidence artifact by id. Access is limited to this request's supplied reference catalog; no arbitrary paths or directory reads. Expired artifacts are unavailable. Knowledge explains interpretation, never supplies live values or execution authorization.",
-    .model_schema = .{ .name = "read_reference", .description = "Read one approved reference id from the caller's catalog.", .input_schema = .{
+    .model_schema = .{ .name = "read_reference", .description = "Load one host-approved knowledge reference or explicitly shared evidence artifact by id. Access is limited to this request's supplied reference catalog; no arbitrary paths or directory reads. Expired artifacts are unavailable. Knowledge explains interpretation, never supplies live values or execution authorization.", .input_schema = .{
         .properties = &.{.{ .name = "id", .json_type = .string }},
         .required = &.{"id"},
         .additional_properties = false,
@@ -1216,7 +1216,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "17d4ecfe4fbd8a98fca904cf62d13ce9be7c3b7c67fcd6dea59e5eca05f8bc94",
+        "ecbcef9b5c03c9dfdf996a131415ecf1f4f9ca93c26d1cb8301234b4858cf0c2",
         &actual_hex,
     );
 }
@@ -1276,6 +1276,11 @@ test "built-in tools register exact active local order" {
         "get_market_candles",
         "compare_trade_routes",
         "search_tokens",
+        "agentkey_discover",
+        "agentkey_describe",
+        "agentkey_execute",
+        "agentkey_request",
+        "read_reference",
     };
 
     try std.testing.expectEqual(expected_names.len, all.len);
