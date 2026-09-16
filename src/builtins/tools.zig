@@ -936,7 +936,7 @@ pub const search_tokens = ToolSpec{
         .input_schema = .{
             .properties = &.{
                 .{ .name = "query", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 256 }, .description = "Token name, ticker, or contract address, e.g. cashcat." },
-                .{ .name = "chain", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Optional Bitget Wallet chain code, e.g. bnb, sol, or robinhood. Omit to search all chains." },
+                .{ .name = "chain", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = 32 }, .description = "Optional Bitget Wallet chain code, e.g. bnb, sol, robinhood, or arc. For Arc Mainnet (chain ID 5042), use arc, not the numeric chain ID. Omit to search all chains." },
                 .{ .name = "limit", .json_type = .integer, .bounds = &.{ .minimum = 1, .maximum = 20 }, .description = "Maximum results (1–20). Omit by default; the tool returns the first result. Set only when additional candidates are needed." },
             },
             .required = &.{"query"},
