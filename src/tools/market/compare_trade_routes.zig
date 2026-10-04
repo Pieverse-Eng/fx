@@ -73,10 +73,10 @@ pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.
     program.writer.writeAll(script) catch return error.OutOfMemory;
     var cmd: std.Io.Writer.Allocating = .init(ctx.allocator);
     defer cmd.deinit();
-    public_command.prefix(ctx.allocator, &cmd.writer, ctx.workspace_root) catch return error.OutOfMemory;
-    public_command.writeQuoted(&cmd.writer, program.written()) catch return error.OutOfMemory;
-    cmd.writer.print(" compare-trade-routes {s} --product {s}", .{ a.get("ticker").?.string, if (std.mem.eql(u8, a.get("product").?.string, "perp")) "perpetual" else "spot" }) catch return error.OutOfMemory;
+    public_command.prefixStdin(ctx.allocator, &cmd.writer, ctx.workspace_root) catch return error.OutOfMemory;
+    cmd.writer.print(" {s} --product {s}", .{ a.get("ticker").?.string, if (std.mem.eql(u8, a.get("product").?.string, "perp")) "perpetual" else "spot" }) catch return error.OutOfMemory;
     if (a.get("quote")) |q| cmd.writer.print(" --quote {s}", .{q.string}) catch return error.OutOfMemory;
+    public_command.stdinProgram(&cmd.writer, program.written()) catch return error.OutOfMemory;
     return public_command.execute(ctx, cmd.written(), .comparison);
 }
 pub fn readsOnly(_: dispatch.ToolInput) bool {
