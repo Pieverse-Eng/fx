@@ -61,7 +61,7 @@ platform_match() (
     native_symbol=$(jq -r .nativeSymbol <<<"$candidate")
     # Gate's formatter consumes the latest currency restriction evidence.
     [[ $fn != gate || -f $scratch/stock-$native_ticker.json ]] || echo '[]' >"$scratch/stock-$native_ticker.json"
-    ticker=$native_ticker
+    ticker=${native_ticker^^}
     "match_$fn" >"$scratch/native-match.json"
     ticker=$target
     jq --arg venue "$venue" --argjson candidate "$candidate" '

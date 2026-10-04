@@ -46,6 +46,12 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             args["product"] = "perp"
         if kind == "invalid":
             args["venues"] = ["binance"]
+        original_stock_page = None
+        if kind == "platform_stock":
+            stock_page = fixtures / "platform-bitget-first.json"
+            original_stock_page = stock_page.read_text()
+            stock_page.write_text((fixtures / "platform-bitget-stock.json").read_text())
+            args = {"tickers": ["CRCL"], "product": "spot", "quote": "USDT"}
         if kind == "aliases":
             args = ({"ticker": "SKHYNIX", "product": "perp", "direction": "long", "amount": "1000"}
                     if tool_name == "compare_trade_routes" else {"tickers": ["SKHYNIX", "SAMSUNG"]})
@@ -106,7 +112,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         env = {"PATH": str(fixtures) + os.pathsep + os.environ["PATH"], "HOME": str(home), "FIXTURE_DIR": str(fixtures), "LANG": "C.UTF-8", "FX_PROVIDER": "pieverse", "FX_PIEVERSE_API_KEY": "local-fixture", "FX_MODEL": "pieverse/test/model", "FX_DISABLE_KEYCHAIN": "1", "FX_SKIP_ONBOARDING": "1", "FX_PIEVERSE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1"}
-        if kind == "platform":
+        if kind in ("platform", "platform_stock"):
             env["FX_MARKET_CATALOG_URL"]="https://catalog.test/v1/market-catalog"
         if kind == "evm":
             env.update(FX_PLATFORM_UNISWAP_QUOTE_URL="http://fixture/wallet/uniswap/quote", FX_PLATFORM_QUOTE_TOKEN="fixture")
@@ -127,7 +133,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             if kind in ("invalid", "invalid_quote", "denied"):
                 assert not calls, calls
             else:
-                if tool_name == "discover_markets" and not multiple and kind != "platform":
+                if tool_name == "discover_markets" and not multiple and kind not in ("platform", "platform_stock"):
                     # CRCL needs one extra Gate stock metadata query.
                     expected_calls = 19 if kind in ("aliases", "orderly") else 20
                     catalogs = [call for call in calls if not call.startswith("route-")]
@@ -164,7 +170,10 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert len(output["output"]) < 100
                 if tool_name != "compare_trade_routes":
                     assert [entry["ticker"] for entry in payload["results"]] == args["tickers"]
-                if kind == "platform":
+                if kind == "platform_stock":
+                    assert payload.get("errors", []) == [], payload
+                    assert [(m["venue"], m["symbol"]) for m in payload["results"][0]["markets"]] == [("bitget", "RCRCLUSDT")], payload
+                elif kind == "platform":
                     assert payload.get("errors",[]) == [], payload
                     assert "platform-binance-second" in calls, calls
                     if tool_name == "discover_markets":
@@ -298,6 +307,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             server.server_close()
             thread.join()
             marker.unlink(missing_ok=True)
+            if original_stock_page is not None:
+                stock_page.write_text(original_stock_page)
 
 
 for case in ("success", "partial", "invalid", "denied"):
@@ -366,3 +377,5 @@ exercise("onchain", "discover_markets")
 
 for tool_name in ("discover_markets","get_market_candles","compare_trade_routes"):
     exercise("platform",tool_name)
+
+exercise("platform_stock")
