@@ -47,4 +47,9 @@ issuer_discover() (
     chain_failure bnb bstocks 'Issuer asset catalog unavailable' >>"$dir/coverage.jsonl"
   fi
   jq -s . "$dir/coverage.jsonl" >"$dir/errors.json"
+  if [[ -n ${FX_MARKET_CATALOG_URL:-} ]];then
+    for issuer in bstocks xstocks robinhood;do
+      platform_authorize_issuer "$issuer" "$dir/deployments.json" "$dir/errors.json" "$dir/platform-$issuer.json" "$ticker"
+    done
+  fi
 )

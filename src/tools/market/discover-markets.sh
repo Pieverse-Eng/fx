@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Public market discovery. Bash 4+, jq, GNU timeout, and the selected venue CLIs.
+if [[ -n ${FX_MARKET_CATALOG_URL:-} ]] && ! declare -F platform_fetch >/dev/null;then
+  source "$(dirname "${BASH_SOURCE[0]}")/platform-catalog.sh"
+fi
 set -euo pipefail
 usage() {
   echo 'Usage: discover-markets.sh TICKER [TICKER ...] [--product spot|perpetual|all] [--quote CURRENCY|ALL]' >&2
@@ -485,9 +488,15 @@ run_venue() {
   if ! command -v "$cli" >/dev/null || { [[ $venue == hyperliquid ]] && ! command -v curl >/dev/null; }; then
     echo 'Required venue CLI is unavailable; coverage unresolved' >"$scratch/dependency.error"
   else
-    "fetch_$fn"
+    catalog_ready=1
+    if [[ -n ${FX_MARKET_CATALOG_URL:-} ]] && ! platform_fetch;then catalog_ready=0;fi
+    # Native observations supply live status, precision and pricing inputs only.
+    # Platform facts are the exclusive candidate and economic identity authority.
+    if (( catalog_ready ));then "fetch_$fn";fi
     for ticker in "${tickers[@]}"; do
-      "match_$fn" >"$scratch/match-$ticker.json"
+      if (( ! catalog_ready ));then echo '{"markets":[],"errors":[]}' >"$scratch/match-$ticker.json"
+      elif [[ -n ${FX_MARKET_CATALOG_URL:-} ]];then platform_match >"$scratch/match-$ticker.json"
+      else "match_$fn" >"$scratch/match-$ticker.json";fi
       jq -c --arg ticker "$ticker" '
         if type=="array" then {ticker:$ticker,markets:.,errors:[]} else {ticker:$ticker,markets,errors:(.errors//[])} end
       ' "$scratch/match-$ticker.json" >>"$scratch/matches.jsonl"

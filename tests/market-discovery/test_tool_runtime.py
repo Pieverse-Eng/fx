@@ -42,6 +42,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                 args["currency"] = "USDC"
             if kind == "invalid_quote":
                 args["quote"] = "USDT;echo bad"
+        if kind == "platform" and tool_name == "discover_markets":
+            args["product"] = "perp"
         if kind == "invalid":
             args["venues"] = ["binance"]
         if kind == "aliases":
@@ -104,6 +106,8 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         env = {"PATH": str(fixtures) + os.pathsep + os.environ["PATH"], "HOME": str(home), "FIXTURE_DIR": str(fixtures), "LANG": "C.UTF-8", "FX_PROVIDER": "pieverse", "FX_PIEVERSE_API_KEY": "local-fixture", "FX_MODEL": "pieverse/test/model", "FX_DISABLE_KEYCHAIN": "1", "FX_SKIP_ONBOARDING": "1", "FX_PIEVERSE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1"}
+        if kind == "platform":
+            env["FX_MARKET_CATALOG_URL"]="https://catalog.test/v1/market-catalog"
         if kind == "evm":
             env.update(FX_PLATFORM_UNISWAP_QUOTE_URL="http://fixture/wallet/uniswap/quote", FX_PLATFORM_QUOTE_TOKEN="fixture")
         try:
@@ -123,7 +127,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             if kind in ("invalid", "invalid_quote", "denied"):
                 assert not calls, calls
             else:
-                if tool_name == "discover_markets" and not multiple:
+                if tool_name == "discover_markets" and not multiple and kind != "platform":
                     # CRCL needs one extra Gate stock metadata query.
                     expected_calls = 19 if kind in ("aliases", "orderly") else 20
                     catalogs = [call for call in calls if not call.startswith("route-")]
@@ -160,7 +164,17 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert len(output["output"]) < 100
                 if tool_name != "compare_trade_routes":
                     assert [entry["ticker"] for entry in payload["results"]] == args["tickers"]
-                if kind == "orderly":
+                if kind == "platform":
+                    assert payload.get("errors",[]) == [], payload
+                    assert "platform-binance-second" in calls, calls
+                    if tool_name == "discover_markets":
+                        assert [[(m["venue"],m["symbol"]) for m in row["markets"]] for row in payload["results"]]==[[('binance','BTCUSDT')],[('binance','CRCLUSDT')]],payload
+                    elif tool_name == "get_market_candles":
+                        assert all(row["lastTrade"]["price"]==102 for row in payload["results"]),payload
+                    else:
+                        assert payload["bestRoute"]["venue"]=="binance",payload
+                        assert {m["venue"] for m in payload["markets"]}=={"binance"},payload
+                elif kind == "orderly":
                     assert payload["errors"] == [], payload
                     expected = ["PERP_ETH_USDC", "PERP_HOOD_USDC_mythos", "PERP_MSTR_USDC_mythos", "PERP_XAU_USDC", "PERP_1000BONK_USDC"]
                     for row, symbol in zip(payload["results"], expected):
@@ -349,3 +363,6 @@ kraken_prices["USDGUSD"] = {"a": ["1.002"], "b": ["1"], "v": ["1", "10"]}
 (fixtures / "stats-kraken.json").write_text(json.dumps(kraken_prices))
 exercise("evm", "compare_trade_routes")
 exercise("onchain", "discover_markets")
+
+for tool_name in ("discover_markets","get_market_candles","compare_trade_routes"):
+    exercise("platform",tool_name)
