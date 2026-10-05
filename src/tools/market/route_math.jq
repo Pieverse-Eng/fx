@@ -38,7 +38,8 @@ def round_down($x;$step):
       (if (($lots-$nearest)|fabs)<=$tolerance then $nearest else ($lots|floor) end)*$step
     end
   else $x end;
-def route_identity: {id,venue,symbol,product,quote,quotedAt} + (.routing // {});
+def route_identity: {id,venue,symbol,product,quote,quotedAt} + (.routing // {}) +
+  (if ._catalog!=null then {_catalog} else {} end);
 def comparison_route_identity:
   if .chain!=null then {issuer,chain,symbol,contract}
   else {venue,symbol,product,category,assetId,pairId,dex,marketId,assetClass,settlementAsset} + (if .contractType=="inverse" then {contractType} else {} end)

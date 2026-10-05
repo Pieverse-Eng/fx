@@ -9,6 +9,10 @@ on:
         description: Build all platforms and compare arm64 signing pages without publishing
         type: boolean
         default: false
+      publish_fork:
+        description: Explicitly publish this fork to its own GitHub Releases, without the upstream CDN
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,7 +23,7 @@ concurrency:
 
 jobs:
   check-version:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.repository == 'vercel-labs/fx' || (github.event_name == 'workflow_dispatch' && (inputs.validate_only || inputs.publish_fork)))
     runs-on: ubuntu-latest
     outputs:
       needed: ${{ steps.check.outputs.needed }}
@@ -286,6 +290,7 @@ jobs:
             fx-*.tar.gz.sha256
 
       - name: Publish to CDN
+        if: github.repository == 'vercel-labs/fx'
         env:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
           VERSION: ${{ needs.check-version.outputs.version }}

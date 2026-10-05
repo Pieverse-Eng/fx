@@ -9,6 +9,16 @@ cat >"$fixture_dir/cli" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${0##*/}:$*" in
+ curl:*catalog.test/v1/market-catalog/*)
+   venue=issuer;owner='';page=first
+   for arg in "$@";do
+     if [[ $arg == https://catalog.test/v1/market-catalog/venues/* ]];then
+       owner=${arg#*/venues/};owner=${owner%%/*};[[ $arg != *cursor=* ]] || page=second
+     elif [[ $arg == https://catalog.test/v1/market-catalog/issuers/* ]];then
+       owner=${arg#*/issuers/};owner=${owner%%/*}
+     fi
+   done
+   key="platform-$owner-$page";;
  purr:'pancake swap'*)
    [[ $* != *--execute* ]] || exit 99
    shift 2
@@ -266,6 +276,21 @@ jq '.symbols += (["SKHYNIX","SAMSUNG","SKHY","SKHYNIX5L"]|map({symbol:(.+"USDT")
  [{symbol:"SKHXUSDT",baseAsset:"SKHX",quoteAsset:"USDT",marginAsset:"USDT",status:"PENDING_TRADING",contractType:""}]' "$fixture_dir/aster.json" >"$fixture_dir/aliases.tmp"
 mv "$fixture_dir/aliases.tmp" "$fixture_dir/aster.json"
 echo '{"code":200,"asks":[{"price":"100","remaining_base_amount":"20"}],"bids":[{"price":"99","remaining_base_amount":"20"}]}' >"$fixture_dir/route-lighter-book.json"
+
+for owner in aster binance bitget gate hyperliquid kraken lighter okx orderly bstocks xstocks robinhood;do
+  jq -n '{schemaVersion:1,revision:"v1",total:0,nextCursor:null,items:[]}' >"$fixture_dir/platform-$owner-first.json"
+done
+jq -n '{schemaVersion:1,revision:"v1",total:2,nextCursor:"page-2",items:[{id:"btc",venue:"binance",product:"perp",nativeSymbol:"BTCUSDT",base:"BTC",quote:"USDT",aliases:["BTC"],binding:{nativeId:"BTCUSDT"},baseRepresentation:{verification:"verified",asset:{aliases:["BTC"]}}}]}' >"$fixture_dir/platform-binance-first.json"
+jq -n '{schemaVersion:1,revision:"v1",total:2,nextCursor:null,items:[{id:"crcl",venue:"binance",product:"perp",nativeSymbol:"CRCLUSDT",base:"CRCL",quote:"USDT",aliases:["CRCL"],binding:{nativeId:"CRCLUSDT"},baseRepresentation:{verification:"unverified",asset:null}}]}' >"$fixture_dir/platform-binance-second.json"
+jq -n '{schemaVersion:1,revision:"v1",total:1,nextCursor:null,items:[{id:"bitget-crcl",venue:"bitget",product:"spot",nativeSymbol:"RCRCLUSDT",base:"rCRCL",quote:"USDT",aliases:["CRCL","rCRCL"],binding:{nativeId:"RCRCLUSDT"},baseRepresentation:{verification:"verified",asset:{aliases:["CRCL"]}}}]}' >"$fixture_dir/platform-bitget-stock.json"
+for file in "$fixture_dir/platform-binance-first.json" "$fixture_dir/platform-binance-second.json" "$fixture_dir/platform-bitget-stock.json";do
+  jq '.items|=map(.environment="mainnet" | .status="active" | .exposureMultiplier=1 |
+    .binding.instrumentId=(.venue+":"+.product+":"+.binding.nativeId) |
+    (if .venue=="bitget" then .binding.category="SPOT" else . end) |
+    .baseRepresentation+={id:("rep:"+.base),symbol:.base,aliases:[.base],listed:true,unitsPerToken:1,chain:null,contract:null,issuer:null,evidence:{}} |
+    (if .baseRepresentation.asset!=null then .baseRepresentation.asset+={id:("crypto:"+.base),symbol:.base} else . end))' "$file" >"$fixture_dir/platform-full.json"
+  mv "$fixture_dir/platform-full.json" "$file"
+done
 if [[ $# == 1 ]]; then
   echo '{"lastFundingRate":"0.0001","markPrice":"100","nextFundingTime":1789056000000}' >"$fixture_dir/snapshot-premium.json"
   echo '[{"symbol":"BTCUSDT","fundingIntervalHours":4}]' >"$fixture_dir/snapshot-interval.json"

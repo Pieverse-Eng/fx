@@ -635,7 +635,16 @@ pub fn executeCommandInEnvironment(
     var effective_cfg = cfg;
     if (effective_cfg.timeout_started_ms == null) effective_cfg.timeout_started_ms = io_mod.milliTimestamp();
     try ExecutionControl.init(effective_cfg).check();
-    const invocation = try shell_resolver.capturedInvocation(scratch, environment, command);
+    // A clean shell still receives -c as argv. Linux bounds each argument
+    // to 128 KiB, so transport oversized trusted programs over the same
+    // bounded stdin/process-group path as legacy execution. Startup and
+    // stdin EOF semantics remain clean; user profiles retain their contract.
+    const stream_script = builtin.os.tag == .linux and environment == .clean and command.len >= 120 * 1024;
+    const invocation = try shell_resolver.capturedInvocation(scratch, environment, if (stream_script) script_from_stdin_launcher else command);
+    if (stream_script) {
+        const result = try executeProcessWithScript(scratch, effective_cfg, invocation.argv(), cwd, command);
+        return formatCollectedOutput(arena, command, cwd, result);
+    }
     debug_trace.logf(
         "core",
         "command runner explicit environment={s} shell={s}",
@@ -1671,6 +1680,18 @@ test "explicit captured profiles execute exact shells without synthetic stderr" 
             zsh_user.output,
         );
     } else |_| {}
+}
+
+test "oversized clean commands preserve output and closed stdin on native hosts" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+    const padding = try alloc.alloc(u8, 140 * 1024);
+    @memset(padding, 'x');
+    const command = try std.fmt.allocPrint(alloc, "# {s}\nprintf oversized; cat; printf eof", .{padding});
+    const result = try executeCommandInEnvironment(.{ .max_command_output_bytes = 1024 }, alloc, command, "/tmp", .{ .clean = "/bin/bash" });
+    try std.testing.expectEqualStrings("exit_code=0\n<stdout>\noversizedeof\n</stdout>\n", result.output);
 }
 
 test "zsh user profile reports natural SIGTERM after alias-safe startup" {

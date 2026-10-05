@@ -1,7 +1,7 @@
 const std = @import("std");
 const dispatch = @import("../../core/tooling/tool_dispatch.zig");
 const public_command = @import("public_market_command.zig");
-const script = "snapshot_math=$(cat <<'FX_SNAPSHOT_MATH'\n" ++ @embedFile("snapshot_math.jq") ++ "\nFX_SNAPSHOT_MATH\n)\n" ++ "route_math=$(cat <<'FX_ROUTE_MATH'\n" ++ @embedFile("route_math.jq") ++ "\nFX_ROUTE_MATH\n)\n" ++ @embedFile("get-market-candles.sh") ++ "\n" ++ @embedFile("issuer-discovery.sh") ++ "\n" ++ @embedFile("onchain-routes.sh") ++ "\n" ++ @embedFile("market-snapshots.sh") ++ "\n" ++ @embedFile("compare-trade-routes.sh") ++ "\nFX_MARKET_MODE=routes\n" ++ @embedFile("discover-markets.sh");
+const script = @embedFile("platform-catalog.sh") ++ "\n" ++ "snapshot_math=$(cat <<'FX_SNAPSHOT_MATH'\n" ++ @embedFile("snapshot_math.jq") ++ "\nFX_SNAPSHOT_MATH\n)\n" ++ "route_math=$(cat <<'FX_ROUTE_MATH'\n" ++ @embedFile("route_math.jq") ++ "\nFX_ROUTE_MATH\n)\n" ++ @embedFile("get-market-candles.sh") ++ "\n" ++ @embedFile("issuer-discovery.sh") ++ "\n" ++ @embedFile("onchain-routes.sh") ++ "\n" ++ @embedFile("market-snapshots.sh") ++ "\n" ++ @embedFile("compare-trade-routes.sh") ++ "\nFX_MARKET_MODE=routes\n" ++ @embedFile("discover-markets.sh");
 const Input = struct {
     parsed: std.json.Parsed(std.json.Value),
     fn deinit(ptr: *anyopaque, alloc: std.mem.Allocator) void {
@@ -73,10 +73,10 @@ pub fn call(ctx: dispatch.DispatchContext, erased: dispatch.ToolInput) dispatch.
     program.writer.writeAll(script) catch return error.OutOfMemory;
     var cmd: std.Io.Writer.Allocating = .init(ctx.allocator);
     defer cmd.deinit();
-    public_command.prefix(ctx.allocator, &cmd.writer, ctx.workspace_root) catch return error.OutOfMemory;
-    public_command.writeQuoted(&cmd.writer, program.written()) catch return error.OutOfMemory;
-    cmd.writer.print(" compare-trade-routes {s} --product {s}", .{ a.get("ticker").?.string, if (std.mem.eql(u8, a.get("product").?.string, "perp")) "perpetual" else "spot" }) catch return error.OutOfMemory;
+    public_command.prefixStdin(ctx.allocator, &cmd.writer, ctx.workspace_root) catch return error.OutOfMemory;
+    cmd.writer.print(" {s} --product {s}", .{ a.get("ticker").?.string, if (std.mem.eql(u8, a.get("product").?.string, "perp")) "perpetual" else "spot" }) catch return error.OutOfMemory;
     if (a.get("quote")) |q| cmd.writer.print(" --quote {s}", .{q.string}) catch return error.OutOfMemory;
+    public_command.stdinProgram(&cmd.writer, program.written()) catch return error.OutOfMemory;
     return public_command.execute(ctx, cmd.written(), .comparison);
 }
 pub fn readsOnly(_: dispatch.ToolInput) bool {

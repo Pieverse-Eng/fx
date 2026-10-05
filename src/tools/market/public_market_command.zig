@@ -14,13 +14,30 @@ pub fn writeQuoted(writer: *std.Io.Writer, value: []const u8) !void {
     try writer.writeByte('\'');
 }
 
-pub fn prefix(alloc: std.mem.Allocator, writer: *std.Io.Writer, workspace: []const u8) !void {
+fn cachePrefix(alloc: std.mem.Allocator, writer: *std.Io.Writer, workspace: []const u8) !void {
     try writer.writeAll("FX_MARKET_CACHE_DIR=");
     var path: std.Io.Writer.Allocating = .init(alloc);
     defer path.deinit();
     try path.writer.print("{s}/.fx/market-cache/v1", .{workspace});
     try writeQuoted(writer, path.written());
+}
+
+pub fn prefix(alloc: std.mem.Allocator, writer: *std.Io.Writer, workspace: []const u8) !void {
+    try cachePrefix(alloc, writer, workspace);
     try writer.writeAll(" exec bash --noprofile --norc -c ");
+}
+
+// Linux limits an individual argv string to 128 KiB. The routing program
+// exceeds that bound; keep it on the existing command runner's stdin transport.
+pub fn prefixStdin(alloc: std.mem.Allocator, writer: *std.Io.Writer, workspace: []const u8) !void {
+    try cachePrefix(alloc, writer, workspace);
+    try writer.writeAll(" exec bash --noprofile --norc /dev/stdin");
+}
+
+pub fn stdinProgram(writer: *std.Io.Writer, program: []const u8) !void {
+    try writer.writeAll(" <<'FX_PUBLIC_MARKET_PROGRAM'\n");
+    try writer.writeAll(program);
+    try writer.writeAll("\nFX_PUBLIC_MARKET_PROGRAM\n");
 }
 
 const Capture = struct {

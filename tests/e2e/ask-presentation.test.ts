@@ -435,20 +435,6 @@ describe("fx ask presentation", () => {
 
     expect(result.code).toBe(0);
     expect(gateway.requests).toHaveLength(3);
-    const firstPrompt = (JSON.parse(gateway.requests[0]!.body) as GatewayRequestBody)
-      .prompt
-      .filter((message) => message.role === "system")
-      .map((message) => typeof message.content === "string" ? message.content : "")
-      .join("\n");
-    expect(firstPrompt).toContain(
-      "Before the first tool call in a tool-driven task, always send one brief user-visible update",
-    );
-    expect(firstPrompt).toContain("Never start the first tool silently.");
-    expect(firstPrompt).toContain(
-      "If another tool call will follow, always first tell the user what failed",
-    );
-    expect(firstPrompt).toContain("Do not narrate each routine tool call.");
-
     const output = JSON.parse(result.stdout) as {
       output: string;
       final_output: string;

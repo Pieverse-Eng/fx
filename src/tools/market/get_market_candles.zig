@@ -1,7 +1,7 @@
 const std = @import("std");
 const dispatch = @import("../../core/tooling/tool_dispatch.zig");
 const public_command = @import("public_market_command.zig");
-const script = @embedFile("get-market-candles.sh") ++ "\nFX_MARKET_MODE=candles\n" ++ @embedFile("discover-markets.sh");
+const script = @embedFile("platform-catalog.sh") ++ "\n" ++ @embedFile("get-market-candles.sh") ++ "\nFX_MARKET_MODE=candles\n" ++ @embedFile("discover-markets.sh");
 
 const Input = struct {
     parsed: std.json.Parsed(std.json.Value),
