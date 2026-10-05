@@ -185,7 +185,7 @@ route_book() (
       {asks:[$native.asks[]|[.price,.quantity]],bids:[$native.bids[]|[.price,.quantity]]} as $d |
       depth($d.asks;1;$exp;$rate;false) as $asks | depth($d.bids;1;$exp;$rate;true) as $bids |
       select(($asks|length)>0 and ($bids|length)>0 and $asks[0].price >= $bids[0].price) |
-      {id:($m.venue+":"+$m.symbol+":"+$m.product),venue:$m.venue,symbol:$m.symbol,product:$input.product,
+      {id:($m.venue+":"+$m.symbol+":"+$m.product),venue:$m.venue,symbol:$m.symbol,product:$input.product,_catalog:$m._catalog,
        quote:$quote,quotedAt:$now,fee:$fee,extraFee:$extra,feeAsset:$feeAsset,feeSource:$feeSource,
        step:($step*$exp),minQuantity:($minq*$exp),minValue:($minv*$rate),asks:$asks,bids:$bids,
        routing:($m|{category,assetId,pairId,dex,marketId,assetClass,settlementAsset}|with_entries(select(.value!=null)))} |
@@ -252,20 +252,24 @@ run_routes() {
       echo '{"routes":[],"errors":[{"query":"onchain","message":"Issuer/quote worker failed; coverage unresolved"}]}' >"$scratch_root/routes/onchain.json"
     else echo '{"routes":[],"errors":[]}' >"$scratch_root/routes/onchain.json"; fi
   fi
-  jq -n --argjson input "$route_input" --slurpfile c "$scratch_root/routes/books.json" --slurpfile chains "$scratch_root/routes/onchain.json" \
+  jq -n --argjson input "$route_input" --argjson shared "$(if [[ -n ${FX_MARKET_CATALOG_URL:-} ]];then echo true;else echo false;fi)" --slurpfile c "$scratch_root/routes/books.json" --slurpfile chains "$scratch_root/routes/onchain.json" \
     --slurpfile snapshots "$scratch_root/routes/snapshots.json" --slurpfile errors "$scratch_root/routes/errors.json" --slurpfile coverage <(jq -s '[.[]|.venue as $v|.errors[]|.+{venue:$v}]' "$@") "$route_math"'
     ($input.amount|tonumber) as $amount |
     [$c[0][]|. as $candidate | try
        (if $input.product=="spot" then spot(.;$amount) else perpetual_notional(.;$amount;$input.direction) end)
        catch {error:{venue:$candidate.venue,symbol:$candidate.symbol,message:.}}] as $computed |
-    ([$computed[]|select(.error==null)] + $chains[0].routes | sort_by(.effectivePrice) |
+    ([$computed[]|select(.error==null)] + $chains[0].routes) as $all |
+    (if $shared and (any($all[]; ._catalog.assetId==null) or ([$all[]._catalog.assetId]|unique|length)>1)
+      then [{query:"identity",message:"Economic asset identity is ambiguous; comparison unresolved"}] else [] end) as $identityGaps |
+    (if ($identityGaps|length)>0 then [] else $all end | sort_by(.effectivePrice) |
       if $input.direction=="short" then reverse else . end) as $routes |
-    comparison_result($routes; $coverage[0]+$errors[0]+[$computed[]|select(.error!=null)|.error]+$chains[0].errors) +
+    comparison_result($routes; $identityGaps+$coverage[0]+$errors[0]+[$computed[]|select(.error!=null)|.error]+$chains[0].errors) +
     {markets:[$snapshots[0][]|. as $s |
       ([$routes[]|select(.venue==$s.venue and .symbol==$s.symbol)][0]//null) as $r |
       . + {entryEstimate:(if $r==null then {status:"unavailable",reasons:[$errors[0][], $computed[]|(.error//.)|select(.venue==$s.venue and .symbol==$s.symbol)|.message]} else
         {status:"available",referenceCurrency:($input.currency//"USDT"),requestedNotional:$amount,direction:($input.direction//"buy"),
          quantityUnit:"underlying",underlying:$s.underlying,exposureMultiplier:$s.exposureMultiplier,priceUnit:"reference_currency_per_underlying",
          quantity:$r.expectedQuantity,estimatedFillPrice:$r.estimatedFillPrice,depthSlippageBps:$r.depthSlippageBps,
-         spreadCostBps:$r.spreadCostBps,fees:$r.fees,feeSource:$r.feeSource,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} + (if $r.contracts!=null then {contracts:$r.contracts,settlementAsset:$r.settlementAsset,settlementFee:$r.settlementFee} else {} end) end)}]}'
+         spreadCostBps:$r.spreadCostBps,fees:$r.fees,feeSource:$r.feeSource,effectivePrice:$r.effectivePrice,quotedAt:$r.quotedAt} + (if $r.contracts!=null then {contracts:$r.contracts,settlementAsset:$r.settlementAsset,settlementFee:$r.settlementFee} else {} end) end)}]} |
+      walk(if type=="object" then del(._catalog) else . end)'
 }

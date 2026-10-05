@@ -465,6 +465,9 @@ match_orderly() {
 
 run_venue() {
   venue=$1; scratch="$scratch_root/$venue"; mkdir "$scratch"
+  # Independent issuer discovery can survive a missing Binance venue catalog.
+  # The venue failure remains explicit; empty observations authorize no assets.
+  [[ $venue != binance ]] || seed assets '{"data":[]}'
   pids=()
   trap - EXIT
   trap 'for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; wait || true; exit 130' INT TERM

@@ -47,6 +47,38 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         if kind == "invalid":
             args["venues"] = ["binance"]
         original_stock_page = None
+        original_identity_page = None
+        platform_restore = {}
+        platform_failure = fixtures / "platform-binance-first.fail"
+        def replace_fixture(name, value):
+            path = fixtures / name
+            platform_restore[path] = path.read_text() if path.exists() else None
+            path.write_text(json.dumps(value))
+        if kind == "platform_restricted":
+            page = json.loads((fixtures / "platform-bitget-stock.json").read_text())
+            fact = page["items"][0]
+            fact.update(id="restricted-close", product="perp", nativeSymbol="CLOSEUSDT", base="CLOSE", aliases=["CLOSE"], status="halted")
+            fact["binding"].update(nativeId="CLOSEUSDT", instrumentId="bitget:perp:CLOSEUSDT", category="USDT-FUTURES")
+            fact["baseRepresentation"].update(symbol="CLOSE", aliases=["CLOSE"])
+            replace_fixture("platform-bitget-first.json", page)
+            args = {"tickers": ["CLOSE"], "product": "perp", "quote": "USDT"}
+        if kind == "platform_partial":
+            args = {"tickers": ["CRCL"], "product": "spot", "quote": "USDC"}
+            replace_fixture("route-xstocks-CRCLx.json", {"symbol":"CRCLx", "underlyingSymbol":"CRCL", "isTradingHalted":False,
+                "deployments":[{"network":"Solana", "address":"SolanaStockFixture", "stablecoins":[{"symbol":"USDC", "address":"SolanaUsdcFixture"}]}]})
+            replace_fixture("platform-xstocks-first.json", {"schemaVersion":1,"revision":"v1","total":1,"nextCursor":None,"items":[{
+                "id":"xstocks-crcl", "symbol":"CRCLx", "aliases":["CRCL"], "issuer":"xstocks", "chain":"solana:mainnet", "contract":"SolanaStockFixture",
+                "verification":"verified", "listed":True, "unitsPerToken":1, "asset":{"id":"equity:CRCL", "symbol":"CRCL", "aliases":["CRCL"]}
+            }]})
+            platform_failure.touch()
+        if kind == "platform_ambiguous":
+            identity_page = fixtures / "platform-hyperliquid-first.json"
+            original_identity_page = identity_page.read_text()
+            identity_page.write_text(json.dumps({"schemaVersion":1,"revision":"v1","total":1,"nextCursor":None,"items":[{
+                "id":"hl-btc","venue":"hyperliquid","environment":"mainnet","product":"perp","nativeSymbol":"BTC","base":"BTC","quote":"USDC","status":"active","exposureMultiplier":1,"aliases":["BTC"],
+                "binding":{"nativeId":"BTC","instrumentId":"hyperliquid:perp:BTC","assetId":0},
+                "baseRepresentation":{"id":"rep:other-btc","symbol":"BTC","aliases":["BTC"],"verification":"verified","listed":True,"unitsPerToken":1,"chain":None,"contract":None,"issuer":None,"evidence":{},"asset":{"id":"crypto:other-BTC","symbol":"BTC","aliases":["BTC"]}}
+            }]}))
         if kind == "platform_stock":
             stock_page = fixtures / "platform-bitget-first.json"
             original_stock_page = stock_page.read_text()
@@ -112,7 +144,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         env = {"PATH": str(fixtures) + os.pathsep + os.environ["PATH"], "HOME": str(home), "FIXTURE_DIR": str(fixtures), "LANG": "C.UTF-8", "FX_PROVIDER": "pieverse", "FX_PIEVERSE_API_KEY": "local-fixture", "FX_MODEL": "pieverse/test/model", "FX_DISABLE_KEYCHAIN": "1", "FX_SKIP_ONBOARDING": "1", "FX_PIEVERSE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1"}
-        if kind in ("platform", "platform_stock"):
+        if kind.startswith("platform"):
             env["FX_MARKET_CATALOG_URL"]="https://catalog.test/v1/market-catalog"
         if kind == "evm":
             env.update(FX_PLATFORM_UNISWAP_QUOTE_URL="http://fixture/wallet/uniswap/quote", FX_PLATFORM_QUOTE_TOKEN="fixture")
@@ -133,7 +165,7 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             if kind in ("invalid", "invalid_quote", "denied"):
                 assert not calls, calls
             else:
-                if tool_name == "discover_markets" and not multiple and kind not in ("platform", "platform_stock"):
+                if tool_name == "discover_markets" and not multiple and not kind.startswith("platform"):
                     # CRCL needs one extra Gate stock metadata query.
                     expected_calls = 19 if kind in ("aliases", "orderly") else 20
                     catalogs = [call for call in calls if not call.startswith("route-")]
@@ -170,7 +202,18 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
                     assert len(output["output"]) < 100
                 if tool_name != "compare_trade_routes":
                     assert [entry["ticker"] for entry in payload["results"]] == args["tickers"]
-                if kind == "platform_stock":
+                if kind == "platform_restricted":
+                    assert payload["errors"] == [], payload
+                    assert len(payload["results"][0]["markets"]) == 1, payload
+                    assert payload["results"][0]["markets"][0]["restrictions"] == ["Opening restricted"], payload
+                elif kind == "platform_partial":
+                    assert any(m.get("issuer") == "xstocks" and m.get("chain") == "solana" for m in payload["results"][0]["markets"]), payload
+                    assert any(e.get("venue") == "binance" and "catalog unavailable" in e.get("message", "").lower() for e in payload["errors"]), payload
+                    assert not any("Issuer discovery failed" in e.get("message", "") for e in payload["errors"]), payload
+                elif kind == "platform_ambiguous":
+                    assert payload["bestRoute"] is None and payload["rankedRoutes"] == [], payload
+                    assert any("Economic asset identity is ambiguous" in gap for gap in payload["gaps"]), payload
+                elif kind == "platform_stock":
                     assert payload.get("errors", []) == [], payload
                     assert [(m["venue"], m["symbol"]) for m in payload["results"][0]["markets"]] == [("bitget", "RCRCLUSDT")], payload
                 elif kind == "platform":
@@ -309,6 +352,14 @@ def exercise(kind, tool_name="discover_markets", references=False, multiple=Fals
             marker.unlink(missing_ok=True)
             if original_stock_page is not None:
                 stock_page.write_text(original_stock_page)
+            if original_identity_page is not None:
+                identity_page.write_text(original_identity_page)
+            platform_failure.unlink(missing_ok=True)
+            for path, previous in platform_restore.items():
+                if previous is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_text(previous)
 
 
 for case in ("success", "partial", "invalid", "denied"):
@@ -379,3 +430,6 @@ for tool_name in ("discover_markets","get_market_candles","compare_trade_routes"
     exercise("platform",tool_name)
 
 exercise("platform_stock")
+exercise("platform_ambiguous", "compare_trade_routes")
+exercise("platform_restricted")
+exercise("platform_partial")

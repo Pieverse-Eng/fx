@@ -52,6 +52,7 @@ jobs:
         run: |
           bash tests/market-discovery/test_discover_markets.sh
           bash tests/market-discovery/test_platform_catalog.sh
+          bash tests/market-discovery/test_platform_boundaries.sh
           bash tests/market-discovery/test_candles.sh
           bash tests/market-discovery/test_routes.sh
 

@@ -57,7 +57,7 @@ quote_evm_stock() (
   jq --argjson d "$deployment" --arg amount "$amount" --argjson ref "$ref" --argjson gas "$gas" --argjson spend "$spend" \
     --argjson budget "$budget" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
     .data | ((.amountOut|tonumber)/pow(10;.outputDecimals)) as $out |
-    [{id:($d.chain+":"+$d.contract+":"+.provider),chain:$d.chain,issuer:$d.issuer,symbol:$d.symbol,product:"spot",
+    [{id:($d.chain+":"+$d.contract+":"+.provider),chain:$d.chain,issuer:$d.issuer,symbol:$d.symbol,product:"spot",_catalog:$d._catalog,
       contract:$d.contract,inputAsset:$d.inputAsset,inputContract:$d.inputContract,amountIn:$amount,
       provider,route,coverage,feeEstimateSource,feeNote,expectedQuantity:$out,spend:($spend/$ref),gas:($gas/$ref),
       unspent:(($budget-$spend)/$ref),effectivePrice:($spend/$ref/$out),quotedAt:$now,quoteType:"indicative"}]' "$dir/quote.json" >"$dir/routes.json"
@@ -95,7 +95,7 @@ quote_sol_stock() (
   jq --argjson d "$deployment" --arg amount "$amount" --argjson multiplier "$multiplier" --argjson gas "$gas" \
     --argjson spend "$spend" --argjson budget "$budget" --argjson ref "$ref" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
     .data | ((.outAmount|tonumber)/pow(10;.outputMintDecimals)*$multiplier) as $shares |
-    [{id:("solana:"+$d.contract+":dflow"),chain:"solana",issuer:"xstocks",symbol:$d.symbol,product:"spot",contract:$d.contract,
+    [{id:("solana:"+$d.contract+":dflow"),chain:"solana",issuer:"xstocks",symbol:$d.symbol,product:"spot",contract:$d.contract,_catalog:$d._catalog,
       inputAsset:"USDC",inputContract:$d.inputContract,amountIn:(($amount|tonumber)/1000000|tostring),provider:"dflow",route,
       expectedQuantity:$shares,spend:($spend/$ref),gas:($gas/$ref),unspent:(($budget-$spend)/$ref),
       effectivePrice:($spend/$ref/$shares),quotedAt:$now,quoteType:"indicative"}]' "$dir/quote.json" >"$dir/routes.json"

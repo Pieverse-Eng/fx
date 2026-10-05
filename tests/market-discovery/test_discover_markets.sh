@@ -283,6 +283,14 @@ done
 jq -n '{schemaVersion:1,revision:"v1",total:2,nextCursor:"page-2",items:[{id:"btc",venue:"binance",product:"perp",nativeSymbol:"BTCUSDT",base:"BTC",quote:"USDT",aliases:["BTC"],binding:{nativeId:"BTCUSDT"},baseRepresentation:{verification:"verified",asset:{aliases:["BTC"]}}}]}' >"$fixture_dir/platform-binance-first.json"
 jq -n '{schemaVersion:1,revision:"v1",total:2,nextCursor:null,items:[{id:"crcl",venue:"binance",product:"perp",nativeSymbol:"CRCLUSDT",base:"CRCL",quote:"USDT",aliases:["CRCL"],binding:{nativeId:"CRCLUSDT"},baseRepresentation:{verification:"unverified",asset:null}}]}' >"$fixture_dir/platform-binance-second.json"
 jq -n '{schemaVersion:1,revision:"v1",total:1,nextCursor:null,items:[{id:"bitget-crcl",venue:"bitget",product:"spot",nativeSymbol:"RCRCLUSDT",base:"rCRCL",quote:"USDT",aliases:["CRCL","rCRCL"],binding:{nativeId:"RCRCLUSDT"},baseRepresentation:{verification:"verified",asset:{aliases:["CRCL"]}}}]}' >"$fixture_dir/platform-bitget-stock.json"
+for file in "$fixture_dir/platform-binance-first.json" "$fixture_dir/platform-binance-second.json" "$fixture_dir/platform-bitget-stock.json";do
+  jq '.items|=map(.environment="mainnet" | .status="active" | .exposureMultiplier=1 |
+    .binding.instrumentId=(.venue+":"+.product+":"+.binding.nativeId) |
+    (if .venue=="bitget" then .binding.category="SPOT" else . end) |
+    .baseRepresentation+={id:("rep:"+.base),symbol:.base,aliases:[.base],listed:true,unitsPerToken:1,chain:null,contract:null,issuer:null,evidence:{}} |
+    (if .baseRepresentation.asset!=null then .baseRepresentation.asset+={id:("crypto:"+.base),symbol:.base} else . end))' "$file" >"$fixture_dir/platform-full.json"
+  mv "$fixture_dir/platform-full.json" "$file"
+done
 if [[ $# == 1 ]]; then
   echo '{"lastFundingRate":"0.0001","markPrice":"100","nextFundingTime":1789056000000}' >"$fixture_dir/snapshot-premium.json"
   echo '[{"symbol":"BTCUSDT","fundingIntervalHours":4}]' >"$fixture_dir/snapshot-interval.json"
